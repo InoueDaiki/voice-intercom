@@ -1,0 +1,8 @@
+# OS / エディタ
+.DS_Store
+.idea/
+
+# 秘密情報
+.env
+.env.*
+!.env.example
