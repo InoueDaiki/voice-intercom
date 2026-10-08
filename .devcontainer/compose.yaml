@@ -1,0 +1,33 @@
+name: voice-intercom
+
+services:
+  workspace:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: sleep infinity
+    volumes:
+      - ..:/workspaces/voice-intercom:cached
+      - ${HOME}/.aws:/home/vscode/.aws
+      - mise-data:/home/vscode/.local/share/mise
+    # 実機やエミュレーターからも LAN の IP で届くように、VS Code の転送ではなく compose で公開する
+    ports:
+      - "3000:3000" # API(ローカル実行)
+      - "5173:5173" # 管理コンソール(Vite)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ローカル用の模擬 OIDC サーバー(本番は Cognito)
+  # issuer はリクエストの Host から決まるので、アプリとブラウザは http://${DEV_HOST}:8090/default で揃える
+  oidc:
+    image: ghcr.io/navikt/mock-oauth2-server:6.0.4
+    environment:
+      SERVER_PORT: "8090"
+      JSON_CONFIG_PATH: /config/mock-oidc.json
+    volumes:
+      - ./mock-oidc.json:/config/mock-oidc.json:ro
+    ports:
+      - "8090:8090"
+
+volumes:
+  mise-data:

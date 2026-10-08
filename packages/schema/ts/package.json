@@ -1,0 +1,19 @@
+{
+  "name": "@voice-intercom/schema",
+  "version": "0.1.0",
+  "private": true,
+  "description": "proto から生成した型(TypeScript)",
+  "type": "module",
+  "exports": {
+    "./*": "./src/gen/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.16.0"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}

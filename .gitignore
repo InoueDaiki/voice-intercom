@@ -6,3 +6,22 @@
 .env
 .env.*
 !.env.example
+
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+
+# Dart(ライブラリのパッケージ。アプリの lock は各アプリの .gitignore で扱う)
+.dart_tool/
+packages/schema/dart/pubspec.lock
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*

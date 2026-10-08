@@ -1,0 +1,10 @@
+[project]
+name = "voice-intercom-api"
+version = "0.1.0"
+description = "API Gateway + Lambda(LiveKit トークン発行、履歴、管理 API、署名付き URL)"
+requires-python = ">=3.14"
+dependencies = ["aws-lambda-powertools>=3.35.0", "pydantic>=2.13.5"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

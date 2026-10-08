@@ -1,0 +1,10 @@
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+breaking:
+  # データチャネルで JSON として送る可能性があるので、フィールド名の変更も破壊的変更として扱う
+  use:
+    - WIRE_JSON

@@ -1,0 +1,13 @@
+[project]
+name = "voice-intercom-schema"
+version = "0.1.0"
+description = "proto から生成した型(Python)"
+requires-python = ">=3.14"
+dependencies = ["protobuf>=7.36.2,<8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/voiceintercom"]

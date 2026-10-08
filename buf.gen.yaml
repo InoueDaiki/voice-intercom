@@ -1,0 +1,17 @@
+# 生成物はコミットする(ホストの Flutter から buf なしで使えるように)
+# 実行時ライブラリの版を変えるときは、プラグインの版も合わせる
+#   Python: protobuf 7.36 ↔ protocolbuffers/python v36
+#   TS:     @bufbuild/protobuf 2.16 ↔ bufbuild/es v2.16
+#   Dart:   protobuf 6.x ↔ protocolbuffers/dart v25
+version: v2
+clean: true
+plugins:
+  - remote: buf.build/protocolbuffers/python:v36.2
+    out: packages/schema/python/src
+  - remote: buf.build/protocolbuffers/pyi:v36.2
+    out: packages/schema/python/src
+  - remote: buf.build/bufbuild/es:v2.16.0
+    out: packages/schema/ts/src/gen
+    opt: target=ts
+  - remote: buf.build/protocolbuffers/dart:v25.1.0
+    out: packages/schema/dart/lib/gen

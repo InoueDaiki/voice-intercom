@@ -1,0 +1,22 @@
+{
+  "interactiveLogin": true,
+  "httpServer": "NettyWrapper",
+  "tokenCallbacks": [
+    {
+      "issuerId": "default",
+      "tokenExpiry": 3600,
+      "requestMappings": [
+        {
+          "requestParam": "grant_type",
+          "match": "client_credentials",
+          "claims": {
+            "sub": "${clientId}",
+            "client_id": "${clientId}",
+            "token_use": "access",
+            "scope": "voice-intercom/agent"
+          }
+        }
+      ]
+    }
+  ]
+}

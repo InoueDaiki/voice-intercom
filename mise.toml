@@ -1,0 +1,48 @@
+# ツールの版とタスク。devContainer とホストの両方でこのファイルを使う。
+# Flutter だけは apps/mobile/mise.toml で管理する(ホスト専用)。
+
+[tools]
+python = "3.14.8"
+uv = "0.12.23"
+node = "24.21.0"
+pnpm = "12.10.1"
+terraform = "1.16.5"
+buf = "1.73.0"
+"github:livekit/livekit" = { version = "1.13.9", bin = "livekit-server" }
+"github:livekit/livekit-cli" = { version = "2.18.8", bin = "lk" }
+
+[env]
+_.file = ".env"
+_.python.venv = { path = ".venv", create = false }
+# Python は mise が入れたものを使い、uv には取得させない
+UV_PYTHON_DOWNLOADS = "never"
+
+[tasks.setup]
+description = "依存関係をインストールする"
+run = ["uv sync --all-packages", "pnpm install"]
+
+[tasks.gen]
+description = "proto から Python / TypeScript / Dart のコードを生成する"
+run = "buf generate"
+
+[tasks.lint]
+description = "lint と型検査"
+run = [
+  "buf lint",
+  "uv run ruff check",
+  "uv run ruff format --check",
+  "uv run pyright",
+  "pnpm -r typecheck",
+]
+
+[tasks.fmt]
+description = "整形"
+run = ["buf format -w", "uv run ruff format", "uv run ruff check --fix"]
+
+[tasks.test]
+description = "テスト"
+run = "uv run pytest"
+
+[tasks.livekit]
+description = "ローカルの LiveKit サーバーを起動する(ホストで実行)"
+run = "livekit-server --dev --bind 0.0.0.0 --node-ip {{env.DEV_HOST}}"

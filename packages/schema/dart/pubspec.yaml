@@ -1,0 +1,10 @@
+name: voice_intercom_schema
+description: proto から生成した型(Dart)
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.8.0
+
+dependencies:
+  protobuf: ^6.1.0
