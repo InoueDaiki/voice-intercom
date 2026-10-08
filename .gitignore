@@ -25,3 +25,7 @@ packages/schema/dart/pubspec.lock
 .terraform/
 *.tfstate
 *.tfstate.*
+
+# PoC の入力音声と計測結果
+services/agent/poc/audio/
+services/agent/poc/out/
