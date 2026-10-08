@@ -27,7 +27,9 @@
         "hverlin.mise-vscode"
       ],
       "settings": {
-        "python.defaultInterpreterPath": "/workspaces/voice-intercom/.venv/bin/python"
+        "python.defaultInterpreterPath": "/workspaces/voice-intercom/.venv/bin/python",
+        // 型検査は CLI と同じ版の Pyright 拡張に任せ、Pylance は止める(診断が二重に出るため)
+        "python.languageServer": "None"
       }
     }
   }
