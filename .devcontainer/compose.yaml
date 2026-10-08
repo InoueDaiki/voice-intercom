@@ -10,6 +10,7 @@ services:
       - ..:/workspaces/voice-intercom:cached
       - ${HOME}/.aws:/home/vscode/.aws
       - mise-data:/home/vscode/.local/share/mise
+      - claude-config:/home/vscode/.claude
     # 実機やエミュレーターからも LAN の IP で届くように、VS Code の転送ではなく compose で公開する
     ports:
       - "3000:3000" # API(ローカル実行)
@@ -31,3 +32,4 @@ services:
 
 volumes:
   mise-data:
+  claude-config:

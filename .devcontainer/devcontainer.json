@@ -9,6 +9,10 @@
     "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {},
     "ghcr.io/devcontainers/features/aws-cli:1": {}
   },
+  "containerEnv": {
+    // Claude Code の設定とログイン情報をまとめて名前付きボリュームに置き、作り直しても残す
+    "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
+  },
   "remoteEnv": {
     // DooD でボリュームをマウントするときは、ホスト側のパスを使う
     "LOCAL_WORKSPACE_FOLDER": "${localWorkspaceFolder}"
@@ -17,6 +21,7 @@
   "customizations": {
     "vscode": {
       "extensions": [
+        "anthropic.claude-code",
         "ms-python.python",
         "charliermarsh.ruff",
         "ms-pyright.pyright",
