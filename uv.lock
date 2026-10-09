@@ -1735,13 +1735,19 @@ name = "voice-intercom-agent"
 version = "0.1.0"
 source = { editable = "services/agent" }
 dependencies = [
+    { name = "aiohttp" },
     { name = "livekit-agents" },
+    { name = "numpy" },
+    { name = "openai" },
     { name = "voice-intercom-schema" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.14.4" },
     { name = "livekit-agents", specifier = ">=1.8.5,<2" },
+    { name = "numpy", specifier = ">=2.5.3" },
+    { name = "openai", specifier = ">=2.54.0" },
     { name = "voice-intercom-schema", editable = "packages/schema/python" },
 ]
 

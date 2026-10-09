@@ -13,8 +13,11 @@ export const file_voiceintercom_v1_caption: GenFile = /*@__PURE__*/
   fileDesc("Ch52b2ljZWludGVyY29tL3YxL2NhcHRpb24ucHJvdG8SEHZvaWNlaW50ZXJjb20udjEifQoHQ2FwdGlvbhIYChBzcGVha2VyX2lkZW50aXR5GAEgASgJEhIKCnNlZ21lbnRfaWQYAiABKAkSEAoIbGFuZ3VhZ2UYAyABKAkSEgoKdHJhbnNsYXRlZBgEIAEoCBIMCgR0ZXh0GAUgASgJEhAKCGlzX2ZpbmFsGAYgASgIYgZwcm90bzM");
 
 /**
- * 字幕の断片。Agent がデータチャネルで配信する。
- * 生成パイプラインを通すための最初の定義で、実装時に見直す。
+ * 字幕。Agent がデータチャネル(topic は "caption"、reliable)で配信する。
+ *
+ * 1つの発話に segment_id を1つ振り、原文と各言語の翻訳で共有する。
+ * 受信側は (segment_id, language, translated) ごとに、断片(is_final が false)を順に連結して
+ * 途中の字幕として表示し、確定(is_final が true)が届いたらその text で置き換える。
  *
  * @generated from message voiceintercom.v1.Caption
  */
@@ -27,14 +30,14 @@ export type Caption = Message<"voiceintercom.v1.Caption"> & {
   speakerIdentity: string;
 
   /**
-   * 発話の単位。同じ ID の断片を順に連結する
+   * 発話の単位。原文と翻訳で同じ ID を使う
    *
    * @generated from field: string segment_id = 2;
    */
   segmentId: string;
 
   /**
-   * BCP 47 の言語コード
+   * BCP 47 の言語コード。原文で話者の言語が分からないときは空
    *
    * @generated from field: string language = 3;
    */
@@ -48,14 +51,15 @@ export type Caption = Message<"voiceintercom.v1.Caption"> & {
   translated: boolean;
 
   /**
-   * 追記する断片(連結時に空白を挟まない)
+   * is_final が false なら、追記する断片(連結時に空白を挟まない)。
+   * is_final が true なら、その言語の全文(それまでの断片を置き換える。空なら字幕を消す)
    *
    * @generated from field: string text = 5;
    */
   text: string;
 
   /**
-   * この発話の最後の断片なら true
+   * 確定なら true。同じ (segment_id, language, translated) では最後に1回だけ届く
    *
    * @generated from field: bool is_final = 6;
    */

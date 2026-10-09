@@ -16,8 +16,11 @@ import 'package:protobuf/protobuf.dart' as $pb;
 
 export 'package:protobuf/protobuf.dart' show GeneratedMessageGenericExtensions;
 
-/// 字幕の断片。Agent がデータチャネルで配信する。
-/// 生成パイプラインを通すための最初の定義で、実装時に見直す。
+/// 字幕。Agent がデータチャネル(topic は "caption"、reliable)で配信する。
+///
+/// 1つの発話に segment_id を1つ振り、原文と各言語の翻訳で共有する。
+/// 受信側は (segment_id, language, translated) ごとに、断片(is_final が false)を順に連結して
+/// 途中の字幕として表示し、確定(is_final が true)が届いたらその text で置き換える。
 class Caption extends $pb.GeneratedMessage {
   factory Caption({
     $core.String? speakerIdentity,
@@ -89,7 +92,7 @@ class Caption extends $pb.GeneratedMessage {
   @$pb.TagNumber(1)
   void clearSpeakerIdentity() => $_clearField(1);
 
-  /// 発話の単位。同じ ID の断片を順に連結する
+  /// 発話の単位。原文と翻訳で同じ ID を使う
   @$pb.TagNumber(2)
   $core.String get segmentId => $_getSZ(1);
   @$pb.TagNumber(2)
@@ -99,7 +102,7 @@ class Caption extends $pb.GeneratedMessage {
   @$pb.TagNumber(2)
   void clearSegmentId() => $_clearField(2);
 
-  /// BCP 47 の言語コード
+  /// BCP 47 の言語コード。原文で話者の言語が分からないときは空
   @$pb.TagNumber(3)
   $core.String get language => $_getSZ(2);
   @$pb.TagNumber(3)
@@ -119,7 +122,8 @@ class Caption extends $pb.GeneratedMessage {
   @$pb.TagNumber(4)
   void clearTranslated() => $_clearField(4);
 
-  /// 追記する断片(連結時に空白を挟まない)
+  /// is_final が false なら、追記する断片(連結時に空白を挟まない)。
+  /// is_final が true なら、その言語の全文(それまでの断片を置き換える。空なら字幕を消す)
   @$pb.TagNumber(5)
   $core.String get text => $_getSZ(4);
   @$pb.TagNumber(5)
@@ -129,7 +133,7 @@ class Caption extends $pb.GeneratedMessage {
   @$pb.TagNumber(5)
   void clearText() => $_clearField(5);
 
-  /// この発話の最後の断片なら true
+  /// 確定なら true。同じ (segment_id, language, translated) では最後に1回だけ届く
   @$pb.TagNumber(6)
   $core.bool get isFinal => $_getBF(5);
   @$pb.TagNumber(6)

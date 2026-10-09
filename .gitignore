@@ -42,3 +42,6 @@ packages/schema/dart/pubspec.lock
 services/agent/poc/audio/
 services/agent/poc/out/
 services/agent/poc/cache/
+
+# Agent の確認用ツールの出力(翻訳音声の WAV)
+services/agent/devtools/out/

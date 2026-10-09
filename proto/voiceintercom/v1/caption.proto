@@ -2,19 +2,23 @@ syntax = "proto3";
 
 package voiceintercom.v1;
 
-// 字幕の断片。Agent がデータチャネルで配信する。
-// 生成パイプラインを通すための最初の定義で、実装時に見直す。
+// 字幕。Agent がデータチャネル(topic は "caption"、reliable)で配信する。
+//
+// 1つの発話に segment_id を1つ振り、原文と各言語の翻訳で共有する。
+// 受信側は (segment_id, language, translated) ごとに、断片(is_final が false)を順に連結して
+// 途中の字幕として表示し、確定(is_final が true)が届いたらその text で置き換える。
 message Caption {
   // 話者の LiveKit identity
   string speaker_identity = 1;
-  // 発話の単位。同じ ID の断片を順に連結する
+  // 発話の単位。原文と翻訳で同じ ID を使う
   string segment_id = 2;
-  // BCP 47 の言語コード
+  // BCP 47 の言語コード。原文で話者の言語が分からないときは空
   string language = 3;
   // false なら原文、true なら翻訳
   bool translated = 4;
-  // 追記する断片(連結時に空白を挟まない)
+  // is_final が false なら、追記する断片(連結時に空白を挟まない)。
+  // is_final が true なら、その言語の全文(それまでの断片を置き換える。空なら字幕を消す)
   string text = 5;
-  // この発話の最後の断片なら true
+  // 確定なら true。同じ (segment_id, language, translated) では最後に1回だけ届く
   bool is_final = 6;
 }
