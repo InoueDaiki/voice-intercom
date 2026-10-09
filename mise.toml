@@ -72,6 +72,10 @@ depends = ["build:api"]
 dir = "infra/envs/dev"
 run = "terraform plan"
 
+[tasks."local:init"]
+description = "ローカルの DynamoDB と S3 に、テーブルとバケットを作る"
+run = "scripts/with-local-aws.sh scripts/local-init.sh"
+
 [tasks.livekit]
 description = "ローカルの LiveKit サーバーを起動する(ホストで実行)"
 run = "livekit-server --dev --bind 0.0.0.0 --node-ip {{env.DEV_HOST}}"

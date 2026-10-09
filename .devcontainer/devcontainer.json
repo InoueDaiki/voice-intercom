@@ -2,7 +2,7 @@
   "name": "voice-intercom",
   "dockerComposeFile": "compose.yaml",
   "service": "workspace",
-  "runServices": ["workspace", "oidc"],
+  "runServices": ["workspace", "oidc", "dynamodb", "s3"],
   "workspaceFolder": "/workspaces/voice-intercom",
   "remoteUser": "vscode",
   "features": {
