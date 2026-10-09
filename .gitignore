@@ -2,6 +2,13 @@
 .DS_Store
 .idea/
 
+# Claude Code の worktree と個人の設定(共有する .claude/settings.json はコミットする)
+.claude/worktrees/
+.claude/settings.local.json
+
+# mise の個人用の上書き
+mise.local.toml
+
 # 秘密情報
 .env
 .env.*
@@ -25,6 +32,7 @@ packages/schema/dart/pubspec.lock
 .terraform/
 *.tfstate
 *.tfstate.*
+*.tfplan
 
 # PoC の入力音声と計測結果
 services/agent/poc/audio/
