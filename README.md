@@ -2,6 +2,77 @@
 
 翻訳つきのボイスインカムアプリ。設計は [docs/設計メモ.md](docs/設計メモ.md) を参照。
 
+## アーキテクチャ
+
+音声・チャット・字幕は LiveKit で配信し、Agent が OpenAI で翻訳と文字起こしをする。履歴・メディア・トークン発行は AWS サーバーレスで持つ。
+
+```mermaid
+flowchart LR
+  subgraph clients["クライアント"]
+    mobile["Flutter アプリ<br>(iOS / Android)"]
+    admin["管理コンソール<br>(Vite + React)"]
+  end
+
+  subgraph livekit["LiveKit Cloud"]
+    sfu["LiveKit サーバー<br>音声・データチャネル"]
+    egress["Egress<br>録音"]
+  end
+
+  subgraph aws["AWS(voice-intercom-*)"]
+    cognito["Cognito<br>OIDC"]
+    apigw["API Gateway"]
+    lambda["Lambda<br>トークン発行・履歴・管理 API<br>署名付き URL 発行・push 送信"]
+    ddb[("DynamoDB<br>チャット履歴・文字起こし<br>翻訳テキスト・端末トークン")]
+    s3[("S3<br>画像・動画・録音")]
+    cf["CloudFront"]
+    agent["LiveKit Agent<br>(ECS Fargate)"]
+  end
+
+  subgraph ext["外部サービス"]
+    openai["OpenAI<br>gpt-realtime-translate<br>gpt-realtime-whisper<br>テキスト翻訳"]
+    tts["TTS<br>(OpenAI か Google。PoC で選定)"]
+    fcm["FCM<br>(iOS は APNs 経由)"]
+  end
+
+  mobile -->|"ログイン"| cognito
+  admin -->|"ログイン"| cognito
+  mobile -->|"REST(JWT)"| apigw
+  admin -->|"REST(JWT)"| apigw
+  apigw --> lambda
+  lambda --> ddb
+  lambda -->|"push"| fcm
+  fcm -->|"通知"| mobile
+
+  mobile <-->|"音声・チャット・字幕"| sfu
+  sfu <-->|"話者の音声 / 翻訳音声・字幕"| agent
+  agent -->|"WebSocket"| openai
+  agent --> tts
+  agent -->|"テキストの保存<br>(client credentials)"| apigw
+  sfu --> egress
+  egress -->|"録音"| s3
+
+  mobile -->|"署名付き URL でアップロード"| s3
+  mobile -->|"表示・再生"| cf
+  cf --> s3
+
+  %% AWS アーキテクチャアイコンのカテゴリ色
+  classDef compute fill:#ED7100,stroke:#ED7100,color:#fff
+  classDef appint fill:#E7157B,stroke:#E7157B,color:#fff
+  classDef database fill:#C925D1,stroke:#C925D1,color:#fff
+  classDef storage fill:#7AA116,stroke:#7AA116,color:#fff
+  classDef network fill:#8C4FFF,stroke:#8C4FFF,color:#fff
+  classDef security fill:#DD344C,stroke:#DD344C,color:#fff
+  classDef external fill:#E9EBED,stroke:#879196,color:#232F3E
+
+  class lambda,agent compute
+  class apigw appint
+  class ddb database
+  class s3 storage
+  class cf network
+  class cognito security
+  class mobile,admin,sfu,egress,openai,tts,fcm external
+```
+
 ## 構成
 
 | パス | 内容 | 開発する場所 |
