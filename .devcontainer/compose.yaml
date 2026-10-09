@@ -31,7 +31,31 @@ services:
     ports:
       - "8090:8090"
 
+  # ローカル用の DynamoDB(本番は DynamoDB)。テーブルは mise run local:init で作る
+  dynamodb:
+    image: amazon/dynamodb-local:3.3.0
+    command: -jar DynamoDBLocal.jar -sharedDb -dbPath /home/dynamodblocal/data
+    # 名前付きボリュームは root の所有で作られ、既定のユーザーでは書き込めないため
+    user: root
+    volumes:
+      - dynamodb-data:/home/dynamodblocal/data
+    ports:
+      - "8000:8000"
+
+  # ローカル用の S3(本番は S3 + CloudFront)。バケットは mise run local:init で作る
+  # 実機が署名付き URL でアップロードするので、LAN に公開し、http://${DEV_HOST}:8333 で揃える
+  s3:
+    image: chrislusf/seaweedfs:4.48
+    command: server -dir=/data -s3 -s3.config=/config/s3.json -master.volumeSizeLimitMB=64
+    volumes:
+      - ./seaweedfs-s3.json:/config/s3.json:ro
+      - s3-data:/data
+    ports:
+      - "8333:8333"
+
 volumes:
   mise-data:
   claude-config:
   pnpm-store:
+  dynamodb-data:
+  s3-data:
