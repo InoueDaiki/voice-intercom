@@ -68,6 +68,15 @@ uv run services/agent/poc/eval_batch.py services/agent/poc/audio/fleurs/ja/manif
 
 `out/batch-<日時>-<名前>/` に、集計(`report.md`)、1件ごとの結果(`results.jsonl`)、各回の記録(`runs/`)を保存する。訳の質は、正解の訳に対する chrF(文字 n-gram の一致度。0〜100)で見る。chrF は言い換えでも下がるので、絶対値ではなく条件の間の比較と、低い文を目で確かめる手がかりに使う。
 
+chrF は日本語の言い換えを低く見るので、言語モデル(既定は gpt-6.1-sol)で意味が伝わるかを1〜5点で採点する。
+
+```sh
+# 採点(judge.md と judged.jsonl を出す)。--self-check は正解の訳も採点し、採点の妥当性を確かめる
+uv run services/agent/poc/judge.py services/agent/poc/out/batch-<日時>-<名前> --self-check
+```
+
+費用は、30文で約 0.09 USD(`--self-check` を付けると約2倍)。
+
 ## 結果の読み方
 
 音声は100msずつ実時間のペースで送る。表の列は次のとおり。
