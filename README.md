@@ -107,6 +107,7 @@ VS Code で「Reopen in Container」を選ぶ。初回に `.devcontainer/post-cr
 | `mise run lint` | buf lint、ruff、pyright、tsc | devContainer |
 | `mise run fmt` | 整形 | devContainer |
 | `mise run test` | pytest | devContainer |
+| `mise run admin` | 管理コンソールの開発サーバーを起動する(`http://localhost:5173`) | devContainer |
 | `mise run livekit` | ローカルの LiveKit サーバーを起動する(`--dev`、LAN に公開) | ホスト |
 | `mise run build:api` | Lambda に載せるディレクトリ(`.build/api`)を作る | devContainer |
 | `mise run plan:dev` | `build:api` の後に、dev 環境の `terraform plan` を実行する | devContainer |
@@ -141,6 +142,28 @@ LiveKit の URL と API キーは `TF_VAR_livekit_client_url`、`TF_VAR_livekit_
 
 - client credentials(Agent から API を呼ぶとき)では、Cognito のアクセストークンと同じ形(`client_id`、`token_use`、`scope`)の claims を返す。設定は [.devcontainer/mock-oidc.json](.devcontainer/mock-oidc.json)。
 - トークンの `iss` はリクエストの Host から決まる。そのため、クライアントは必ず `DEV_HOST` で接続する。コンテナ内から鍵(JWKS)を取るときは、`http://oidc:8090/default/jwks` を使う。
+
+## 管理コンソール
+
+`mise run admin` で起動し、ホストのブラウザで `http://localhost:5173` を開く(Cognito のリダイレクト先に合わせて、`localhost` で開く)。
+
+- ログインは標準の OIDC(認可コード + PKCE)。ローカルでは模擬 OIDC のログイン画面が出るので、claims に次を入れる。`admin` グループがないと、ログインできても画面は見られない。
+
+  ```json
+  { "cognito:groups": ["admin"], "token_use": "access", "client_id": "admin", "email": "admin@example.com" }
+  ```
+
+- API は Vite が中継する(`/api` → `http://localhost:3000`)。同じオリジンになるので、ローカルでは CORS が要らない。
+- 設定は `VITE_` で始まる環境変数で渡す。ローカルでは何も設定しなくてよい。
+
+  | 変数 | 内容 | ローカルの既定 |
+  | --- | --- | --- |
+  | `VITE_OIDC_ISSUER` | トークンの iss | `.env` の `OIDC_ISSUER` |
+  | `VITE_OIDC_CLIENT_ID` | OIDC のクライアント ID | `admin` |
+  | `VITE_OIDC_LOGOUT_URL` | ログアウトの URL。Cognito では `<cognito_hosted_ui_url>/logout` | なし(探索で得た `end_session_endpoint`) |
+  | `VITE_API_BASE_URL` | API の URL | `/api`(Vite の中継) |
+
+- AWS の dev 環境に向けるときは、`terraform output` の値(`oidc_issuer`、`cognito_client_ids.admin`、`cognito_hosted_ui_url`、`api_endpoint`)を、上の変数に渡す。API Gateway は `http://localhost:5173` からの CORS を許可している。
 
 ## ローカルの DynamoDB と S3
 

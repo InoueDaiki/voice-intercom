@@ -1,0 +1,57 @@
+// 標準の OIDC(認可コード + PKCE)でログインする。本番は Cognito、ローカルは模擬 OIDC。
+import { UserManager, WebStorageStateStore, type User } from "oidc-client-ts";
+
+import { config } from "./config.ts";
+
+// 管理コンソールを使えるグループ(infra/modules/cognito の aws_cognito_user_group.admin)
+export const ADMIN_GROUP = "admin";
+
+export const userManager = new UserManager({
+  authority: config.oidcIssuer,
+  client_id: config.oidcClientId,
+  redirect_uri: `${window.location.origin}/callback`,
+  post_logout_redirect_uri: window.location.origin,
+  response_type: "code",
+  scope: "openid email profile",
+  // タブを閉じたらログインし直す(Cognito の管理コンソールのリフレッシュトークンも1日と短くしている)
+  userStore: new WebStorageStateStore({ store: window.sessionStorage }),
+  // アクセストークンの期限が近づいたら、リフレッシュトークンで更新する
+  automaticSilentRenew: true,
+  ...(config.oidcLogoutUrl && {
+    metadataSeed: { end_session_endpoint: config.oidcLogoutUrl },
+  }),
+});
+
+export async function signOut(): Promise<void> {
+  if (config.oidcLogoutUrl) {
+    // Cognito の /logout は client_id と logout_uri を受け取る
+    await userManager.signoutRedirect({
+      extraQueryParams: { client_id: config.oidcClientId, logout_uri: window.location.origin },
+    });
+  } else {
+    await userManager.signoutRedirect();
+  }
+}
+
+// API の呼び出しに付けるアクセストークン
+export async function getAccessToken(): Promise<string> {
+  const user = await userManager.getUser();
+  if (!user || user.expired) {
+    throw new Error("ログインしていない");
+  }
+  return user.access_token;
+}
+
+// アクセストークンの cognito:groups。API もアクセストークンで権限を判定するので、それに揃える。
+// 表示の出し分けに使うだけで、署名は確かめない(検証は API がする)
+export function groupsOf(user: User): string[] {
+  try {
+    const payload = user.access_token.split(".")[1] ?? "";
+    const binary = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+    const json = new TextDecoder().decode(Uint8Array.from(binary, (c) => c.charCodeAt(0)));
+    const groups: unknown = JSON.parse(json)["cognito:groups"];
+    return Array.isArray(groups) ? groups.filter((g) => typeof g === "string") : [];
+  } catch {
+    return [];
+  }
+}
