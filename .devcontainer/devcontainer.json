@@ -12,7 +12,9 @@
   "containerEnv": {
     "TZ": "Asia/Tokyo",
     // Claude Code の設定とログイン情報をまとめて名前付きボリュームに置き、作り直しても残す
-    "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
+    "CLAUDE_CONFIG_DIR": "/home/vscode/.claude",
+    // pnpm のストアを名前付きボリュームに置く(指定しないとリポジトリの直下に .pnpm-store ができる)
+    "pnpm_config_store_dir": "/home/vscode/.local/share/pnpm-store"
   },
   "remoteEnv": {
     // DooD でボリュームをマウントするときは、ホスト側のパスを使う
