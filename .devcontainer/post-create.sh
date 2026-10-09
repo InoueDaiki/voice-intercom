@@ -3,6 +3,10 @@ set -euo pipefail
 
 export PATH="$HOME/.local/bin:$PATH"
 
+# virtiofs(Docker Desktop)では、worktree を消した直後などにリポジトリの所有者が一瞬 root に見え、
+# git が dubious ownership で止まる。コンテナの中で使うのは自分だけなので、所有者のチェックを外す
+git config --global --add safe.directory /workspaces/voice-intercom
+
 mise trust --yes
 mise install --yes
 # プロジェクトの外でも mise の Python を既定にする(VS Code の Python 拡張が別の Python を入れようとしないように)
