@@ -1,0 +1,150 @@
+# Cognito のユーザープールと、アプリ・管理コンソール・Agent のクライアント。
+# アプリと管理コンソールは標準の OIDC(認可コード + PKCE)で、Agent は client credentials で使う。
+# ローカルの模擬 OIDC サーバー(.devcontainer/mock-oidc.json)と、claims の形を揃える。
+
+data "aws_region" "current" {}
+
+resource "aws_cognito_user_pool" "this" {
+  name                = var.name_prefix
+  user_pool_tier      = var.user_pool_tier
+  deletion_protection = var.deletion_protection ? "ACTIVE" : "INACTIVE"
+
+  username_attributes      = ["email"]
+  auto_verified_attributes = ["email"]
+
+  username_configuration {
+    case_sensitive = false
+  }
+
+  # 招待制の間は、管理者だけがユーザーを作る
+  admin_create_user_config {
+    allow_admin_create_user_only = var.invite_only
+  }
+
+  password_policy {
+    minimum_length                   = 12
+    require_lowercase                = true
+    require_uppercase                = true
+    require_numbers                  = true
+    require_symbols                  = false
+    temporary_password_validity_days = 7
+  }
+
+  account_recovery_setting {
+    recovery_mechanism {
+      name     = "verified_email"
+      priority = 1
+    }
+  }
+}
+
+# ホストされたログイン画面(/oauth2/authorize など)の URL
+resource "aws_cognito_user_pool_domain" "this" {
+  domain       = var.domain_prefix
+  user_pool_id = aws_cognito_user_pool.this.id
+}
+
+resource "aws_cognito_user_group" "admin" {
+  name         = "admin"
+  user_pool_id = aws_cognito_user_pool.this.id
+  description  = "管理コンソールを使えるユーザー"
+}
+
+# Agent が API を呼ぶときのスコープ(voice-intercom/agent)
+resource "aws_cognito_resource_server" "api" {
+  identifier   = "voice-intercom"
+  name         = "${var.name_prefix}-api"
+  user_pool_id = aws_cognito_user_pool.this.id
+
+  scope {
+    scope_name        = "agent"
+    scope_description = "Agent からの書き込み(文字起こしや翻訳の保存)"
+  }
+}
+
+locals {
+  user_scopes = ["openid", "email", "profile"]
+}
+
+# Flutter アプリ。公開クライアント(秘密を持たない)で PKCE を使う
+resource "aws_cognito_user_pool_client" "mobile" {
+  name         = "mobile"
+  user_pool_id = aws_cognito_user_pool.this.id
+
+  generate_secret                      = false
+  allowed_oauth_flows_user_pool_client = true
+  allowed_oauth_flows                  = ["code"]
+  allowed_oauth_scopes                 = local.user_scopes
+  supported_identity_providers         = ["COGNITO"]
+  callback_urls                        = var.mobile_callback_urls
+  logout_urls                          = var.mobile_logout_urls
+
+  explicit_auth_flows           = ["ALLOW_REFRESH_TOKEN_AUTH"]
+  prevent_user_existence_errors = "ENABLED"
+  enable_token_revocation       = true
+
+  access_token_validity  = 60
+  id_token_validity      = 60
+  refresh_token_validity = 30
+
+  token_validity_units {
+    access_token  = "minutes"
+    id_token      = "minutes"
+    refresh_token = "days"
+  }
+}
+
+# 管理コンソール(SPA)。公開クライアントで PKCE を使う
+resource "aws_cognito_user_pool_client" "admin" {
+  name         = "admin"
+  user_pool_id = aws_cognito_user_pool.this.id
+
+  generate_secret                      = false
+  allowed_oauth_flows_user_pool_client = true
+  allowed_oauth_flows                  = ["code"]
+  allowed_oauth_scopes                 = local.user_scopes
+  supported_identity_providers         = ["COGNITO"]
+  callback_urls                        = var.admin_callback_urls
+  logout_urls                          = var.admin_logout_urls
+
+  explicit_auth_flows           = ["ALLOW_REFRESH_TOKEN_AUTH"]
+  prevent_user_existence_errors = "ENABLED"
+  enable_token_revocation       = true
+
+  access_token_validity  = 60
+  id_token_validity      = 60
+  refresh_token_validity = 1
+
+  token_validity_units {
+    access_token  = "minutes"
+    id_token      = "minutes"
+    refresh_token = "days"
+  }
+}
+
+# LiveKit Agent。秘密を持つクライアントで、client credentials でトークンを取る
+resource "aws_cognito_user_pool_client" "agent" {
+  name         = "agent"
+  user_pool_id = aws_cognito_user_pool.this.id
+
+  generate_secret                      = true
+  allowed_oauth_flows_user_pool_client = true
+  allowed_oauth_flows                  = ["client_credentials"]
+  allowed_oauth_scopes                 = ["${aws_cognito_resource_server.api.identifier}/agent"]
+  supported_identity_providers         = ["COGNITO"]
+
+  explicit_auth_flows     = ["ALLOW_REFRESH_TOKEN_AUTH"]
+  enable_token_revocation = true
+
+  access_token_validity = 60
+
+  token_validity_units {
+    access_token = "minutes"
+  }
+
+  depends_on = [aws_cognito_resource_server.api]
+}
+
+locals {
+  issuer = "https://cognito-idp.${data.aws_region.current.region}.amazonaws.com/${aws_cognito_user_pool.this.id}"
+}

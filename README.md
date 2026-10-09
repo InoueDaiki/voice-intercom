@@ -107,6 +107,24 @@ VS Code で「Reopen in Container」を選ぶ。初回に `.devcontainer/post-cr
 | `mise run fmt` | 整形 | devContainer |
 | `mise run test` | pytest | devContainer |
 | `mise run livekit` | ローカルの LiveKit サーバーを起動する(`--dev`、LAN に公開) | ホスト |
+| `mise run build:api` | Lambda に載せるディレクトリ(`.build/api`)を作る | devContainer |
+| `mise run plan:dev` | `build:api` の後に、dev 環境の `terraform plan` を実行する | devContainer |
+
+## AWS(Terraform)
+
+`infra/modules` に Cognito、DynamoDB、S3 + CloudFront(`media`)、API Gateway + Lambda(`api`)のモジュールがあり、`infra/envs/<env>` から呼ぶ。
+
+1. `.env` に `AWS_PROFILE` と `TF_STATE_BUCKET` を書き、`aws sso login` する。
+2. 初回だけ `terraform -chdir=infra/envs/dev init -backend-config="bucket=$TF_STATE_BUCKET"` を実行する。state 用のバケットがまだなければ、先に `scripts/bootstrap-tfstate.sh` で作る(dev と prod で共用し、キーで分ける)。
+3. `mise run plan:dev` で差分を確かめてから、`terraform -chdir=infra/envs/dev apply` する。
+4. 初回の apply の後に、LiveKit の API シークレットを SSM に入れる(Terraform には値を持たせない)。
+
+   ```sh
+   aws ssm put-parameter --overwrite --type SecureString \
+     --name /voice-intercom-dev/livekit/api-secret --value <secret>
+   ```
+
+LiveKit の URL と API キーは `TF_VAR_livekit_client_url`、`TF_VAR_livekit_api_key` で渡す。
 
 ## ローカルの認証(模擬 OIDC サーバー)
 
