@@ -19,6 +19,8 @@ members = ["services/agent", "services/api", "packages/schema/python"]
 target-version = "py314"
 line-length = 100
 extend-exclude = ["*_pb2.py", "*_pb2.pyi"]
+# テストから import したときもワークスペースのパッケージを first-party として並べる
+src = ["services/*/src", "packages/schema/python/src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
