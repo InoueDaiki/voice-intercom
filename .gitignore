@@ -2,6 +2,9 @@
 .DS_Store
 .idea/
 
+# Claude Code の作業用 worktree
+.claude/worktrees/
+
 # 秘密情報
 .env
 .env.*
@@ -16,6 +19,7 @@ __pycache__/
 # Node
 node_modules/
 dist/
+.pnpm-store/
 
 # Dart(ライブラリのパッケージ。アプリの lock は各アプリの .gitignore で扱う)
 .dart_tool/
