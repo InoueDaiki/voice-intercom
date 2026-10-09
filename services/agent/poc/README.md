@@ -77,6 +77,13 @@ uv run services/agent/poc/judge.py services/agent/poc/out/batch-<日時>-<名前
 
 費用は、30文で約 0.09 USD(`--self-check` を付けると約2倍)。
 
+whisper の書き起こしをテキストで翻訳する方式と比べるには、whisper を有効にした回の結果を `text_translate.py` に渡す。結果は `<元の名前>-text-<モデル>/` に、eval_batch.py と同じ形で出るので、judge.py で採点できる。
+
+```sh
+uv run services/agent/poc/text_translate.py services/agent/poc/out/batch-<日時>-<名前>   # 既定は gpt-6-luna
+uv run services/agent/poc/judge.py services/agent/poc/out/batch-<日時>-<名前>-text-gpt-6-luna
+```
+
 ## 結果の読み方
 
 音声は100msずつ実時間のペースで送る。表の列は次のとおり。

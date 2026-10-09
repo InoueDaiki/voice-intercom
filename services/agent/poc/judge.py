@@ -130,7 +130,11 @@ async def main() -> None:
     rows = [
         json.loads(line) for line in (args.batch_dir / "results.jsonl").read_text().splitlines()
     ]
-    source_lang, target_lang = batch_langs(args.batch_dir)
+    if "target_lang" in rows[0]:
+        # text_translate.py の出力は runs/ を持たず、行に言語を書いている
+        source_lang, target_lang = rows[0]["source_lang"], rows[0]["target_lang"]
+    else:
+        source_lang, target_lang = batch_langs(args.batch_dir)
     client = openai.AsyncOpenAI()
     sem = asyncio.Semaphore(args.jobs)
 
