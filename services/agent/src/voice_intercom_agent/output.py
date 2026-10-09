@@ -4,6 +4,7 @@ import asyncio
 import logging
 
 from livekit import rtc
+
 from voiceintercom.v1.caption_pb2 import Caption
 
 from .captions import CAPTION_TOPIC

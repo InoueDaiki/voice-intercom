@@ -9,6 +9,7 @@ import numpy as np
 from livekit import api, rtc
 from livekit.protocol.agent_dispatch import RoomAgentDispatch
 from livekit.protocol.room import RoomConfiguration
+
 from voice_intercom_agent.config import agent_name
 from voice_intercom_agent.languages import LANGUAGE_ATTRIBUTE
 

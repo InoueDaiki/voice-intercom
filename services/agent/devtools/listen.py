@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 from common import add_connection_args, make_token
 from livekit import rtc
+
 from voice_intercom_agent.captions import CAPTION_TOPIC
 from voice_intercom_agent.output import translation_track_name
 from voiceintercom.v1.caption_pb2 import Caption
