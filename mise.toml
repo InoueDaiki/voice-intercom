@@ -43,6 +43,16 @@ run = ["buf format -w", "uv run ruff format", "uv run ruff check --fix"]
 description = "テスト"
 run = "uv run pytest"
 
+[tasks."build:api"]
+description = "Lambda(services/api)に載せるディレクトリを .build/api に作る"
+run = "scripts/build-api.sh"
+
+[tasks."plan:dev"]
+description = "dev 環境の terraform plan(先に init が要る。README を参照)"
+depends = ["build:api"]
+dir = "infra/envs/dev"
+run = "terraform plan"
+
 [tasks.livekit]
 description = "ローカルの LiveKit サーバーを起動する(ホストで実行)"
 run = "livekit-server --dev --bind 0.0.0.0 --node-ip {{env.DEV_HOST}}"

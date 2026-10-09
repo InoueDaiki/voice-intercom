@@ -26,6 +26,9 @@ packages/schema/dart/pubspec.lock
 *.tfstate
 *.tfstate.*
 
+# ビルド成果物(Lambda のパッケージ)
+.build/
+
 # PoC の入力音声と計測結果
 services/agent/poc/audio/
 services/agent/poc/out/
