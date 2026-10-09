@@ -10,6 +10,7 @@
     "ghcr.io/devcontainers/features/aws-cli:1": {}
   },
   "containerEnv": {
+    "TZ": "Asia/Tokyo",
     // Claude Code の設定とログイン情報をまとめて名前付きボリュームに置き、作り直しても残す
     "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
   },
