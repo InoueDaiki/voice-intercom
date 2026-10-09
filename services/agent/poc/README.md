@@ -42,9 +42,31 @@ uv run services/agent/poc/translate_bench.py services/agent/poc/audio/ja-01.wav 
 | --- | --- |
 | `--to` | 翻訳先の言語。カンマ区切りで複数 |
 | `--tail-silence-ms` | 末尾に足す無音。送り終えてから `session.close` を送る |
-| `--noise-reduction` | `near_field`(既定)、`far_field`、`none` |
+| `--noise-reduction` | `none`(既定。API の既定と同じ)、`near_field`、`far_field`。`near_field` は小さい声を消すことがある |
 | `--inline-transcription` | 翻訳セッションでも原文の文字起こしを有効にする |
 | `--no-whisper` | whisper のセッションを作らない |
+| `--repeat` / `--idle-s` | 同じセッションで入力を繰り返し送る回数と、送り終えるたびに何も送らずに待つ秒数(翻訳のみ。`--no-whisper` と一緒に使う) |
+
+## データセットでまとめて評価する
+
+FLEURS と CoVoST 2 から文を選んで WAV にし(`fetch_datasets.py`)、まとめて流して集計する(`eval_batch.py`)。取得したファイルは `cache/`、WAV と一覧(`manifest.jsonl`)は `audio/` に置く(どちらも git 管理外)。
+
+| データセット | 中身 | ライセンス |
+| --- | --- | --- |
+| [FLEURS](https://huggingface.co/datasets/google/fleurs)(validation) | 人の読み上げ。1文が7〜20秒と長め。文の ID が言語をまたいで共通なので、ほかの言語の同じ文を正解の訳にする | CC BY 4.0 |
+| [CoVoST 2](https://huggingface.co/datasets/fixie-ai/covost2)(test。Common Voice の音声を含むミラー) | 人の読み上げ。1文が2〜15秒と短め。ja→en と en→ja に正解の訳がある | 訳は CC BY-NC 4.0、音声は CC0 |
+
+```sh
+# 取得(FLEURS は ja と en を各20文、正解の訳は13言語ぶん集める。CoVoST 2 は組ごとに30文)
+uv run services/agent/poc/fetch_datasets.py fleurs --source ja,en --n 20
+uv run services/agent/poc/fetch_datasets.py covost --pairs ja_en,en_ja --n 30
+
+# まとめて流す(3件ずつ並行)
+uv run services/agent/poc/eval_batch.py services/agent/poc/audio/covost2/ja_en/manifest.jsonl --to en
+uv run services/agent/poc/eval_batch.py services/agent/poc/audio/fleurs/ja/manifest.jsonl --to ko
+```
+
+`out/batch-<日時>-<名前>/` に、集計(`report.md`)、1件ごとの結果(`results.jsonl`)、各回の記録(`runs/`)を保存する。訳の質は、正解の訳に対する chrF(文字 n-gram の一致度。0〜100)で見る。chrF は言い換えでも下がるので、絶対値ではなく条件の間の比較と、低い文を目で確かめる手がかりに使う。
 
 ## 結果の読み方
 

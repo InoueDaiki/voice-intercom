@@ -117,6 +117,20 @@ async def stream_audio(
             await asyncio.sleep(delay)
 
 
+async def wait_updated(ws: aiohttp.ClientWebSocketResponse, s: Session, clock: Clock) -> None:
+    """session.update が反映されるまで待つ。反映前に送った音声は、既定の設定で処理されうる。"""
+    async for msg in ws:
+        if msg.type != aiohttp.WSMsgType.TEXT:
+            break
+        ev = json.loads(msg.data)
+        s.events.append({"t": clock.ms(), **ev})
+        if ev.get("type") == "error":
+            s.errors.append(ev)
+            return
+        if ev.get("type") == "session.updated":
+            return
+
+
 async def run_translate(
     http: aiohttp.ClientSession,
     headers: dict[str, str],
@@ -142,19 +156,25 @@ async def run_translate(
                 "session": {"audio": {"input": audio_input, "output": {"language": lang}}},
             }
         )
+        if not args.no_wait_updated:
+            await wait_updated(ws, s, clock)
         await ready.wait()
-        sender = asyncio.create_task(
-            stream_audio(ws, pcm, "session.input_audio_buffer.append", start)
-        )
 
-        async def close_after_send() -> None:
-            await sender
+        async def send_then_close() -> None:
+            # --repeat 回送り、そのたびに --idle-s 秒は何も送らずに待ってから session.close を送る
+            for n in range(args.repeat):
+                s.events.append({"t": clock.ms(), "type": f"(client) 送信開始 #{n + 1}"})
+                await stream_audio(ws, pcm, "session.input_audio_buffer.append", start)
+                s.events.append({"t": clock.ms(), "type": f"(client) 送信終了 #{n + 1}"})
+                if args.idle_s:
+                    await asyncio.sleep(args.idle_s)
             await ws.send_json({"type": "session.close"})
             s.events.append({"t": clock.ms(), "type": "(client) session.close"})
 
-        closer = asyncio.create_task(close_after_send())
+        closer = asyncio.create_task(send_then_close())
+        limit = (len(pcm) / SAMPLE_RATE + args.idle_s) * args.repeat + args.timeout
         try:
-            async with asyncio.timeout(len(pcm) / SAMPLE_RATE + args.timeout):
+            async with asyncio.timeout(limit):
                 async for msg in ws:
                     if msg.type != aiohttp.WSMsgType.TEXT:
                         break
@@ -188,7 +208,11 @@ async def run_translate(
                         break
         except TimeoutError:
             s.errors.append({"type": "(client) timeout"})
-        sender.cancel()
+        if s.closed_ms is None and ws.closed:
+            # サーバーから切断された(アイドルタイムアウトなど)
+            ev = {"t": clock.ms(), "type": "(server) 切断", "close_code": ws.close_code}
+            s.events.append(ev)
+            s.errors.append(ev)
         closer.cancel()
     return s
 
@@ -222,6 +246,8 @@ async def run_whisper(
                 },
             }
         )
+        if not args.no_wait_updated:
+            await wait_updated(ws, s, clock)
         await ready.wait()
         sender = asyncio.create_task(stream_audio(ws, pcm, "input_audio_buffer.append", start))
 
@@ -257,6 +283,20 @@ async def run_whisper(
     return s
 
 
+def voiced_spans(events: list[dict]) -> list[tuple[float, float]]:
+    """有声のチャンクが届いた時刻を、送信開始からの区間(秒)にまとめる。1秒以上空いたら区切る。"""
+    spans: list[tuple[float, float]] = []
+    for e in events:
+        if not e.get("voiced"):
+            continue
+        t = round(e["t"] / 1000, 1)
+        if spans and t - spans[-1][1] <= 1.0:
+            spans[-1] = (spans[-1][0], t)
+        else:
+            spans.append((t, t))
+    return spans
+
+
 def write_wav(path: Path, pcm: bytes, rate: int) -> None:
     with wave.open(str(path), "wb") as w:
         w.setnchannels(1)
@@ -273,7 +313,10 @@ async def main() -> None:
     p.add_argument("--to", default="en", help="翻訳先の言語。カンマ区切りで複数(例: en,ko)")
     p.add_argument("--source-lang", help="whisper に渡す原文の言語(例: ja)。省略すると自動")
     p.add_argument(
-        "--noise-reduction", choices=["near_field", "far_field", "none"], default="near_field"
+        "--noise-reduction",
+        choices=["near_field", "far_field", "none"],
+        # API の既定(null)に合わせる。near_field は小さい声を消すことがあった(2026-10-09)
+        default="none",
     )
     p.add_argument("--head-silence-ms", type=int, default=0, help="先頭に足す無音")
     p.add_argument(
@@ -288,10 +331,26 @@ async def main() -> None:
         action="store_true",
         help="翻訳セッションでも原文の文字起こしを有効にする(別セッションとの比較用)",
     )
+    p.add_argument(
+        "--repeat", type=int, default=1, help="同じセッションで入力を繰り返し送る回数(翻訳のみ)"
+    )
+    p.add_argument(
+        "--idle-s",
+        type=float,
+        default=0,
+        help="送り終えるたびに何も送らずに待つ秒数(翻訳のみ)。最後の待ちの後に close を送る",
+    )
+    p.add_argument(
+        "--no-wait-updated",
+        action="store_true",
+        help="session.updated を待たずに音声を送り始める(修正前の動作。比較用)",
+    )
     p.add_argument("--whisper-url", default=WHISPER_URL)
     p.add_argument("--timeout", type=float, default=60, help="送信後に待つ秒数の上限")
     p.add_argument("--out", type=Path, default=Path(__file__).parent / "out")
     args = p.parse_args()
+    if (args.repeat > 1 or args.idle_s) and not args.no_whisper:
+        raise SystemExit("--repeat と --idle-s は翻訳だけで使う。--no-whisper を付ける")
 
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
@@ -365,6 +424,10 @@ async def main() -> None:
             + ("       -" if not s.first_voice_ms else f"{voiced_s:7.1f}s")
         )
         print(f"  テキスト: {row['text']}")
+        spans = voiced_spans(s.events)
+        if spans:
+            row["voiced_spans_s"] = spans
+            print("  有声区間: " + ", ".join(f"{a:.1f}〜{b:.1f}s" for a, b in spans))
         for e in s.errors:
             print(f"  エラー: {json.dumps(e, ensure_ascii=False)}")
         with (run_dir / f"{s.name}.jsonl").open("w") as f:
