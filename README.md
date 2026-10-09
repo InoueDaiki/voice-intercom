@@ -83,6 +83,7 @@ flowchart LR
 | `services/api` | API Gateway + Lambda(Python) | devContainer |
 | `proto/` | データチャネルで流すメッセージの定義(Protobuf) | devContainer |
 | `packages/schema/{python,ts,dart}` | `proto/` から生成した型。生成物もコミットする | 生成は devContainer |
+| `packages/api-client/{ts,dart}` | REST API のクライアント。`services/api` の Pydantic のモデルから出した `openapi.json` をもとに生成する。生成物もコミットする | 生成は devContainer |
 | `infra/` | Terraform(`envs/dev`、`envs/prod`。同じ AWS アカウントで名前を分ける) | devContainer |
 
 ## セットアップ
@@ -102,7 +103,7 @@ VS Code で「Reopen in Container」を選ぶ。初回に `.devcontainer/post-cr
 
 | コマンド | 内容 | 実行する場所 |
 | --- | --- | --- |
-| `mise run gen` | proto から Python / TypeScript / Dart の型を生成する | devContainer |
+| `mise run gen` | proto から型を、REST API から OpenAPI とクライアントを生成する(`gen:proto`、`gen:api`)。Dart のクライアントの生成に使う Java は、初回にこのタスクが入れる | devContainer |
 | `mise run lint` | buf lint、ruff、pyright、tsc | devContainer |
 | `mise run fmt` | 整形 | devContainer |
 | `mise run test` | pytest | devContainer |
