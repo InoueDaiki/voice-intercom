@@ -24,7 +24,7 @@ from aws_lambda_powertools.utilities.typing import LambdaContext
 from livekit import api as livekit
 from pydantic import BaseModel, Field
 
-from voice_intercom_api import store
+from voice_intercom_api import devices, store
 from voice_intercom_api.auth import AdminUser, CurrentUser, Principal
 from voice_intercom_api.config import get_settings
 from voice_intercom_api.models import (
@@ -287,6 +287,10 @@ def create_livekit_token(
         .to_jwt()
     )
     return LiveKitTokenResponse(server_url=settings.livekit_client_url, participant_token=token)
+
+
+# 別のモジュールに分けたルート
+app.include_router(devices.router)
 
 
 def handler(event: dict, context: LambdaContext) -> dict:

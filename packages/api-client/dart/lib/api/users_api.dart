@@ -158,4 +158,94 @@ class UsersApi {
     }
     return null;
   }
+
+  /// 自分の端末トークンを登録する。アプリの起動時とトークンの更新時に呼ぶ。1人 10 台までで、超えたら最後の登録がいちばん古い端末を外す。同じトークンを別の人が登録していたら、その人から外す
+  ///
+  /// Note: This method returns the HTTP [Response].
+  ///
+  /// Parameters:
+  ///
+  /// * [RegisterDeviceRequest] registerDeviceRequest (required):
+  Future<Response> registerMyDeviceWithHttpInfo(RegisterDeviceRequest registerDeviceRequest, { Future<void>? abortTrigger, }) async {
+    // ignore: prefer_const_declarations
+    final path = r'/users/me/devices';
+
+    // ignore: prefer_final_locals
+    Object? postBody = registerDeviceRequest;
+
+    final queryParams = <QueryParam>[];
+    final headerParams = <String, String>{};
+    final formParams = <String, String>{};
+
+    const contentTypes = <String>['application/json'];
+
+
+    return apiClient.invokeAPI(
+      path,
+      'PUT',
+      queryParams,
+      postBody,
+      headerParams,
+      formParams,
+      contentTypes.isEmpty ? null : contentTypes.first,
+      abortTrigger: abortTrigger,
+    );
+  }
+
+  /// 自分の端末トークンを登録する。アプリの起動時とトークンの更新時に呼ぶ。1人 10 台までで、超えたら最後の登録がいちばん古い端末を外す。同じトークンを別の人が登録していたら、その人から外す
+  ///
+  /// Parameters:
+  ///
+  /// * [RegisterDeviceRequest] registerDeviceRequest (required):
+  Future<void> registerMyDevice(RegisterDeviceRequest registerDeviceRequest, { Future<void>? abortTrigger, }) async {
+    final response = await registerMyDeviceWithHttpInfo(registerDeviceRequest, abortTrigger: abortTrigger,);
+    if (response.statusCode >= HttpStatus.badRequest) {
+      throw ApiException(response.statusCode, await _decodeBodyBytes(response));
+    }
+  }
+
+  /// 自分の端末トークンを外す(ログアウトのとき)。登録されていなくても 204
+  ///
+  /// Note: This method returns the HTTP [Response].
+  ///
+  /// Parameters:
+  ///
+  /// * [UnregisterDeviceRequest] unregisterDeviceRequest (required):
+  Future<Response> unregisterMyDeviceWithHttpInfo(UnregisterDeviceRequest unregisterDeviceRequest, { Future<void>? abortTrigger, }) async {
+    // ignore: prefer_const_declarations
+    final path = r'/users/me/devices';
+
+    // ignore: prefer_final_locals
+    Object? postBody = unregisterDeviceRequest;
+
+    final queryParams = <QueryParam>[];
+    final headerParams = <String, String>{};
+    final formParams = <String, String>{};
+
+    const contentTypes = <String>['application/json'];
+
+
+    return apiClient.invokeAPI(
+      path,
+      'DELETE',
+      queryParams,
+      postBody,
+      headerParams,
+      formParams,
+      contentTypes.isEmpty ? null : contentTypes.first,
+      abortTrigger: abortTrigger,
+    );
+  }
+
+  /// 自分の端末トークンを外す(ログアウトのとき)。登録されていなくても 204
+  ///
+  /// Parameters:
+  ///
+  /// * [UnregisterDeviceRequest] unregisterDeviceRequest (required):
+  Future<void> unregisterMyDevice(UnregisterDeviceRequest unregisterDeviceRequest, { Future<void>? abortTrigger, }) async {
+    final response = await unregisterMyDeviceWithHttpInfo(unregisterDeviceRequest, abortTrigger: abortTrigger,);
+    if (response.statusCode >= HttpStatus.badRequest) {
+      throw ApiException(response.statusCode, await _decodeBodyBytes(response));
+    }
+  }
 }

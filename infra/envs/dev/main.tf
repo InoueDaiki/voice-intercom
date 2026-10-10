@@ -126,6 +126,19 @@ resource "aws_ssm_parameter" "openai_api_key" {
   }
 }
 
+# FCM(push 通知)のサービスアカウントの JSON(API の Lambda が使う)。値は Terraform の外で入れる
+#   aws ssm put-parameter --overwrite --type SecureString \
+#     --name /voice-intercom-dev/fcm/service-account --value file://service-account.json
+resource "aws_ssm_parameter" "fcm_service_account" {
+  name  = "/${local.name_prefix}/fcm/service-account"
+  type  = "SecureString"
+  value = "CHANGE_ME"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
 data "aws_iam_policy_document" "api" {
   statement {
     actions = [
@@ -157,6 +170,12 @@ data "aws_iam_policy_document" "api" {
     actions   = ["ssm:GetParameter"]
     resources = [aws_ssm_parameter.livekit_api_secret.arn]
   }
+
+  # push 通知(notify.py)
+  statement {
+    actions   = ["ssm:GetParameter"]
+    resources = [aws_ssm_parameter.fcm_service_account.arn]
+  }
 }
 
 module "api" {
@@ -186,7 +205,8 @@ module "api" {
     LIVEKIT_CLIENT_URL = var.livekit_client_url
     LIVEKIT_API_KEY    = var.livekit_api_key
     # シークレットの値ではなく、SSM のパラメーター名を渡す
-    LIVEKIT_API_SECRET_PARAMETER = aws_ssm_parameter.livekit_api_secret.name
+    LIVEKIT_API_SECRET_PARAMETER  = aws_ssm_parameter.livekit_api_secret.name
+    FCM_SERVICE_ACCOUNT_PARAMETER = aws_ssm_parameter.fcm_service_account.name
   }
 }
 
