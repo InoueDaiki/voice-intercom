@@ -42,7 +42,8 @@ DEFAULT_INTERVAL_S = 600
 SEND_TIMEOUT_S = 10.0
 
 # 表示名が分からないときの話者の呼び方
-UNKNOWN_SPEAKER = "誰か"
+# プロフィールが無い話者のときの本文
+UNKNOWN_SPEAKER_BODY = "誰かが話しています"
 
 NOTIFICATION_TYPE = "speaking"
 
@@ -109,11 +110,13 @@ def notify_speaking(
         return SpeakingNotificationResult(sent=0, skipped=skipped)
 
     profile = store.get_user(body.speaker_id)
-    speaker_name = UNKNOWN_SPEAKER if profile is None else profile.display_name
+    message = (
+        UNKNOWN_SPEAKER_BODY if profile is None else f"{profile.display_name}さんが話しています"
+    )
     ok = _send_with_timeout(
         claimed,
         title=room.name,
-        body=f"{speaker_name}さんが話しています",
+        body=message,
         data={"type": NOTIFICATION_TYPE, "room_id": room_id},
     )
     if not ok:

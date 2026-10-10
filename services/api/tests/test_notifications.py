@@ -104,7 +104,7 @@ def test_unknown_speaker_is_someone(agent: str, fake: FakeNotify) -> None:
     assert status == 200
     # 話者が member_ids にいなくても、メンバー全員に送る
     assert body == {"sent": 4, "skipped": 0}
-    assert fake.calls[0]["body"] == "誰かさんが話しています"
+    assert fake.calls[0]["body"] == "誰かが話しています"
 
 
 def test_nobody_to_send(agent: str, fake: FakeNotify) -> None:

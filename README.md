@@ -257,7 +257,7 @@ Agent は client credentials のトークン(スコープ `voice-intercom/agent`
 
 送るのは `voice_intercom_api.notify` の `send_to_users`。
 
-どこから送るか: 誰かが話し始めたときに、Agent が `POST /rooms/{room_id}/notifications/speaking` を呼んで送る(`services/api` の `notifications.py`)。今ルームに入っていないメンバーに、タイトルはルームの名前、本文は「<話者の表示名>さんが話しています」(プロフィールが無ければ「誰か」)、data は `{"type": "speaking", "room_id": ...}` で届く。チャット(テキスト入力)や画像・動画からは、今は送らない。
+どこから送るか: 誰かが話し始めたときに、Agent が `POST /rooms/{room_id}/notifications/speaking` を呼んで送る(`services/api` の `notifications.py`)。今ルームに入っていないメンバーに、タイトルはルームの名前、本文は「<話者の表示名>さんが話しています」(プロフィールが無ければ「誰かが話しています」)、data は `{"type": "speaking", "room_id": ...}` で届く。チャット(テキスト入力)や画像・動画からは、今は送らない。
 
 - 送る相手は、ルームの `member_ids` から、`speaker_id` と `present_ids`(今ルームに入っている人)を除いた人。
 - 同じルーム × 同じ受け手には、`SPEAKING_NOTIFY_INTERVAL_S` 秒(既定 600)に1回まで。間隔の内側の人は `skipped` に数える。受け手ごとの最後の送信時刻は timeline テーブルの別のパーティション(`room_id` が `notify-speaking#<room_id>`、`event_id` が受け手の sub。履歴には出ない)に置き、条件付きの UpdateItem(前回が間隔より前なら更新)で決めるので、同時に呼ばれても二重に送らない。テーブルを増やさず、メディアの仮の行と同じく TTL で消える。
