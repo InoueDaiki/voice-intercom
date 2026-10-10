@@ -42,6 +42,8 @@ def test_issues_token_to_admin(make_token: Callable[..., str]) -> None:
     assert grant["attributes"] == {"language": "en"}
     assert grant["video"]["roomJoin"] is True
     assert grant["video"]["room"] == "room-1"
+    # ルームを作るときに Agent を呼ぶ
+    assert grant["roomConfig"]["agents"] == [{"agentName": "voice-intercom"}]
 
 
 def test_issues_token_to_member(make_token: Callable[..., str]) -> None:

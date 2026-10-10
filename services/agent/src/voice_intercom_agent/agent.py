@@ -24,7 +24,7 @@ from .recording import Recorder, create_recorder
 from .segmenter import Segmenter
 from .speech_realtime import RealtimeSpeech
 from .talk_gate import Action, TalkGate
-from .text_input import TEXT_TOPIC, TextInput, parse_text_message
+from .text_input import TEXT_TOPIC, RecentMessages, TextInput, parse_text_message
 from .text_translation import TextTranslator
 
 logger = logging.getLogger(__name__)
@@ -315,6 +315,8 @@ class IntercomAgent:
             max_chars=settings.text_max_chars,
             history=self._deps.history,
         )
+        # アプリの送り直し(入室の直後に捨てられたとき)を1回だけ処理する
+        self._recent_texts = RecentMessages()
         room.on("data_received", self._on_data_received)
         room.on("participant_connected", self._prepare_speech)
         room.on("participant_attributes_changed", self._prepare_speech)
@@ -341,6 +343,9 @@ class IntercomAgent:
         message = parse_text_message(packet.data)
         if message is None:
             logger.warning("テキストを読めなかった: %s", sender.identity)
+            return
+        if self._recent_texts.is_duplicate(sender.identity, message.message_id):
+            logger.info("送り直されたテキストを捨てた: %s %s", sender.identity, message.message_id)
             return
         # 送信者と言語は、メッセージではなく送信元の参加者から取る(なりすましを防ぐ)
         listeners = [

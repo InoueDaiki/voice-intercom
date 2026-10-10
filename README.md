@@ -230,7 +230,7 @@ SSM の値を変えたときは、新しいタスクでないと読み直さな�
 | `PUT /users/me/devices` | push 通知の端末トークンを登録する(`{token, platform: "ios" \| "android"}`、204)。アプリの起動時とトークンの更新時に呼ぶ | 本人 |
 | `DELETE /users/me/devices` | 端末トークンを外す(本文に `{token}`、204)。ログアウトのときに呼ぶ。登録されていなくても 204 | 本人 |
 | `GET /users` | プロフィールを登録したユーザーの一覧(`{items}`) | 管理者 |
-| `POST /livekit/token` | LiveKit の参加用トークン。プロフィールの表示名を name に、言語を参加者の属性 `language` に入れる。ルームがなければ 404、プロフィールが未登録なら 409 | 管理者、メンバー |
+| `POST /livekit/token` | LiveKit の参加用トークン。プロフィールの表示名を name に、言語を参加者の属性 `language` に入れる。Agent のディスパッチ(`AGENT_NAME`、既定 `voice-intercom`)も入れ、ルームが作られたときに Agent が入る。ルームがなければ 404、プロフィールが未登録なら 409 | 管理者、メンバー |
 | `GET /rooms/{room_id}/timeline` | ルームの履歴(`{items, next_before}`)を新しい順に。`limit`(1〜100、既定 50)と `before`(前の応答の `next_before`)でページングする | 管理者、メンバー |
 | `PUT /rooms/{room_id}/timeline/{source_id}` | 発話(`utterance`、字幕の区切りごと)かテキスト入力(`text`)を履歴に保存する。`event_id` は `<occurred_at>#<source_id>` で、同じなら置き換える(再送しても1件) | Agent |
 | `POST /rooms/{room_id}/media/uploads` | 画像・動画を S3 に PUT する署名付き URL(本体と、`has_thumbnail` ならサムネイル)。期限は1時間 | 管理者、メンバー |
