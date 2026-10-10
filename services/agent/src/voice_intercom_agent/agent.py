@@ -330,7 +330,13 @@ class IntercomAgent:
 
     def _on_data_received(self, packet: rtc.DataPacket) -> None:
         sender = packet.participant
-        if packet.topic != TEXT_TOPIC or sender is None or is_agent(sender):
+        if packet.topic != TEXT_TOPIC:
+            return
+        if sender is None:
+            # 入室の直後に送られたテキストは、参加者の情報より先に届き、送信元が分からないことがある
+            logger.warning("送信元が分からないテキストを捨てた(入室の直後に送られた可能性がある)")
+            return
+        if is_agent(sender):
             return
         message = parse_text_message(packet.data)
         if message is None:
