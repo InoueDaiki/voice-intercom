@@ -1,0 +1,14 @@
+# services/agent/Dockerfile 専用の .dockerignore(コンテキストはリポジトリのルート)。
+# 必要なものだけを入れる許可リストにする
+*
+
+!pyproject.toml
+!uv.lock
+!services/agent/pyproject.toml
+!services/agent/src/
+!services/api/pyproject.toml
+!packages/schema/python/pyproject.toml
+!packages/schema/python/src/
+
+**/__pycache__
+**/*.pyc

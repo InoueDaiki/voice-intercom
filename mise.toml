@@ -66,6 +66,14 @@ run = "uv run pytest"
 description = "Lambda(services/api)に載せるディレクトリを .build/api に作る"
 run = "scripts/build-api.sh"
 
+[tasks."build:agent"]
+description = "Agent(services/agent)のイメージを linux/arm64 でビルドする(voice-intercom-agent:local)"
+run = "docker build --platform linux/arm64 -f services/agent/Dockerfile -t voice-intercom-agent:local ."
+
+[tasks."push:agent"]
+description = "Agent のイメージをビルドして ECR に push する(例: mise run push:agent dev)"
+run = "scripts/push-agent.sh"
+
 [tasks."plan:dev"]
 description = "dev 環境の terraform plan(先に init が要る。README を参照)"
 depends = ["build:api"]

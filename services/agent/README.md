@@ -152,3 +152,7 @@ OpenAI と LiveKit に依存しない部分(言語の決め方、発話の開始
 ```sh
 uv run pytest services/agent
 ```
+
+## デプロイ
+
+ECS Fargate(ARM64)で動かす。イメージは `Dockerfile`(ビルドのコンテキストはリポジトリのルート)、インフラは `infra/modules/agent`。手順はルートの README の「LiveKit Agent(ECS Fargate)」を参照する。

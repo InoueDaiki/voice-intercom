@@ -113,6 +113,19 @@ resource "aws_ssm_parameter" "livekit_api_secret" {
   }
 }
 
+# OpenAI の API キー(Agent が使う)。LiveKit の API シークレットと同じく、値は Terraform の外で入れる
+#   aws ssm put-parameter --overwrite --type SecureString \
+#     --name /voice-intercom-dev/openai/api-key --value <key>
+resource "aws_ssm_parameter" "openai_api_key" {
+  name  = "/${local.name_prefix}/openai/api-key"
+  type  = "SecureString"
+  value = "CHANGE_ME"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
 data "aws_iam_policy_document" "api" {
   statement {
     actions = [
@@ -179,4 +192,24 @@ module "api" {
 
 locals {
   client_ids = [module.auth.mobile_client_id, module.auth.admin_client_id, module.auth.agent_client_id]
+}
+
+# LiveKit Agent(ECS Fargate)。dev は小さめのタスク1つにする(使わないときは agent_desired_count を 0 に)
+module "agent" {
+  source = "../../modules/agent"
+
+  name          = "${local.name_prefix}-agent"
+  image_tag     = var.agent_image_tag
+  cpu           = 1024
+  memory        = 2048
+  desired_count = var.agent_desired_count
+
+  # LiveKit Cloud ではアプリと Agent の接続先が同じなので、アプリに返す URL をそのまま使う
+  livekit_url                      = var.livekit_client_url
+  livekit_api_key                  = var.livekit_api_key
+  livekit_api_secret_parameter_arn = aws_ssm_parameter.livekit_api_secret.arn
+  openai_api_key_parameter_arn     = aws_ssm_parameter.openai_api_key.arn
+
+  vpc_cidr           = "10.10.0.0/16"
+  log_retention_days = 14
 }
