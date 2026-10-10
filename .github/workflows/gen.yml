@@ -32,7 +32,7 @@ concurrency:
 
 env:
   MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
-  MISE_DISABLE_TOOLS: github:livekit/livekit,github:livekit/livekit-cli,terraform
+  MISE_DISABLE_TOOLS: github:livekit/livekit,github:livekit/livekit-cli,gh,terraform
 
 jobs:
   gen:

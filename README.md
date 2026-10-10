@@ -97,6 +97,8 @@ flowchart LR
 
 VS Code で「Reopen in Container」を選ぶ。初回に `.devcontainer/post-create.sh` が、ツールと依存関係(`uv sync`、`pnpm install`)を入れる。
 
+GitHub CLI(`gh`。版は `mise.toml`)を使うときは、初回に `gh auth login` でログインする(GitHub.com、HTTPS、ブラウザでの認証を選ぶ)。リポジトリは `InoueDaiki/voice-intercom`(Private)。
+
 ## よく使うコマンド
 
 | コマンド | 内容 | 実行する場所 |

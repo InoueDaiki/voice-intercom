@@ -18,7 +18,7 @@ env:
   # CI では .env がないので、mise.toml だけを信頼する
   MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
   # ローカルの LiveKit サーバーと CLI は CI では使わない
-  MISE_DISABLE_TOOLS: github:livekit/livekit,github:livekit/livekit-cli,terraform
+  MISE_DISABLE_TOOLS: github:livekit/livekit,github:livekit/livekit-cli,gh,terraform
 
 jobs:
   lint:
@@ -44,7 +44,7 @@ jobs:
     timeout-minutes: 15
     env:
       # pytest は Python だけで動く(DynamoDB Local や外部サービスには接続しない)
-      MISE_DISABLE_TOOLS: github:livekit/livekit,github:livekit/livekit-cli,terraform,node,pnpm,buf
+      MISE_DISABLE_TOOLS: github:livekit/livekit,github:livekit/livekit-cli,gh,terraform,node,pnpm,buf
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      MISE_DISABLE_TOOLS: github:livekit/livekit,github:livekit/livekit-cli,terraform,python,uv,node,pnpm
+      MISE_DISABLE_TOOLS: github:livekit/livekit,github:livekit/livekit-cli,gh,terraform,python,uv,node,pnpm
       # PR はベースブランチの先頭と、main への push は push 前の main と比べる
       BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
     steps:

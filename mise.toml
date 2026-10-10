@@ -10,6 +10,8 @@ terraform = "1.16.5"
 buf = "1.73.0"
 "github:livekit/livekit" = { version = "1.13.9", bin = "livekit-server" }
 "github:livekit/livekit-cli" = { version = "2.18.8", bin = "lk" }
+# GitHub CLI(PR や CI の確認。devContainer で使う。CI では入れない)
+gh = "2.102.0"
 
 [env]
 _.file = ".env"

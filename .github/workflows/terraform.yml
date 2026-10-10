@@ -21,7 +21,7 @@ concurrency:
 
 env:
   MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
-  MISE_DISABLE_TOOLS: github:livekit/livekit,github:livekit/livekit-cli,python,uv,node,pnpm,buf
+  MISE_DISABLE_TOOLS: github:livekit/livekit,github:livekit/livekit-cli,gh,python,uv,node,pnpm,buf
   TF_IN_AUTOMATION: "1"
   TF_INPUT: "0"
 
