@@ -15,6 +15,6 @@ output "log_group_name" {
 }
 
 output "task_role_name" {
-  description = "タスクロール(タスク保護の権限はモジュールで付ける)。Agent がほかの AWS の API を使うようになったら、呼び出し元で権限を足す"
+  description = "タスクロール(タスク保護と録音の権限はモジュールで付ける)。Agent がほかの AWS の API を使うようになったら、呼び出し元で権限を足す"
   value       = aws_iam_role.task.name
 }

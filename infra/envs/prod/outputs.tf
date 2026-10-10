@@ -13,3 +13,7 @@ output "agent_service_name" {
 output "agent_log_group_name" {
   value = module.agent.log_group_name
 }
+
+output "recording_bucket" {
+  value = module.recordings.bucket_name
+}

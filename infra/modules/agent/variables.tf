@@ -100,6 +100,18 @@ variable "history" {
   default = null
 }
 
+variable "recording" {
+  description = <<-EOT
+    話者ごと・発話ごとの録音を置く S3 のバケット(infra/modules/recordings)。
+    null なら録音しない。タスクロールに rooms/ の下への s3:PutObject を足し、RECORDING_BUCKET を渡す
+  EOT
+  type = object({
+    bucket_name = string
+    bucket_arn  = string
+  })
+  default = null
+}
+
 variable "environment" {
   description = "コンテナに足す環境変数(AGENT_NAME、モデル名など。services/agent/README.md を参照)"
   type        = map(string)

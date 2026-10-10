@@ -240,6 +240,16 @@ locals {
   client_ids = [module.auth.mobile_client_id, module.auth.admin_client_id, module.auth.agent_client_id]
 }
 
+# 話者ごと・発話ごとの録音(Agent が書く)。media は CloudFront でバケット全体を配信するので、
+# 録音は非公開の別のバケットに置く(infra/modules/recordings)
+module "recordings" {
+  source = "../../modules/recordings"
+
+  bucket_name    = "${local.name_prefix}-recordings-${data.aws_caller_identity.current.account_id}"
+  retention_days = var.recording_retention_days
+  force_destroy  = true
+}
+
 # LiveKit Agent(ECS Fargate)。dev は小さめのタスクを 1〜2 つにする(使わないときは agent_max_count を 0 に)
 module "agent" {
   source = "../../modules/agent"
@@ -263,6 +273,12 @@ module "agent" {
     oidc_token_url              = "${module.auth.hosted_ui_url}/oauth2/token"
     client_id                   = module.auth.agent_client_id
     client_secret_parameter_arn = aws_ssm_parameter.agent_client_secret.arn
+  }
+
+  # 話者ごと・発話ごとの録音を S3 に置く(Egress は使わない。設計メモの「録音の方式」)
+  recording = {
+    bucket_name = module.recordings.bucket_name
+    bucket_arn  = module.recordings.bucket_arn
   }
 
   vpc_cidr           = "10.10.0.0/16"
