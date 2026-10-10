@@ -72,17 +72,29 @@ const dataUrl = (svg: string) => `data:image/svg+xml;charset=utf-8,${encodeURICo
 // 本体は blob: の URL にする。data: の URL は新しいタブで開けない(ブラウザが止める)
 const blobUrl = (content: string, type: string) => URL.createObjectURL(new Blob([content], { type }));
 
-function media(id: string, contentType: string, url: string, thumbnailUrl: string | null, sizeBytes: number): TimelineMedia {
+function media(
+  id: string,
+  contentType: TimelineMedia["content_type"],
+  url: string,
+  thumbnailUrl: string | null,
+  sizeBytes: number,
+): TimelineMedia {
+  // API が受け付ける種類だけを content_type にする(モックの画像の中身は SVG の blob だが、表示には影響しない)
   return { media_id: id, content_type: contentType, url, thumbnail_url: thumbnailUrl, size_bytes: sizeBytes };
 }
 
 const secondsAgo = (s: number) => new Date(Date.now() - s * 1000).toISOString();
 
-type Draft = Omit<TimelineEvent, "event_id" | "occurred_at" | "translations" | "media"> & {
+type Draft = Omit<
+  TimelineEvent,
+  "event_id" | "occurred_at" | "translations" | "media" | "utterance_id" | "segment_index"
+> & {
   secondsAgo: number;
   sourceId: string;
   translations?: Record<string, string>;
   media?: TimelineMedia | null;
+  utterance_id?: string | null;
+  segment_index?: number | null;
 };
 
 function event(d: Draft): TimelineEvent {
@@ -92,6 +104,8 @@ function event(d: Draft): TimelineEvent {
     ...rest,
     translations: d.translations ?? {},
     media: d.media ?? null,
+    utterance_id: d.utterance_id ?? null,
+    segment_index: d.segment_index ?? null,
     occurred_at: occurredAt,
     event_id: `${occurredAt}#${sourceId}`,
   };
@@ -154,12 +168,12 @@ function warehouseTimeline(): TimelineEvent[] {
     event({
       room_id, kind: "media", sender_id: nguyen, language: "vi", text: "Kệ B đã trống.",
       translations: { ja: "B の棚が空きました。", pt: "A prateleira B está vazia.", en: "Shelf B is empty." },
-      media: media("media-shelf", "image/svg+xml", blobUrl(shelf, "image/svg+xml"), dataUrl(svgImage("#3b82f6", "B列", 160, 120)), 48_213),
+      media: media("media-shelf", "image/png", blobUrl(shelf, "image/svg+xml"), dataUrl(svgImage("#3b82f6", "B列", 160, 120)), 48_213),
       sourceId: "media-shelf", secondsAgo: 25,
     }),
     event({
       room_id, kind: "media", sender_id: yamada, language: null, text: "",
-      media: media("media-label", "image/svg+xml", blobUrl(svgImage("#16a34a", "ラベル", 320, 240), "image/svg+xml"), null, 12_034),
+      media: media("media-label", "image/png", blobUrl(svgImage("#16a34a", "ラベル", 320, 240), "image/svg+xml"), null, 12_034),
       sourceId: "media-label", secondsAgo: 18,
     }),
     event({
