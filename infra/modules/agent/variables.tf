@@ -4,7 +4,7 @@ variable "name" {
 }
 
 variable "image_tag" {
-  description = "ECR のイメージのタグ(scripts/push-agent.sh が付ける、コミットのハッシュ)。空なら desired_count を 0 にする(初回の apply で ECR だけ作るため)"
+  description = "ECR のイメージのタグ(scripts/push-agent.sh が付ける、コミットのハッシュ)。空なら台数を 0 にする(初回の apply で ECR だけ作るため)"
   type        = string
   default     = ""
 }
@@ -21,10 +21,49 @@ variable "memory" {
   default     = 8192
 }
 
-variable "desired_count" {
-  description = "タスクの数(台数固定。オートスケールしない理由は main.tf の aws_ecs_service を参照)"
+variable "min_count" {
+  description = "オートスケールの最小の台数。0 にすると CPU の指標が出ないので、ターゲット追跡では 0 台から増えない(使わない環境を止めるときだけ 0 にする)"
   type        = number
   default     = 1
+
+  validation {
+    condition     = var.min_count >= 0
+    error_message = "min_count は 0 以上にする"
+  }
+}
+
+variable "max_count" {
+  description = "オートスケールの最大の台数。0 にすると台数を 0 にする(min_count より小さければ、最小もこれに揃える)"
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.max_count >= 0
+    error_message = "max_count は 0 以上にする"
+  }
+}
+
+variable "cpu_target_percent" {
+  description = "ターゲット追跡の CPU 使用率の目標(%)。LiveKit のワーカーが新しいジョブを断る負荷(既定 0.7)より低くする"
+  type        = number
+  default     = 50
+
+  validation {
+    condition     = var.cpu_target_percent > 0 && var.cpu_target_percent < 70
+    error_message = "cpu_target_percent は 0 より大きく、LiveKit の load_threshold(70%)より小さくする"
+  }
+}
+
+variable "scale_out_cooldown_seconds" {
+  description = "スケールアウトの後、次のスケールアウトまで待つ秒数(新しいタスクが起動して LiveKit に登録するまでの時間を見込む)"
+  type        = number
+  default     = 120
+}
+
+variable "scale_in_cooldown_seconds" {
+  description = "スケールインの後、次のスケールインまで待つ秒数(長めにして、台数を急に減らさない)"
+  type        = number
+  default     = 900
 }
 
 variable "livekit_url" {

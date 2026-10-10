@@ -5,6 +5,7 @@ import logging
 import openai
 from livekit.agents import AgentServer, AutoSubscribe, JobContext, cli
 
+from . import task_protection
 from .agent import IntercomAgent
 from .config import Settings, agent_name
 from .text_translation import TextTranslator
@@ -12,6 +13,8 @@ from .text_translation import TextTranslator
 logger = logging.getLogger(__name__)
 
 server = AgentServer()
+# ECS の上では、ジョブを持っている間だけタスクのスケールイン保護を付ける
+task_protection.install(server)
 
 
 @server.rtc_session(agent_name=agent_name())

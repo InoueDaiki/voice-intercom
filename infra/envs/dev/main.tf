@@ -229,15 +229,16 @@ locals {
   client_ids = [module.auth.mobile_client_id, module.auth.admin_client_id, module.auth.agent_client_id]
 }
 
-# LiveKit Agent(ECS Fargate)。dev は小さめのタスク1つにする(使わないときは agent_desired_count を 0 に)
+# LiveKit Agent(ECS Fargate)。dev は小さめのタスクを 1〜2 つにする(使わないときは agent_max_count を 0 に)
 module "agent" {
   source = "../../modules/agent"
 
-  name          = "${local.name_prefix}-agent"
-  image_tag     = var.agent_image_tag
-  cpu           = 1024
-  memory        = 2048
-  desired_count = var.agent_desired_count
+  name      = "${local.name_prefix}-agent"
+  image_tag = var.agent_image_tag
+  cpu       = 1024
+  memory    = 2048
+  min_count = var.agent_min_count
+  max_count = var.agent_max_count
 
   # LiveKit Cloud ではアプリと Agent の接続先が同じなので、アプリに返す URL をそのまま使う
   livekit_url                      = var.livekit_client_url

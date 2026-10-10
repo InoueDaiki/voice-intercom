@@ -84,6 +84,10 @@ PoC で分かったことに従う(`realtime.py` の先頭にまとめてある)
 | `OIDC_ISSUER` | (なし) | `OIDC_TOKEN_URL` が無いときに探索に使う。ローカルでは `.env` の値がそのまま使われる |
 | `HISTORY_TRANSLATION_WAIT_S` | `30` | 原文の確定から、訳がそろうのを待つ上限(秒) |
 | `HISTORY_FLUSH_TIMEOUT_S` | `5` | ジョブの終わりに、送り残しを送るのを待つ上限(秒) |
+| `ECS_AGENT_URI` | | ECS が入れる。あれば、ジョブを持つ間だけタスクのスケールイン保護を付ける(`task_protection.py`。無ければ何もしない) |
+| `TASK_PROTECTION_EXPIRES_MIN` | `60` | 1回で付ける保護の長さ(分、1〜2880)。Agent が落ちたら、この長さで保護が切れる |
+| `TASK_PROTECTION_RENEW_MIN` | `20` | ジョブがある間、保護を延長する間隔(分)。期限より短くする |
+| `TASK_PROTECTION_MAX_HOURS` | `12` | 保護を続ける長さの上限(時間)。過ぎたら延長をやめる(ジョブが絶えないタスクでもデプロイが終わるように)。`0` なら上限なし |
 
 ## ローカルで確かめる
 
