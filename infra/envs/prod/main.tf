@@ -73,6 +73,10 @@ module "agent" {
   livekit_api_secret_parameter_arn = aws_ssm_parameter.livekit_api_secret.arn
   openai_api_key_parameter_arn     = aws_ssm_parameter.openai_api_key.arn
 
+  # prod にはまだ Cognito と API が無いので、履歴は保存しない。入れるときは dev と同じく
+  # Agent のクライアントシークレットの SSM パラメーターを作り、history を渡す
+  history = null
+
   vpc_cidr           = "10.20.0.0/16"
   log_retention_days = 90
 }

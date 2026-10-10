@@ -126,6 +126,21 @@ resource "aws_ssm_parameter" "openai_api_key" {
   }
 }
 
+# Agent の Cognito のクライアントシークレット(履歴の保存で API を呼ぶときに使う)。
+# 値は Terraform の外で入れる。Cognito が作った値を terraform output から写す(README を参照)
+#   aws ssm put-parameter --overwrite --type SecureString \
+#     --name /voice-intercom-dev/cognito/agent-client-secret \
+#     --value "$(terraform -chdir=infra/envs/dev output -raw agent_client_secret)"
+resource "aws_ssm_parameter" "agent_client_secret" {
+  name  = "/${local.name_prefix}/cognito/agent-client-secret"
+  type  = "SecureString"
+  value = "CHANGE_ME"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
 data "aws_iam_policy_document" "api" {
   statement {
     actions = [
@@ -209,6 +224,14 @@ module "agent" {
   livekit_api_key                  = var.livekit_api_key
   livekit_api_secret_parameter_arn = aws_ssm_parameter.livekit_api_secret.arn
   openai_api_key_parameter_arn     = aws_ssm_parameter.openai_api_key.arn
+
+  # 確定した字幕を API で履歴に保存する(client credentials でトークンを取る)
+  history = {
+    api_base_url                = module.api.api_endpoint
+    oidc_token_url              = "${module.auth.hosted_ui_url}/oauth2/token"
+    client_id                   = module.auth.agent_client_id
+    client_secret_parameter_arn = aws_ssm_parameter.agent_client_secret.arn
+  }
 
   vpc_cidr           = "10.10.0.0/16"
   log_retention_days = 14

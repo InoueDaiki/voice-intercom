@@ -47,6 +47,20 @@ variable "openai_api_key_parameter_arn" {
   type        = string
 }
 
+variable "history" {
+  description = <<-EOT
+    確定した字幕を API(PUT /rooms/{room_id}/timeline/{source_id})で履歴に保存するための設定。
+    null なら保存しない(API がまだ無い環境)。client_secret は SSM パラメーター(SecureString)の ARN で渡す
+  EOT
+  type = object({
+    api_base_url                = string
+    oidc_token_url              = string
+    client_id                   = string
+    client_secret_parameter_arn = string
+  })
+  default = null
+}
+
 variable "environment" {
   description = "コンテナに足す環境変数(AGENT_NAME、モデル名など。services/agent/README.md を参照)"
   type        = map(string)

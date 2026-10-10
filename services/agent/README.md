@@ -5,6 +5,7 @@ LiveKit Agent。話者の音声を OpenAI に中継し、字幕と翻訳音声�
 - 原文の字幕: 話者ごとに1本の gpt-realtime-whisper
 - 翻訳音声: 翻訳先の言語ごとに gpt-realtime-translate のセッションを作り、言語別のトラックで配信する
 - 翻訳の字幕: whisper の書き起こしが確定したら、gpt-6-luna でテキスト翻訳する(STS の翻訳テキストはログに残すだけ)。長い発話は途中で区切り、区切りごとに確定と翻訳を進める
+- 履歴: 区切りごとに、確定した原文と訳を REST API で DynamoDB の timeline に保存する(設定があるときだけ)
 
 PoC(`poc/`)は LiveKit を使わずに OpenAI だけを測るスクリプトで、この Agent とは別に動く。
 
@@ -43,9 +44,21 @@ PoC で分かったことに従う(`realtime.py` の先頭にまとめてある)
 - 字幕は区切りごとに別の `segment_id` にする。同じ `segment_id` で確定を何回も出すと、「確定は最後に1回だけ」という取り決めが崩れ、古いアプリでは字幕が壊れる。別の `segment_id` なら、古いアプリは区切りを別々の字幕として表示する。新しいアプリは、`utterance_id` が同じ字幕を `segment_index` の順に並べて、1つの発話として見せられる。
 - whisper の書き起こしのイベントは、commit ごとに作られる会話のアイテムの `item_id` で区切りに対応させる(アイテムは commit の順に作られる)。
 
+## 履歴の保存
+
+確定した字幕を、REST API の `PUT /rooms/{room_id}/timeline/{source_id}` で履歴(DynamoDB の timeline)に保存する(`history.py`)。設定(下の表の `API_BASE_URL` など)が無ければ保存せず、「履歴の保存は無効」と、ジョブのプロセスごとに一度だけログに出す。ローカルで API がなくても Agent は動く。
+
+- **いつ保存するか**: 1つの区切り(`segment_id`)について、原文の確定と、翻訳先の全言語の訳の確定がそろったら1回だけ PUT する。訳の失敗も「そろった」に数え、その言語は `translations` に入れない(途中までの訳は残さない)。原文の確定から `HISTORY_TRANSLATION_WAIT_S`(既定30秒)たっても訳がそろわなければ、そろった分だけで保存する。後から届いた訳は捨てる。原文が空の区切りは保存しない。
+- **中身**: `kind` は `utterance`、`sender_id` は話者の identity、`occurred_at` は区切りの開始時刻(UTC、ミリ秒まで。最初の区切りはミュートを外した時刻、以降は区切った時刻)、`language` は話者の言語(分からなければ null)、`utterance_id` と `segment_index` は字幕と同じ。`room_id` は LiveKit のルーム名。
+- **source_id**: `segment_id`(uuid4 の hex、32文字)をそのまま使う。API の形(`^[A-Za-z0-9_-]{1,128}$`)に合わない値が来たら、SHA-256 の hex にする(同じ値は同じ source_id になり、冪等が保たれる)。
+- **トークン**: client credentials(`client_secret_basic`、スコープ `voice-intercom/agent`)で取り、期限の60秒前まで使い回す。トークンエンドポイントは `OIDC_TOKEN_URL`、無ければ `OIDC_ISSUER` の探索(`/.well-known/openid-configuration` の `token_endpoint`)で得る。AWS では Terraform が `OIDC_TOKEN_URL`(Cognito のドメインの `/oauth2/token`)を渡す。
+- **失敗への備え**: 通信の失敗、トークンを取れないこと、5xx、408、429 は、1・2・4秒の間隔で最大4回まで試す(PUT は冪等なので安全)。401 はトークンを取り直して1回だけやり直す。404(API にルームがない)とその他の 4xx は再送せず、ログに出して捨てる。
+- **字幕を待たせない**: PUT はバックグラウンドのタスクで送り、同時に4本まで。保存の失敗で字幕の配信や発話の処理は止まらない。
+- **ジョブの終わり**: 訳がそろっていない区切りも、そろった分だけで送る。送り中のものと合わせて `HISTORY_FLUSH_TIMEOUT_S`(既定5秒)まで待ち、残りは捨てる(ログに件数を出す)。livekit-agents はジョブの終了処理を10秒(`shutdown_process_timeout`)で打ち切るので、それより短くしてある。
+
 ## 今はやっていないこと
 
-API・DynamoDB への保存、テキスト入力の読み上げ、録音、待機用のセッションを先に開いておく最適化、字幕の翻訳に前の区切りの文脈を渡すこと。
+テキスト入力の読み上げ、録音、待機用のセッションを先に開いておく最適化、字幕の翻訳に前の区切りの文脈を渡すこと。履歴の保存で、送れなかったものをディスクなどに残して後で送り直すこと(ジョブの終わりに送れなかった分と、再送しても失敗した分は失われる)。
 
 ## 設定(環境変数)
 
@@ -65,6 +78,12 @@ API・DynamoDB への保存、テキスト入力の読み上げ、録音、待�
 | `SEGMENT_LONG_PAUSE_S` | `1` | 文末でなくても区切る無音(秒) |
 | `SEGMENT_MAX_S` | `15` | これより長い区切りは、文末でなくても `SEGMENT_PAUSE_S` の無音で区切る(秒) |
 | `SEGMENT_SILENCE_DBFS` | `-50` | これより小さい音量(10ms ごとの RMS)を無音とみなす |
+| `API_BASE_URL` | (なし) | 履歴を保存する API の URL(例: `https://xxxx.execute-api.ap-northeast-1.amazonaws.com`)。無ければ保存しない |
+| `AGENT_CLIENT_ID`、`AGENT_CLIENT_SECRET` | (なし) | client credentials の Cognito のクライアント(Agent 用)。無ければ保存しない。模擬 OIDC では何でもよい(`agent` にする) |
+| `OIDC_TOKEN_URL` | (なし) | トークンエンドポイント。無ければ `OIDC_ISSUER` の探索で得る |
+| `OIDC_ISSUER` | (なし) | `OIDC_TOKEN_URL` が無いときに探索に使う。ローカルでは `.env` の値がそのまま使われる |
+| `HISTORY_TRANSLATION_WAIT_S` | `30` | 原文の確定から、訳がそろうのを待つ上限(秒) |
+| `HISTORY_FLUSH_TIMEOUT_S` | `5` | ジョブの終わりに、送り残しを送るのを待つ上限(秒) |
 
 ## ローカルで確かめる
 
@@ -117,6 +136,34 @@ LiveKit サーバーはホスト、Agent と確認用ツール(`devtools/`)は d
 
 `poc/audio/` の WAV の作り方は `poc/README.md` を参照する。
 
+### 履歴の保存を確かめる
+
+模擬 OIDC(devContainer と一緒に起動する)からトークンを取り、API に PUT する流れを確かめる。
+
+1. devContainer で、模擬 OIDC から client credentials のトークンを取れるか確かめる。claims に `client_id`、`token_use`、`scope`(`voice-intercom/agent`)が入る(`.devcontainer/mock-oidc.json`)。模擬 OIDC はクライアントシークレットを確かめない。
+
+   ```sh
+   curl -s -u agent:secret -d grant_type=client_credentials -d scope=voice-intercom/agent \
+     "$OIDC_ISSUER/token"
+   ```
+
+2. 保存先を起動する。
+   - **API で確かめる**: `services/api` を 3000 番で動かす(起動のしかたは `services/api` を参照)。ルームは管理コンソールか `POST /rooms` で、LiveKit のルーム名と同じ `room_id`(例: `test`)で作っておく。無いと 404 になり、Agent は保存しない。
+   - **API なしで確かめる**: `devtools/timeline_sink.py` が、受けた PUT の中身とトークンの claims を表示する。`--fail 2` で最初の2回に 503 を返し(再送の確認)、`--not-found` でいつも 404 を返す。
+
+     ```sh
+     uv run services/agent/devtools/timeline_sink.py --port 3000
+     ```
+
+3. 設定を渡して Agent を起動する。`OIDC_ISSUER` は `.env` の値が使われ、探索でトークンエンドポイントを得る。
+
+   ```sh
+   API_BASE_URL=http://localhost:3000 AGENT_CLIENT_ID=agent AGENT_CLIENT_SECRET=secret \
+     uv run python -m voice_intercom_agent start
+   ```
+
+4. 上の「ローカルで確かめる」の 3〜4 のとおり、聞き手と話者を入れて話す。区切りの訳がそろうたびに1回 PUT が届く。聞き手を `--language en` と `--language ko` の2人にすると、`translations` に2言語が入る。聞き手を退室させてジョブを終わらせると、訳を待っている区切りがそろった分だけで送られる。
+
 ### 字幕の区切りを確かめる
 
 30秒ほどの長い発話で、区切りの位置と、訳の字幕が出るまでの時間を確かめる(OpenAI の API を使うので課金される。1回で whisper と translate を約30秒ずつ)。
@@ -147,7 +194,7 @@ LiveKit サーバーはホスト、Agent と確認用ツール(`devtools/`)は d
 
 ## テスト
 
-OpenAI と LiveKit に依存しない部分(言語の決め方、発話の開始と終了の判断、字幕の区切りの判断、字幕の組み立て、翻訳音声の混ぜ方)を単体テストにしている。whisper の区切りと書き起こしのイベントの対応も、通信せずにテストしている。
+OpenAI と LiveKit に依存しない部分(言語の決め方、発話の開始と終了の判断、字幕の区切りの判断、字幕の組み立て、翻訳音声の混ぜ方、履歴の保存)を単体テストにしている。履歴の保存は、テストの中でローカルに立てた偽の OIDC と API に向けて試す(トークンの使い回しと取り直し、そろったら1回だけ送ること、待つ上限、再送、404、ジョブの終わりの送り残し)。whisper の区切りと書き起こしのイベントの対応も、通信せずにテストしている。
 
 ```sh
 uv run pytest services/agent
