@@ -3,6 +3,8 @@
 import os
 from dataclasses import dataclass
 
+from .segmenter import SegmentRules
+
 DEFAULT_AGENT_NAME = "voice-intercom"
 
 
@@ -16,6 +18,8 @@ class Settings:
     translate_close_timeout_s: float
     # input_audio_buffer.commit から completed を待つ上限(PoC では約0.6秒)
     whisper_commit_timeout_s: float
+    # 長い発話の字幕の区切り。None なら区切らない(PTT を離すまで確定しない)
+    segment_rules: SegmentRules | None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -29,7 +33,22 @@ class Settings:
             text_translate_model=os.environ.get("TEXT_TRANSLATE_MODEL", "gpt-6-luna"),
             translate_close_timeout_s=float(os.environ.get("TRANSLATE_CLOSE_TIMEOUT_S", "40")),
             whisper_commit_timeout_s=float(os.environ.get("WHISPER_COMMIT_TIMEOUT_S", "10")),
+            segment_rules=segment_rules_from_env(),
         )
+
+
+def segment_rules_from_env() -> SegmentRules | None:
+    """字幕の区切りの設定。SEGMENT_ENABLED を 0 にすると区切らない。"""
+    if os.environ.get("SEGMENT_ENABLED", "1") == "0":
+        return None
+    d = SegmentRules()
+    return SegmentRules(
+        min_s=float(os.environ.get("SEGMENT_MIN_S", d.min_s)),
+        pause_s=float(os.environ.get("SEGMENT_PAUSE_S", d.pause_s)),
+        long_pause_s=float(os.environ.get("SEGMENT_LONG_PAUSE_S", d.long_pause_s)),
+        max_s=float(os.environ.get("SEGMENT_MAX_S", d.max_s)),
+        silence_dbfs=float(os.environ.get("SEGMENT_SILENCE_DBFS", d.silence_dbfs)),
+    )
 
 
 def agent_name() -> str:

@@ -21,7 +21,7 @@
    say -v Samantha -o en-01.wav --data-format=LEI16@24000 "The shipment of 250 units will arrive at Gate 14 on Thursday morning."
    ```
 
-   WAV は `services/agent/poc/audio/` に置く(git 管理外)。下の「評価用の文」は、`services/agent/poc/make_audio.sh` でまとめて読み上げ音声にできる(`ja-01`〜`ja-05`、`en-01`〜`en-04`)。
+   WAV は `services/agent/poc/audio/` に置く(git 管理外)。下の「評価用の文」は、`services/agent/poc/make_audio.sh` でまとめて読み上げ音声にできる(`ja-01`〜`ja-05`、`en-01`〜`en-04`)。同じスクリプトで、字幕の区切りを確かめる30秒ほどの音声(`long-ja-01`、`long-en-01`)も作る。使い方は `services/agent/README.md` の「字幕の区切りを確かめる」にある。
 
 ## 実行
 

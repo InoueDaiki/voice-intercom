@@ -15,6 +15,7 @@ from .config import Settings
 from .languages import participant_language, target_languages
 from .output import CaptionPublisher, TranslationTracks
 from .realtime import INPUT_SAMPLE_RATE, TranslateSession, WhisperSession
+from .segmenter import Segmenter
 from .talk_gate import Action, TalkGate
 from .text_translation import TextTranslator
 
@@ -37,7 +38,11 @@ class Deps:
 
 
 class Utterance:
-    """1つの発話。whisper を1本と、翻訳先の言語ごとに translate を1本開く。"""
+    """1つの発話。whisper を1本と、翻訳先の言語ごとに translate を1本開く。
+
+    長い発話は、字幕のために途中で区切る(segmenter.py)。区切りごとに whisper の書き起こしを
+    確定させ、テキスト翻訳して訳の字幕を出す。翻訳音声(translate)は区切らない。
+    """
 
     def __init__(
         self, deps: Deps, speaker: str, speaker_language: str | None, targets: list[str]
@@ -46,20 +51,25 @@ class Utterance:
         self._speaker_identity = speaker
         self._speaker_language = speaker_language
         self._targets = targets
-        self.segment_id = new_segment_id()
-        self._original = self._caption_track(speaker_language or "", translated=False)
-        self._translations: list[asyncio.Task[None]] = []
+        self.utterance_id = new_segment_id()
         settings = deps.settings
-        whisper = WhisperSession(
+        rules = settings.segment_rules
+        self._segmenter = Segmenter(rules) if rules is not None else None
+        # 区切りの番号ごとの segment_id と原文の字幕。いま音声を送っている区切りの番号
+        self._segment_ids: dict[int, str] = {}
+        self._originals: dict[int, CaptionTrack] = {}
+        self._open = 0
+        self._translations: list[asyncio.Task[None]] = []
+        self._whisper = WhisperSession(
             deps.http,
             settings.openai_api_key,
             model=settings.whisper_model,
             language=speaker_language,
             commit_timeout_s=settings.whisper_commit_timeout_s,
-            on_delta=lambda text: deps.captions.send(self._original.delta(text)),
+            on_delta=self._on_delta,
             on_completed=self._on_transcript,
         )
-        self._sessions: list[WhisperSession | TranslateSession] = [whisper]
+        self._sessions: list[WhisperSession | TranslateSession] = [self._whisper]
         for lang in targets:
             track = deps.tracks.get(lang)
             self._sessions.append(
@@ -75,17 +85,38 @@ class Utterance:
                 )
             )
 
-    def _caption_track(self, language: str, *, translated: bool) -> CaptionTrack:
+    def _segment_id(self, index: int) -> str:
+        segment_id = self._segment_ids.get(index)
+        if segment_id is None:
+            segment_id = self._segment_ids[index] = new_segment_id()
+        return segment_id
+
+    def _original(self, index: int) -> CaptionTrack:
+        track = self._originals.get(index)
+        if track is None:
+            track = self._originals[index] = self._caption_track(
+                index, self._speaker_language or "", translated=False
+            )
+        return track
+
+    def _caption_track(self, index: int, language: str, *, translated: bool) -> CaptionTrack:
         return CaptionTrack(
             speaker_identity=self._speaker_identity,
-            segment_id=self.segment_id,
+            segment_id=self._segment_id(index),
             language=language,
             translated=translated,
+            utterance_id=self.utterance_id,
+            segment_index=index,
         )
 
     def push(self, pcm: bytes) -> None:
         for s in self._sessions:
             s.push(pcm)
+        if self._segmenter is not None and self._segmenter.audio(pcm):
+            # このフレームまでを1つの区切りとして確定させる
+            self._whisper.split()
+            self._open += 1
+            logger.info("字幕を区切った: %s #%d", self.utterance_id, self._open - 1)
 
     def finish(self) -> None:
         for s in self._sessions:
@@ -95,18 +126,24 @@ class Utterance:
         await asyncio.gather(*(s.run() for s in self._sessions))
         # 翻訳の字幕は whisper の確定の中で始まる。終わるまで待つ
         await asyncio.gather(*self._translations)
-        logger.info("発話を終えた: %s", self.segment_id)
+        logger.info("発話を終えた: %s", self.utterance_id)
 
-    def _on_transcript(self, text: str) -> None:
-        self._deps.captions.send(self._original.final(text))
-        logger.info("原文: %s", text)
+    def _on_delta(self, index: int, text: str) -> None:
+        self._deps.captions.send(self._original(index).delta(text))
+        # 区切りの判断には、いま音声を送っている区切りの書き起こしだけを使う
+        if self._segmenter is not None and index == self._open:
+            self._segmenter.text(text)
+
+    def _on_transcript(self, index: int, text: str) -> None:
+        self._deps.captions.send(self._original(index).final(text))
         if not text.strip():
             return
+        logger.info("原文 #%d: %s", index, text)
         for lang in self._targets:
-            self._translations.append(asyncio.create_task(self._translate(text, lang)))
+            self._translations.append(asyncio.create_task(self._translate(index, text, lang)))
 
-    async def _translate(self, text: str, target: str) -> None:
-        track = self._caption_track(target, translated=True)
+    async def _translate(self, index: int, text: str, target: str) -> None:
+        track = self._caption_track(index, target, translated=True)
         parts: list[str] = []
         try:
             async for delta in self._deps.translator.stream(text, self._speaker_language, target):
@@ -116,7 +153,7 @@ class Utterance:
             logger.exception("字幕の翻訳に失敗した(%s)", target)
         result = "".join(parts).strip()
         self._deps.captions.send(track.final(result))
-        logger.info("訳(%s): %s", target, result)
+        logger.info("訳 #%d(%s): %s", index, target, result)
 
 
 class Speaker:
@@ -167,7 +204,7 @@ class Speaker:
                 identity,
                 speaker_language or "不明",
                 ",".join(targets) or "なし",
-                self._utterance.segment_id,
+                self._utterance.utterance_id,
             )
             self._deps.spawn(self._utterance.run())
         elif action is Action.END and self._utterance is not None:

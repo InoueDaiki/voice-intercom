@@ -18,9 +18,12 @@ export 'package:protobuf/protobuf.dart' show GeneratedMessageGenericExtensions;
 
 /// 字幕。Agent がデータチャネル(topic は "caption"、reliable)で配信する。
 ///
-/// 1つの発話に segment_id を1つ振り、原文と各言語の翻訳で共有する。
+/// 字幕の区切りに segment_id を1つ振り、原文と各言語の翻訳で共有する。短い発話は発話全体が
+/// 1つの区切りになる。長い発話は、Agent が息継ぎなどで途中を区切り、区切りごとに別の segment_id を
+/// 振る(同じ発話の区切りは utterance_id を共有する)。
 /// 受信側は (segment_id, language, translated) ごとに、断片(is_final が false)を順に連結して
 /// 途中の字幕として表示し、確定(is_final が true)が届いたらその text で置き換える。
+/// utterance_id を知らない受信側は、区切りを別々の字幕として表示すればよい。
 class Caption extends $pb.GeneratedMessage {
   factory Caption({
     $core.String? speakerIdentity,
@@ -29,6 +32,8 @@ class Caption extends $pb.GeneratedMessage {
     $core.bool? translated,
     $core.String? text,
     $core.bool? isFinal,
+    $core.String? utteranceId,
+    $core.int? segmentIndex,
   }) {
     final result = Caption._();
     if (speakerIdentity != null) result.speakerIdentity = speakerIdentity;
@@ -37,6 +42,8 @@ class Caption extends $pb.GeneratedMessage {
     if (translated != null) result.translated = translated;
     if (text != null) result.text = text;
     if (isFinal != null) result.isFinal = isFinal;
+    if (utteranceId != null) result.utteranceId = utteranceId;
+    if (segmentIndex != null) result.segmentIndex = segmentIndex;
     return result;
   }
 
@@ -60,6 +67,9 @@ class Caption extends $pb.GeneratedMessage {
     ..aOB(4, _omitFieldNames ? '' : 'translated')
     ..aOS(5, _omitFieldNames ? '' : 'text')
     ..aOB(6, _omitFieldNames ? '' : 'isFinal')
+    ..aOS(7, _omitFieldNames ? '' : 'utteranceId')
+    ..aI(8, _omitFieldNames ? '' : 'segmentIndex',
+        fieldType: $pb.PbFieldType.OU3)
     ..hasRequiredFields = false;
 
   @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
@@ -92,7 +102,7 @@ class Caption extends $pb.GeneratedMessage {
   @$pb.TagNumber(1)
   void clearSpeakerIdentity() => $_clearField(1);
 
-  /// 発話の単位。原文と翻訳で同じ ID を使う
+  /// 字幕の区切りの単位。原文と翻訳で同じ ID を使う
   @$pb.TagNumber(2)
   $core.String get segmentId => $_getSZ(1);
   @$pb.TagNumber(2)
@@ -142,6 +152,27 @@ class Caption extends $pb.GeneratedMessage {
   $core.bool hasIsFinal() => $_has(5);
   @$pb.TagNumber(6)
   void clearIsFinal() => $_clearField(6);
+
+  /// 発話(PTT を押してから離すまで)の単位。同じ発話の区切りで共有する。
+  /// 空なら、その segment_id が1つの発話にあたる(この項目を足す前の Agent)
+  @$pb.TagNumber(7)
+  $core.String get utteranceId => $_getSZ(6);
+  @$pb.TagNumber(7)
+  set utteranceId($core.String value) => $_setString(6, value);
+  @$pb.TagNumber(7)
+  $core.bool hasUtteranceId() => $_has(6);
+  @$pb.TagNumber(7)
+  void clearUtteranceId() => $_clearField(7);
+
+  /// 発話の中での区切りの順番(0 から)。訳の確定は区切りの順に届くとは限らないので、並べるときに使う
+  @$pb.TagNumber(8)
+  $core.int get segmentIndex => $_getIZ(7);
+  @$pb.TagNumber(8)
+  set segmentIndex($core.int value) => $_setUnsignedInt32(7, value);
+  @$pb.TagNumber(8)
+  $core.bool hasSegmentIndex() => $_has(7);
+  @$pb.TagNumber(8)
+  void clearSegmentIndex() => $_clearField(8);
 }
 
 const $core.bool _omitFieldNames =

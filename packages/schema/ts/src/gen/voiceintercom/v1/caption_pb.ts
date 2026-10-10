@@ -10,14 +10,17 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file voiceintercom/v1/caption.proto.
  */
 export const file_voiceintercom_v1_caption: GenFile = /*@__PURE__*/
-  fileDesc("Ch52b2ljZWludGVyY29tL3YxL2NhcHRpb24ucHJvdG8SEHZvaWNlaW50ZXJjb20udjEifQoHQ2FwdGlvbhIYChBzcGVha2VyX2lkZW50aXR5GAEgASgJEhIKCnNlZ21lbnRfaWQYAiABKAkSEAoIbGFuZ3VhZ2UYAyABKAkSEgoKdHJhbnNsYXRlZBgEIAEoCBIMCgR0ZXh0GAUgASgJEhAKCGlzX2ZpbmFsGAYgASgIYgZwcm90bzM");
+  fileDesc("Ch52b2ljZWludGVyY29tL3YxL2NhcHRpb24ucHJvdG8SEHZvaWNlaW50ZXJjb20udjEiqgEKB0NhcHRpb24SGAoQc3BlYWtlcl9pZGVudGl0eRgBIAEoCRISCgpzZWdtZW50X2lkGAIgASgJEhAKCGxhbmd1YWdlGAMgASgJEhIKCnRyYW5zbGF0ZWQYBCABKAgSDAoEdGV4dBgFIAEoCRIQCghpc19maW5hbBgGIAEoCBIUCgx1dHRlcmFuY2VfaWQYByABKAkSFQoNc2VnbWVudF9pbmRleBgIIAEoDWIGcHJvdG8z");
 
 /**
  * 字幕。Agent がデータチャネル(topic は "caption"、reliable)で配信する。
  *
- * 1つの発話に segment_id を1つ振り、原文と各言語の翻訳で共有する。
+ * 字幕の区切りに segment_id を1つ振り、原文と各言語の翻訳で共有する。短い発話は発話全体が
+ * 1つの区切りになる。長い発話は、Agent が息継ぎなどで途中を区切り、区切りごとに別の segment_id を
+ * 振る(同じ発話の区切りは utterance_id を共有する)。
  * 受信側は (segment_id, language, translated) ごとに、断片(is_final が false)を順に連結して
  * 途中の字幕として表示し、確定(is_final が true)が届いたらその text で置き換える。
+ * utterance_id を知らない受信側は、区切りを別々の字幕として表示すればよい。
  *
  * @generated from message voiceintercom.v1.Caption
  */
@@ -30,7 +33,7 @@ export type Caption = Message<"voiceintercom.v1.Caption"> & {
   speakerIdentity: string;
 
   /**
-   * 発話の単位。原文と翻訳で同じ ID を使う
+   * 字幕の区切りの単位。原文と翻訳で同じ ID を使う
    *
    * @generated from field: string segment_id = 2;
    */
@@ -64,6 +67,21 @@ export type Caption = Message<"voiceintercom.v1.Caption"> & {
    * @generated from field: bool is_final = 6;
    */
   isFinal: boolean;
+
+  /**
+   * 発話(PTT を押してから離すまで)の単位。同じ発話の区切りで共有する。
+   * 空なら、その segment_id が1つの発話にあたる(この項目を足す前の Agent)
+   *
+   * @generated from field: string utterance_id = 7;
+   */
+  utteranceId: string;
+
+  /**
+   * 発話の中での区切りの順番(0 から)。訳の確定は区切りの順に届くとは限らないので、並べるときに使う
+   *
+   * @generated from field: uint32 segment_index = 8;
+   */
+  segmentIndex: number;
 };
 
 /**
