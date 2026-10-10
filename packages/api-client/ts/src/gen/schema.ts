@@ -617,7 +617,7 @@ export interface components {
         /** ValidationError */
         ValidationError: {
             /** Location */
-            loc: (string | number)[];
+            loc: unknown[];
             /** Error Type */
             type: string;
         };
