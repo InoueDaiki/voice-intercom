@@ -110,12 +110,14 @@ VS Code で「Reopen in Container」を選ぶ。初回に `.devcontainer/post-cr
 | `mise run admin` | 管理コンソールの開発サーバーを起動する(`http://localhost:5173`) | devContainer |
 | `mise run livekit` | ローカルの LiveKit サーバーを起動する(`--dev`、LAN に公開) | ホスト |
 | `mise run build:api` | Lambda に載せるディレクトリ(`.build/api`)を作る | devContainer |
+| `mise run build:agent` | Agent のイメージを linux/arm64 でビルドする(`voice-intercom-agent:local`) | devContainer |
+| `mise run push:agent <env>` | Agent のイメージをビルドして ECR に push し、apply に渡すタグを表示する | devContainer |
 | `mise run plan:dev` | `build:api` の後に、dev 環境の `terraform plan` を実行する | devContainer |
 | `mise run local:init` | ローカルの DynamoDB と S3 に、テーブルとバケットを作る | devContainer |
 
 ## AWS(Terraform)
 
-`infra/modules` に Cognito、DynamoDB、S3 + CloudFront(`media`)、API Gateway + Lambda(`api`)のモジュールがあり、`infra/envs/<env>` から呼ぶ。
+`infra/modules` に Cognito、DynamoDB、S3 + CloudFront(`media`)、API Gateway + Lambda(`api`)、LiveKit Agent の ECS Fargate(`agent`)のモジュールがあり、`infra/envs/<env>` から呼ぶ。
 
 1. `.env` に `AWS_PROFILE` と `TF_STATE_BUCKET` を書き、`aws sso login` する。
 2. 初回だけ `terraform -chdir=infra/envs/dev init -backend-config="bucket=$TF_STATE_BUCKET"` を実行する。state 用のバケットがまだなければ、先に `scripts/bootstrap-tfstate.sh` で作る(dev と prod で共用し、キーで分ける)。
@@ -128,6 +130,39 @@ VS Code で「Reopen in Container」を選ぶ。初回に `.devcontainer/post-cr
    ```
 
 LiveKit の URL と API キーは `TF_VAR_livekit_client_url`、`TF_VAR_livekit_api_key` で渡す。
+
+### LiveKit Agent(ECS Fargate)
+
+Agent は `services/agent/Dockerfile` のイメージ(linux/arm64)を、ECS Fargate(ARM64)で動かす。モジュールは `infra/modules/agent`。
+
+1. 初回の apply では ECR などができるだけで、タスクは起動しない(`agent_image_tag` が空のうちは台数を 0 にする)。
+2. OpenAI の API キーを SSM に入れる(LiveKit の API シークレットと同じく、Terraform には値を持たせない)。prod では LiveKit の API シークレットも同じように入れる。
+
+   ```sh
+   aws ssm put-parameter --overwrite --type SecureString \
+     --name /voice-intercom-dev/openai/api-key --value <key>
+   ```
+
+3. コミットしてから、イメージを ECR に push する。最後に apply に渡すタグ(コミットのハッシュ)が表示される。
+
+   ```sh
+   mise run push:agent dev
+   ```
+
+4. タグを渡して apply する。タスクが起動し、LiveKit に登録する。ログは CloudWatch Logs の `/ecs/voice-intercom-dev-agent`。
+
+   ```sh
+   TF_VAR_agent_image_tag=<タグ> terraform -chdir=infra/envs/dev apply
+   ```
+
+SSM の値を変えたときは、新しいタスクでないと読み直さない。`aws ecs update-service --force-new-deployment --cluster voice-intercom-dev-agent --service voice-intercom-dev-agent` で入れ替える。dev を使わないときは `TF_VAR_agent_desired_count=0` で apply すると、Fargate の料金がかからない。
+
+方針(理由の詳細は `infra/modules/agent` のコメント):
+
+- **ネットワーク**: 環境ごとに VPC を作り、パブリックサブネットに public IP つきで置く。受信はセキュリティグループで全部閉じ、送信だけを許す。NAT Gateway(1つで月 45 USD ほど)と VPC エンドポイントは使わない。ヘルスチェックの 8081 はコンテナの中から叩くので開けない。
+- **停止**: `stopTimeout` は Fargate の上限の 120 秒。Agent は `SIGTERM` で新しいジョブを断り、実行中のジョブを待つが、120 秒を超えるルームは切れ、約15秒で別のタスクに再ディスパッチされる。
+- **デプロイ**: 新しいタスクを先に起動してから古いタスクを止める(minimum healthy 100% / maximum 200%)。起動しなければ前のタスク定義に戻す(サーキットブレーカー)。それでも実行中のルームは切れるので、**デプロイはルームの少ない時間にする**。AZ の偏りを直すためのタスクの入れ替え(AZ リバランシング)は切ってある。
+- **台数**: 固定(dev は 1 vCPU・2GB を1つ、prod は 4 vCPU・8GB を1つ。prod を冗長にするなら `agent_desired_count` を 2 に)。オートスケールとスケールイン保護はまだ入れていない。スケールインのたびにルームが切れるのを防ぐには、ジョブを持つ間だけ Agent のコードから ECS のタスク保護(task-protection エンドポイント。保護中のタスクはデプロイでも止められない)を付ける必要があり、オートスケール(CPU 使用率のターゲット追跡、目標 50% 前後)はそれと一緒に入れる。Fargate Spot は、2分前の通知で止められるので使わない。
 
 ## ローカルの認証(模擬 OIDC サーバー)
 

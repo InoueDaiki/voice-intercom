@@ -11,3 +11,15 @@ variable "livekit_api_key" {
   type        = string
   default     = ""
 }
+
+variable "agent_image_tag" {
+  description = "Agent のイメージのタグ(mise run push:agent が表示する)。空なら Agent のタスクを起動しない"
+  type        = string
+  default     = ""
+}
+
+variable "agent_desired_count" {
+  description = "Agent のタスクの数"
+  type        = number
+  default     = 1
+}
