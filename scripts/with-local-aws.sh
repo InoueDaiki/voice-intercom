@@ -13,6 +13,8 @@ unset AWS_PROFILE AWS_SESSION_TOKEN
 export AWS_ACCESS_KEY_ID=local
 export AWS_SECRET_ACCESS_KEY=localsecret
 export AWS_REGION=ap-northeast-1
+# boto3(Python)は AWS_REGION を読まず、AWS_DEFAULT_REGION を読む
+export AWS_DEFAULT_REGION=ap-northeast-1
 
 export AWS_ENDPOINT_URL_DYNAMODB=http://dynamodb:8000
 # 署名付き URL のホストは署名に含まれるので、実機が届く DEV_HOST で作る
