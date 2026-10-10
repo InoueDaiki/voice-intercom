@@ -1,4 +1,8 @@
-"""ルームへの出力。言語別の翻訳音声トラックと、データチャネルの字幕。"""
+"""ルームへの出力。言語別の翻訳音声トラックと、データチャネルの字幕。
+
+言語別のトラック(translation-<言語>)には、音声の翻訳音声と、テキスト入力の読み上げ
+(その言語への訳と、その言語で書かれた原文)を混ぜる。
+"""
 
 import asyncio
 import logging
@@ -15,6 +19,10 @@ logger = logging.getLogger(__name__)
 
 # 100ms ずつ混ぜて流す
 CHUNK_SAMPLES = OUTPUT_SAMPLE_RATE // 10
+
+# テキスト入力の読み上げを混ぜるときの入力の key。同じ言語の読み上げは同じ key にして、
+# 続けて読み上げた文が重ならずに順に流れるようにする(mixer.py)
+_SPEECH_KEY = object()
 
 
 def translation_track_name(language: str) -> str:
@@ -77,8 +85,37 @@ class TranslationTracks:
             track = self._tracks[language] = TranslationTrack(self._room, language)
         return track
 
+    def speech_input(self, language: str, sample_rate: int) -> SpeechInput:
+        """テキスト入力の読み上げ音声を、その言語のトラックに流す入力。1回の読み上げごとに作る。"""
+        return SpeechInput(self.get(language), sample_rate)
+
     async def aclose(self) -> None:
         await asyncio.gather(*(t.aclose() for t in self._tracks.values()))
+
+
+class SpeechInput:
+    """読み上げ音声(PCM16・モノラル)を、トラックのサンプルレートに直して流す。"""
+
+    def __init__(self, track: TranslationTrack, sample_rate: int) -> None:
+        self._track = track
+        self._resampler = (
+            rtc.AudioResampler(sample_rate, OUTPUT_SAMPLE_RATE)
+            if sample_rate != OUTPUT_SAMPLE_RATE
+            else None
+        )
+
+    def push(self, pcm: bytes) -> None:
+        if self._resampler is None:
+            self._track.push(_SPEECH_KEY, pcm)
+            return
+        for frame in self._resampler.push(bytearray(pcm)):
+            self._track.push(_SPEECH_KEY, frame.data.tobytes())
+
+    def close(self) -> None:
+        if self._resampler is not None:
+            for frame in self._resampler.flush():
+                self._track.push(_SPEECH_KEY, frame.data.tobytes())
+        self._track.close(_SPEECH_KEY)
 
 
 class CaptionPublisher:

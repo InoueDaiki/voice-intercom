@@ -61,3 +61,19 @@ def test_closing_an_empty_input_removes_it() -> None:
     m.push("a", pcm(3, 4))
     # 閉じた後に同じ key で来たものは、新しい入力として扱う
     assert samples(m.pop()) == [3, 4]
+
+
+def test_pushing_after_close_continues_the_same_input() -> None:
+    # テキスト入力の読み上げは、言語ごとに同じ key で続けて入れる。重ならずに順に流れる
+    m = Mixer(chunk_samples=4)
+    m.push("speech", pcm(1, 2, 3, 4, 5, 6))
+    m.close("speech")
+    m.push("speech", pcm(7))
+    assert samples(m.pop()) == [1, 2, 3, 4]
+    # 閉じたことが取り消されているので、続きがそろうまで待つ
+    assert m.pop() is None
+    m.push("speech", pcm(8, 9))
+    assert samples(m.pop()) == [5, 6, 7, 8]
+    m.close("speech")
+    assert samples(m.pop()) == [9, 0, 0, 0]
+    assert m.pop() is None

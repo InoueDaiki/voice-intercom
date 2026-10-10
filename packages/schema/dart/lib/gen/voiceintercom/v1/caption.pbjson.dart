@@ -27,6 +27,7 @@ const Caption$json = {
     {'1': 'is_final', '3': 6, '4': 1, '5': 8, '10': 'isFinal'},
     {'1': 'utterance_id', '3': 7, '4': 1, '5': 9, '10': 'utteranceId'},
     {'1': 'segment_index', '3': 8, '4': 1, '5': 13, '10': 'segmentIndex'},
+    {'1': 'message_id', '3': 9, '4': 1, '5': 9, '10': 'messageId'},
   ],
 };
 
@@ -36,4 +37,5 @@ final $typed_data.Uint8List captionDescriptor = $convert.base64Decode(
     'pzZWdtZW50X2lkGAIgASgJUglzZWdtZW50SWQSGgoIbGFuZ3VhZ2UYAyABKAlSCGxhbmd1YWdl'
     'Eh4KCnRyYW5zbGF0ZWQYBCABKAhSCnRyYW5zbGF0ZWQSEgoEdGV4dBgFIAEoCVIEdGV4dBIZCg'
     'hpc19maW5hbBgGIAEoCFIHaXNGaW5hbBIhCgx1dHRlcmFuY2VfaWQYByABKAlSC3V0dGVyYW5j'
-    'ZUlkEiMKDXNlZ21lbnRfaW5kZXgYCCABKA1SDHNlZ21lbnRJbmRleA==');
+    'ZUlkEiMKDXNlZ21lbnRfaW5kZXgYCCABKA1SDHNlZ21lbnRJbmRleBIdCgptZXNzYWdlX2lkGA'
+    'kgASgJUgltZXNzYWdlSWQ=');

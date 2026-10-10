@@ -3,6 +3,9 @@
 翻訳音声は 200ms ごとにまとまって届く。時計で引き出すと届く前に無音を挟んでしまうので、
 届いた分だけを混ぜる。各入力は、1チャンク分がたまるか、閉じられて残りがあるときに出せる。
 まだたまっていない入力は、そのチャンクでは無音として扱い、データは次に回す。
+
+テキスト入力の読み上げは、言語ごとに同じ key で続けて入れる。閉じた後に同じ key で入れると、
+閉じたことを取り消して続きとして扱うので、続けて読み上げた文が重ならずに順に流れる。
 """
 
 import numpy as np
@@ -16,6 +19,8 @@ class Mixer:
 
     def push(self, key: object, pcm: bytes) -> None:
         data = np.frombuffer(pcm, dtype=np.int16)
+        # 閉じた入力に続きが来たら、閉じたことを取り消す(残りの後ろに続ける)
+        self._closed.discard(key)
         buf = self._buffers.get(key)
         self._buffers[key] = data if buf is None else np.concatenate([buf, data])
 

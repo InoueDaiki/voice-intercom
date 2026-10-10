@@ -27,6 +27,7 @@ async def entrypoint(ctx: JobContext) -> None:
     agent = IntercomAgent(ctx.room, settings, translator)
     ctx.add_shutdown_callback(agent.aclose)
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
+    agent.connected()
     logger.info("ルームに入った: %s", ctx.room.name)
 
 

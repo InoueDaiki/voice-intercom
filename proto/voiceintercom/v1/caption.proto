@@ -10,6 +10,10 @@ package voiceintercom.v1;
 // 受信側は (segment_id, language, translated) ごとに、断片(is_final が false)を順に連結して
 // 途中の字幕として表示し、確定(is_final が true)が届いたらその text で置き換える。
 // utterance_id を知らない受信側は、区切りを別々の字幕として表示すればよい。
+//
+// テキスト入力(text.proto の TextMessage)の原文と訳もこのメッセージで配信する。その場合は
+// message_id に TextMessage の message_id が入り、断片は送らず確定(is_final が true)だけを
+// (segment_id, language, translated) ごとに1回送る。segment_id は Agent が振る。
 message Caption {
   // 話者の LiveKit identity
   string speaker_identity = 1;
@@ -29,4 +33,7 @@ message Caption {
   string utterance_id = 7;
   // 発話の中での区切りの順番(0 から)。訳の確定は区切りの順に届くとは限らないので、並べるときに使う
   uint32 segment_index = 8;
+  // テキスト入力の字幕なら、送信者のアプリが振った TextMessage の message_id。音声の字幕なら空。
+  // 送信者のアプリは、これで自分の送ったテキストと配信された字幕を結び付けられる
+  string message_id = 9;
 }

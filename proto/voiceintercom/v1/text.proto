@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package voiceintercom.v1;
+
+// テキスト入力。アプリがデータチャネル(topic は "text"、reliable)で送る。
+//
+// 送信者と言語はメッセージに持たせず、Agent が LiveKit の送信元の参加者(identity と属性
+// language)から取る。メッセージに持たせると、ほかの参加者になりすませるため。
+// Agent は原文と訳を Caption(message_id にこのメッセージの message_id を入れる)で配信し、
+// 読み上げ音声を言語別のトラック(translation-<言語>)に流す。
+message TextMessage {
+  // 送信者のアプリが振る ID(UUID など)。配信される Caption の message_id に入る
+  string message_id = 1;
+  // 入力したテキスト
+  string text = 2;
+}
