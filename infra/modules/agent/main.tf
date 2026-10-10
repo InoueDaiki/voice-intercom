@@ -4,10 +4,14 @@
 
 data "aws_region" "current" {}
 
+data "aws_caller_identity" "current" {}
+
 locals {
-  # タグが無いうちは起動しない(初回の apply で ECR を作り、push してからもう一度 apply する)
-  desired_count = var.image_tag == "" ? 0 : var.desired_count
-  image         = "${aws_ecr_repository.this.repository_url}:${var.image_tag == "" ? "latest" : var.image_tag}"
+  # タグが無いうちは起動しない(初回の apply で ECR を作り、push してからもう一度 apply する)。
+  # 台数はオートスケールの最小・最大で決める(desired_count は Terraform では作るときにしか使わない)
+  max_count = var.image_tag == "" ? 0 : var.max_count
+  min_count = min(var.min_count, local.max_count)
+  image     = "${aws_ecr_repository.this.repository_url}:${var.image_tag == "" ? "latest" : var.image_tag}"
 }
 
 # ---- ECR ----
@@ -101,10 +105,31 @@ resource "aws_iam_role_policy" "execution_secrets" {
   policy = data.aws_iam_policy_document.execution_secrets.json
 }
 
-# タスクロール: コンテナの中のコードが使う。今の Agent は AWS の API を呼ばないので、権限は持たせない
+# タスクロール: コンテナの中のコードが使う
 resource "aws_iam_role" "task" {
   name               = "${var.name}-task"
   assume_role_policy = data.aws_iam_policy_document.assume_ecs_tasks.json
+}
+
+# タスクのスケールイン保護。Agent は ECS エージェントのエンドポイント($ECS_AGENT_URI)を叩き、
+# ECS エージェントがタスクロールの権限で UpdateTaskProtection を呼ぶ(公式の「IAM permissions
+# required for task scale-in protection」)。リソースはこのクラスターのタスクに絞る
+data "aws_iam_policy_document" "task_protection" {
+  statement {
+    actions = [
+      "ecs:GetTaskProtection",
+      "ecs:UpdateTaskProtection",
+    ]
+    resources = [
+      "arn:aws:ecs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:task/${var.name}/*",
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "task_protection" {
+  name   = "task-protection"
+  role   = aws_iam_role.task.id
+  policy = data.aws_iam_policy_document.task_protection.json
 }
 
 # ---- ECS ----
@@ -181,27 +206,31 @@ resource "aws_ecs_task_definition" "this" {
   ])
 }
 
-# 台数は固定にし、オートスケールは入れない。理由:
-# - Fargate では stopTimeout が 120 秒までなので、スケールインのたびに長いルームが切れる。
-#   切らないためには、ジョブを持つ間だけタスクのスケールイン保護(ECS エージェントの
-#   task-protection エンドポイント)を Agent のコードから付ける必要があり、まだ実装していない。
-# - 今の規模(1ルーム 100 人、Agent のジョブはルームごとに1つ)なら、4 vCPU のタスク1つで
-#   公式の目安(同時ジョブ 10〜25)に収まる。
-# - 入れるときは、CPU 使用率を指標にしたターゲット追跡(目標 50% 前後。公式はスケールアウトを
-#   0.5 付近で早めにすると書いている)にし、スケールイン保護と一緒に入れる。
+# 台数は CPU 使用率のターゲット追跡でオートスケールする(下の aws_appautoscaling_*)。
+# スケールインやデプロイで実行中のルームが切れないよう、Agent はジョブ(ルーム)を持つ間だけ
+# タスクのスケールイン保護を付ける(services/agent/src/voice_intercom_agent/task_protection.py)。
+# Fargate の stopTimeout は 120 秒までなので、保護が無いと長いルームは切れる。
+#
+# - 保護中のタスクは、スケールインでもデプロイでも止められない。ジョブが 0 になって保護が外れて
+#   から止められる。Agent が落ちても保護が残り続けないよう、保護の期限は短め(既定 60 分)にして
+#   ジョブがある間は延長する。保護を続ける長さには上限(既定 12 時間)がある。
+# - desired_count は作るときの値にだけ使い、その後はオートスケールに任せる(ignore_changes)。
+#   台数を変えるときは min_count・max_count を変える。RegisterScalableTarget は、今の台数が
+#   最小・最大の外にあれば中に入れ直すので、image_tag が空の間(最大 0)は 0 台になる。
 #
 # デプロイは「新しいタスクを先に起動してから古いタスクを止める」(minimum 100% / maximum 200%)。
-# 新しいタスクが LiveKit に登録してから古いタスクが SIGTERM を受けるので、新しいジョブは新しいタスクに行く。
-# それでも古いタスクで実行中のルームは 120 秒で切れ、約 15 秒で新しいタスクに再ディスパッチされる。
-# 長いルームを切らない手段は、利用の少ない時間にデプロイすること(運用で決める)と、
-# 上のスケールイン保護(保護中のタスクはデプロイでも止められない)。
+# 新しいタスクが LiveKit に登録してから古いタスクが止められるので、新しいジョブは新しいタスクにも行く。
+# ジョブを持つ古いタスクは保護が外れるまで止められず、デプロイはその間 IN_PROGRESS のまま続く
+# (サーキットブレーカーは新しいタスクの起動とヘルスチェックの失敗だけを数え、時間では打ち切らない)。
+# 保護中の古いタスクも LiveKit には登録したままなので、新しいルームを受けることがある。
+# デプロイが長引いても、上の保護の上限で必ず終わる。詳しくは README の「LiveKit Agent(ECS Fargate)」。
 #
 # Fargate Spot は使わない(2 分前の通知で止められ、ルームが切れる)。
 resource "aws_ecs_service" "this" {
   name            = var.name
   cluster         = aws_ecs_cluster.this.id
   task_definition = aws_ecs_task_definition.this.arn
-  desired_count   = local.desired_count
+  desired_count   = local.min_count
   launch_type     = "FARGATE"
 
   deployment_minimum_healthy_percent = 100
@@ -226,4 +255,44 @@ resource "aws_ecs_service" "this" {
   propagate_tags          = "SERVICE"
 
   depends_on = [aws_iam_role_policy_attachment.execution]
+
+  lifecycle {
+    # 台数はオートスケールが変える。Terraform が apply のたびに戻さないようにする
+    ignore_changes = [desired_count]
+  }
+}
+
+# ---- オートスケール ----
+
+# ECS 用のサービスリンクロール(AWSServiceRoleForApplicationAutoScaling_ECSService)は、
+# Application Auto Scaling が無ければ作る
+resource "aws_appautoscaling_target" "this" {
+  service_namespace  = "ecs"
+  resource_id        = "service/${aws_ecs_cluster.this.name}/${aws_ecs_service.this.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  min_capacity       = local.min_count
+  max_capacity       = local.max_count
+}
+
+# CPU 使用率(サービスのタスクの平均)が目標に近づくよう、台数を増やしたり減らしたりする。
+# LiveKit のワーカーは自分の CPU 使用率(load)が load_threshold(既定 0.7)を超えると新しいジョブを
+# 断るので、目標はそれより低くして、断り始める前に台数を増やす(公式はスケールアウトを 0.5 付近で
+# 早めにすると書いている)。スケールインは、保護の付いていないタスクからしか止めない
+resource "aws_appautoscaling_policy" "cpu" {
+  name               = "${var.name}-cpu"
+  policy_type        = "TargetTrackingScaling"
+  service_namespace  = aws_appautoscaling_target.this.service_namespace
+  resource_id        = aws_appautoscaling_target.this.resource_id
+  scalable_dimension = aws_appautoscaling_target.this.scalable_dimension
+
+  target_tracking_scaling_policy_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+
+    target_value       = var.cpu_target_percent
+    scale_out_cooldown = var.scale_out_cooldown_seconds
+    # ルームの増減で上下しやすいので、減らすのはゆっくりにする
+    scale_in_cooldown = var.scale_in_cooldown_seconds
+  }
 }

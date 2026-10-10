@@ -57,16 +57,18 @@ resource "aws_ssm_parameter" "openai_api_key" {
   }
 }
 
-# LiveKit Agent(ECS Fargate)。公式の目安の 4 vCPU・8GB から始める。
-# 冗長にするなら agent_desired_count を 2 にする(1つが落ちても、ルームは約15秒で残りに再ディスパッチされる)
+# LiveKit Agent(ECS Fargate)。公式の目安の 4 vCPU・8GB から始め、CPU 使用率でオートスケールする。
+# 最小は 1(0 台からは CPU の指標が出ず増えない)。冗長にするなら agent_min_count を 2 にする
+# (1つが落ちても、ルームは約15秒で残りに再ディスパッチされる)
 module "agent" {
   source = "../../modules/agent"
 
-  name          = "${local.name_prefix}-agent"
-  image_tag     = var.agent_image_tag
-  cpu           = 4096
-  memory        = 8192
-  desired_count = var.agent_desired_count
+  name      = "${local.name_prefix}-agent"
+  image_tag = var.agent_image_tag
+  cpu       = 4096
+  memory    = 8192
+  min_count = var.agent_min_count
+  max_count = var.agent_max_count
 
   livekit_url                      = var.livekit_client_url
   livekit_api_key                  = var.livekit_api_key

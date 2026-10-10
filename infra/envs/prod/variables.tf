@@ -18,8 +18,14 @@ variable "agent_image_tag" {
   default     = ""
 }
 
-variable "agent_desired_count" {
-  description = "Agent のタスクの数"
+variable "agent_min_count" {
+  description = "Agent のタスクの最小の台数(オートスケール)。冗長にするなら 2 にする"
   type        = number
   default     = 1
+}
+
+variable "agent_max_count" {
+  description = "Agent のタスクの最大の台数(オートスケール)"
+  type        = number
+  default     = 4
 }

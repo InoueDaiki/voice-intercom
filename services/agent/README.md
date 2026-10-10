@@ -65,6 +65,10 @@ API・DynamoDB への保存、テキスト入力の読み上げ、録音、待�
 | `SEGMENT_LONG_PAUSE_S` | `1` | 文末でなくても区切る無音(秒) |
 | `SEGMENT_MAX_S` | `15` | これより長い区切りは、文末でなくても `SEGMENT_PAUSE_S` の無音で区切る(秒) |
 | `SEGMENT_SILENCE_DBFS` | `-50` | これより小さい音量(10ms ごとの RMS)を無音とみなす |
+| `ECS_AGENT_URI` | | ECS が入れる。あれば、ジョブを持つ間だけタスクのスケールイン保護を付ける(`task_protection.py`。無ければ何もしない) |
+| `TASK_PROTECTION_EXPIRES_MIN` | `60` | 1回で付ける保護の長さ(分、1〜2880)。Agent が落ちたら、この長さで保護が切れる |
+| `TASK_PROTECTION_RENEW_MIN` | `20` | ジョブがある間、保護を延長する間隔(分)。期限より短くする |
+| `TASK_PROTECTION_MAX_HOURS` | `12` | 保護を続ける長さの上限(時間)。過ぎたら延長をやめる(ジョブが絶えないタスクでもデプロイが終わるように)。`0` なら上限なし |
 
 ## ローカルで確かめる
 
