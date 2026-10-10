@@ -1,0 +1,58 @@
+# Terraform の整形と検証。AWS には接続しない(backend を使わず、plan もしない)
+name: Terraform
+
+on:
+  pull_request:
+    paths: &paths
+      - infra/**
+      - mise.toml
+      - .github/workflows/terraform.yml
+      - .github/actions/setup/**
+  push:
+    branches: [main]
+    paths: *paths
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+  MISE_DISABLE_TOOLS: github:livekit/livekit,github:livekit/livekit-cli,python,uv,node,pnpm,buf
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+
+jobs:
+  validate:
+    name: fmt と validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          mise-cache-prefix: mise-v1-terraform
+      - run: terraform fmt -check -recursive -diff infra
+      - name: プロバイダーのキャッシュの場所
+        run: |
+          echo "TF_PLUGIN_CACHE_DIR=$RUNNER_TEMP/terraform-plugin-cache" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/terraform-plugin-cache"
+      - name: プロバイダーのキャッシュ
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.TF_PLUGIN_CACHE_DIR }}
+          key: terraform-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('infra/envs/*/.terraform.lock.hcl') }}
+      # lock ファイルは書き換えない(linux_amd64 のハッシュも lock ファイルに入れてある)
+      - name: validate(dev)
+        run: |
+          terraform -chdir=infra/envs/dev init -backend=false -lockfile=readonly
+          terraform -chdir=infra/envs/dev validate
+      - name: validate(prod)
+        run: |
+          terraform -chdir=infra/envs/prod init -backend=false -lockfile=readonly
+          terraform -chdir=infra/envs/prod validate

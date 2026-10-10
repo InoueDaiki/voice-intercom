@@ -1,0 +1,64 @@
+name: セットアップ
+description: >-
+  mise.toml の版でツールを入れ、必要なら Python(uv)と JS(pnpm)の依存関係を入れる。
+  使わないツールは、ジョブの env の MISE_DISABLE_TOOLS で外しておく
+  (mise run がタスクの前に足りないツールを入れようとするので、ジョブ全体で外す)。
+
+inputs:
+  mise-cache-prefix:
+    description: >-
+      mise のキャッシュのキーの接頭辞。ジョブごとに入れるツールが違うので、ジョブごとに分ける
+    required: true
+  mise-cache-save-post:
+    description: >-
+      true なら、mise のキャッシュをジョブの最後に保存する。
+      タスクの中で入るツール(gen:api の Java)もキャッシュに含めたいときに使う
+    default: "false"
+  python:
+    description: true なら uv sync する
+    default: "false"
+  node:
+    description: true なら pnpm install する
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+      with:
+        # mise 自体の版も固定する(上げるときは devContainer の mise と揃える)
+        version: 2026.10.4
+        cache_key_prefix: ${{ inputs.mise-cache-prefix }}
+        cache_save_post: ${{ inputs.mise-cache-save-post }}
+
+    - name: uv のキャッシュ
+      if: inputs.python == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/uv
+        key: uv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uv.lock') }}
+        restore-keys: uv-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: Python の依存関係
+      if: inputs.python == 'true'
+      shell: bash
+      run: uv sync --all-packages --locked
+
+    - name: pnpm のストアの場所
+      if: inputs.node == 'true'
+      id: pnpm
+      shell: bash
+      run: echo "store=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+    - name: pnpm のキャッシュ
+      if: inputs.node == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.pnpm.outputs.store }}
+        key: pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: pnpm-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: JS の依存関係
+      if: inputs.node == 'true'
+      shell: bash
+      run: pnpm install --frozen-lockfile
