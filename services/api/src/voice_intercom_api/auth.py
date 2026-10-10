@@ -23,6 +23,9 @@ _ALGORITHMS = ["RS256"]
 # Agent が client credentials で取るトークンのスコープ(infra/modules/cognito の resource server)
 AGENT_SCOPE = "voice-intercom/agent"
 
+# 管理者の Cognito のグループ(管理コンソールに入れる人)
+ADMIN_GROUP = "admin"
+
 # トークンの kid から検証用の公開鍵を返す関数
 KeyResolver = Callable[[str], jwt.PyJWK | str | bytes]
 
@@ -40,6 +43,10 @@ class Principal:
     @property
     def is_agent(self) -> bool:
         return AGENT_SCOPE in self.scopes
+
+    @property
+    def is_admin(self) -> bool:
+        return ADMIN_GROUP in self.groups
 
 
 class TokenVerifier:
@@ -108,5 +115,13 @@ def current_user(principal: Annotated[Principal, Depends(current_principal)]) ->
     return principal
 
 
+def admin_user(user: Annotated[Principal, Depends(current_user)]) -> Principal:
+    """管理者(admin グループ)だけを通す。"""
+    if not user.is_admin:
+        raise ForbiddenError("管理者の権限が要る")
+    return user
+
+
 # ルートの引数に付けて使う
 CurrentUser = Annotated[Principal, Depends(current_user)]
+AdminUser = Annotated[Principal, Depends(admin_user)]
