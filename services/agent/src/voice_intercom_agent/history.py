@@ -98,7 +98,7 @@ def _log_disabled(missing: list[str], *, partly_set: bool) -> None:
     _disabled_logged = True
     # 一部だけ設定されているのは設定の誤りの可能性が高いので、警告にする
     log = logger.warning if partly_set else logger.info
-    log("履歴の保存は無効(%s が未設定)", "、".join(missing))
+    log("履歴の保存と話し始めの通知は無効(%s が未設定)", "、".join(missing))
 
 
 def to_source_id(segment_id: str) -> str:
@@ -445,12 +445,30 @@ class HistoryRecorder:
             logger.debug("履歴に保存した: %s", source_id)
 
 
-def create_history(http: aiohttp.ClientSession, room_name: Callable[[], str]) -> HistoryRecorder:
-    """環境変数の設定で HistoryRecorder を作る。設定が無ければ何もしないものを返す。"""
+@dataclass(frozen=True)
+class ApiAccess:
+    """API を呼ぶための設定とトークン。履歴の保存と話し始めの通知(notify.py)で共有する。"""
+
+    settings: HistorySettings
+    credentials: ClientCredentials
+
+
+def create_api_access(http: aiohttp.ClientSession) -> ApiAccess | None:
+    """環境変数の設定で ApiAccess を作る。設定が無ければ None(API を呼ばない)。"""
     settings = HistorySettings.from_env()
     if settings is None:
+        return None
+    return ApiAccess(settings, ClientCredentials(http, settings))
+
+
+def create_history(
+    http: aiohttp.ClientSession, room_name: Callable[[], str], api: ApiAccess | None
+) -> HistoryRecorder:
+    """HistoryRecorder を作る。api が None(設定が無い)なら何もしないものを返す。"""
+    if api is None:
         return HistoryRecorder(None, room_name)
-    client = TimelineClient(http, settings, ClientCredentials(http, settings))
+    settings = api.settings
+    client = TimelineClient(http, settings, api.credentials)
     return HistoryRecorder(
         client,
         room_name,

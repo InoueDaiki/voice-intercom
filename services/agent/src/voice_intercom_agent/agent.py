@@ -15,8 +15,9 @@ from livekit import rtc
 
 from .captions import CaptionTrack, new_segment_id
 from .config import Settings
-from .history import HistoryRecorder, create_history, utc_now
+from .history import HistoryRecorder, create_api_access, create_history, utc_now
 from .languages import participant_language, target_languages
+from .notify import SpeakingNotifier, create_speaking_notifier, present_ids
 from .output import CaptionPublisher, TranslationTracks
 from .realtime import INPUT_SAMPLE_RATE, TranslateSession, WhisperSession
 from .segmenter import Segmenter
@@ -36,6 +37,7 @@ class Deps:
     captions: CaptionPublisher
     tracks: TranslationTracks
     history: HistoryRecorder
+    speaking: SpeakingNotifier
     background: set[asyncio.Task[Any]]
 
     def spawn(self, coro: Coroutine[Any, Any, None]) -> None:
@@ -231,6 +233,13 @@ class Speaker:
                 self._utterance.utterance_id,
             )
             self._deps.spawn(self._utterance.run())
+            # 話し始めの push 通知(バックグラウンドで API を呼ぶ。発話の処理は待たない)
+            self._deps.speaking.started(
+                identity,
+                present_ids(
+                    (p.identity, is_person(p)) for p in self._room.remote_participants.values()
+                ),
+            )
         elif action is Action.END and self._utterance is not None:
             # PTT を離したらすぐ閉じる。時間を置くと翻訳音声が捨てられる
             self._utterance.finish()
@@ -239,6 +248,11 @@ class Speaker:
 
 def is_agent(participant: rtc.Participant) -> bool:
     return participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_AGENT
+
+
+def is_person(participant: rtc.Participant) -> bool:
+    """アプリから入った人か(Agent、Egress、SIP などを除く)。"""
+    return participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD
 
 
 def listener_languages(room: rtc.Room) -> list[str | None]:
@@ -256,6 +270,8 @@ class IntercomAgent:
         self._room = room
         self._speakers: dict[str, Speaker] = {}
         http = aiohttp.ClientSession()
+        # API のトークンは、履歴の保存と話し始めの通知で共有する
+        api = create_api_access(http)
         self._deps = Deps(
             settings=settings,
             http=http,
@@ -263,7 +279,8 @@ class IntercomAgent:
             captions=CaptionPublisher(room),
             tracks=TranslationTracks(room),
             # ルーム名(API の room_id)は接続してから決まるので、保存するときに読む
-            history=create_history(http, lambda: room.name),
+            history=create_history(http, lambda: room.name, api),
+            speaking=create_speaking_notifier(http, lambda: room.name, api),
             background=set(),
         )
         room.on("track_subscribed", self._on_track_subscribed)
@@ -361,8 +378,8 @@ class IntercomAgent:
             task.cancel()
         await asyncio.gather(*self._deps.background, return_exceptions=True)
         await self._tts.aclose()
-        # 打ち切った発話の分も含めて、履歴の送り残しを送る
-        await self._deps.history.aclose()
+        # 打ち切った発話の分も含めて、履歴の送り残しを送る。送り中の話し始めの通知も同時に待つ
+        await asyncio.gather(self._deps.history.aclose(), self._deps.speaking.aclose())
         await self._deps.tracks.aclose()
         await self._deps.captions.aclose()
         await self._deps.http.close()
