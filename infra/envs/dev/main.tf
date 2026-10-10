@@ -56,7 +56,8 @@ module "auth" {
 # ルームの出来事(チャット、文字起こし、翻訳テキスト、メディアのメッセージ)を時刻順に持つ。
 # event_id は `<occurred_at>#<source_id>`(文字列の順が時刻の順になる)にし、ルームの履歴を1回の Query で取る。
 # 翻訳テキストは届いた断片ではなく、確定した文だけを書く(1つのパーティションに書き込みが集中するため)
-# アップロード中のメディアの仮の行(room_id が media-upload#<room_id>)も置き、TTL で消す
+# アップロード中のメディアの仮の行(room_id が media-upload#<room_id>)と、話し始めの通知を最後に送った時刻
+# (room_id が notify-speaking#<room_id>)も置き、TTL で消す
 # (services/api の timeline_store.py)
 module "timeline_table" {
   source = "../../modules/dynamodb"

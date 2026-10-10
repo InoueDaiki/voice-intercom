@@ -671,6 +671,97 @@
         ]
       }
     },
+    "/rooms/{room_id}/notifications/speaking": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "誰かが話し始めたことを、ルームにいないメンバーに push 通知する(Agent)",
+        "description": "ルームのメンバーから、話者と present_ids を除いた人に送る。同じルーム × 同じ受け手には、間隔(既定 600 秒)に1回まで。送信に失敗しても 500 にはせず、sent を 0 にして返す。",
+        "operationId": "notifySpeaking",
+        "parameters": [
+          {
+            "description": "ルームの ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Room Id",
+              "description": "ルームの ID"
+            },
+            "name": "room_id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpeakingNotificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpeakingNotificationResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ルームがない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/health": {
       "get": {
         "tags": [
@@ -1646,6 +1737,52 @@
           "items"
         ],
         "title": "RoomList"
+      },
+      "SpeakingNotificationRequest": {
+        "properties": {
+          "speaker_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Speaker Id",
+            "description": "話者の user_id(sub)"
+          },
+          "present_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "title": "Present Ids",
+            "description": "今ルームに入っている人の user_id(sub)。この人たちには送らない",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "speaker_id"
+        ],
+        "title": "SpeakingNotificationRequest"
+      },
+      "SpeakingNotificationResult": {
+        "properties": {
+          "sent": {
+            "type": "integer",
+            "title": "Sent",
+            "description": "送った人数"
+          },
+          "skipped": {
+            "type": "integer",
+            "title": "Skipped",
+            "description": "前回の通知から間隔がたっていないので、送らなかった人数"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sent",
+          "skipped"
+        ],
+        "title": "SpeakingNotificationResult"
       },
       "TimelineEvent": {
         "properties": {

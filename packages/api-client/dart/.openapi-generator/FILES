@@ -4,6 +4,7 @@ lib/api.dart
 lib/api/health_api.dart
 lib/api/livekit_api.dart
 lib/api/media_api.dart
+lib/api/notifications_api.dart
 lib/api/rooms_api.dart
 lib/api/timeline_api.dart
 lib/api/users_api.dart
@@ -31,6 +32,8 @@ lib/model/register_device_request.dart
 lib/model/response_validation_error.dart
 lib/model/room.dart
 lib/model/room_list.dart
+lib/model/speaking_notification_request.dart
+lib/model/speaking_notification_result.dart
 lib/model/timeline_event.dart
 lib/model/timeline_media.dart
 lib/model/timeline_page.dart

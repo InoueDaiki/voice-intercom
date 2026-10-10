@@ -16,6 +16,15 @@
   クライアントに送り直させず、ここから読む。
 - complete したら completed_event_id を書く。2回目の complete は同じ履歴を返す(再送に備える)。
 - expires_at_epoch(UNIX 秒)を TTL にして、complete されなかった行も消えるようにする。
+
+「話し始めた」通知を最後に送った時刻(notifications.py の間隔の判定):
+- room_id を `notify-speaking#<room_id>`、event_id を受け手の user_id にする。仮の行と同じく、
+  履歴のパーティションと混ざらない。
+- sent_at_epoch(UNIX 秒)に送った時刻を持つ。条件付きの UpdateItem で「前回が間隔より前
+  (か、行がない)なら更新する」とし、更新できた受け手にだけ送る。同時に呼ばれても、
+  更新に勝つのは1回だけなので二重に送らない。
+- TTL(expires_at_epoch)は間隔が過ぎたあとにする。TTL の削除は遅れることがあるが、判定は
+  sent_at_epoch で行うので、消えるのが遅れても結果は変わらない。
 """
 
 from dataclasses import dataclass
@@ -40,6 +49,10 @@ PENDING_UPLOAD_TTL = timedelta(days=1)
 TTL_ATTRIBUTE = "expires_at_epoch"
 
 _PENDING_PREFIX = "media-upload#"
+_SPEAKING_NOTIFY_PREFIX = "notify-speaking#"
+
+# 通知の時刻の行を、間隔が過ぎてからどれだけ残すか(TTL)
+_SPEAKING_NOTIFY_TTL_MARGIN = timedelta(hours=1)
 
 
 def _timeline() -> Any:
@@ -258,3 +271,54 @@ def complete_upload(
             raise
         raise AlreadyCompletedError(latest.completed_event_id) from e
     return _to_event(item)
+
+
+# 「話し始めた」通知を最後に送った時刻
+
+
+def _speaking_notify_key(room_id: str, recipient_id: str) -> dict[str, str]:
+    return {"room_id": _SPEAKING_NOTIFY_PREFIX + room_id, "event_id": recipient_id}
+
+
+def claim_speaking_notification(
+    room_id: str, recipient_id: str, *, now_epoch: int, interval_s: int
+) -> bool:
+    """前回の送信から interval_s 秒以上たっていれば、送信の時刻を now_epoch にして True を返す。
+
+    間隔の内側(か、同時に呼ばれた別のリクエストが先に更新した)なら False。
+    """
+    expires_at = now_epoch + interval_s + int(_SPEAKING_NOTIFY_TTL_MARGIN.total_seconds())
+    try:
+        _timeline().update_item(
+            Key=_speaking_notify_key(room_id, recipient_id),
+            UpdateExpression="SET sent_at_epoch = :now, #ttl = :ttl",
+            ConditionExpression="attribute_not_exists(sent_at_epoch) "
+            "OR sent_at_epoch <= :threshold",
+            ExpressionAttributeNames={"#ttl": TTL_ATTRIBUTE},
+            ExpressionAttributeValues={
+                ":now": now_epoch,
+                ":ttl": expires_at,
+                ":threshold": now_epoch - interval_s,
+            },
+        )
+    except ClientError as e:
+        if store._is_conditional_check_failed(e):  # pyright: ignore[reportPrivateUsage]
+            return False
+        raise
+    return True
+
+
+def release_speaking_notification(room_id: str, recipient_id: str, *, now_epoch: int) -> None:
+    """claim を取り消す(送れなかったとき、次の呼び出しで送れるように)。
+
+    別のリクエストが後から書き直していたら、そのままにする。
+    """
+    try:
+        _timeline().delete_item(
+            Key=_speaking_notify_key(room_id, recipient_id),
+            ConditionExpression="sent_at_epoch = :now",
+            ExpressionAttributeValues={":now": now_epoch},
+        )
+    except ClientError as e:
+        if not store._is_conditional_check_failed(e):  # pyright: ignore[reportPrivateUsage]
+            raise

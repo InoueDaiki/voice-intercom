@@ -215,6 +215,10 @@ class ApiClient {
           return Room.fromJson(value);
         case 'RoomList':
           return RoomList.fromJson(value);
+        case 'SpeakingNotificationRequest':
+          return SpeakingNotificationRequest.fromJson(value);
+        case 'SpeakingNotificationResult':
+          return SpeakingNotificationResult.fromJson(value);
         case 'TimelineEvent':
           return TimelineEvent.fromJson(value);
         case 'TimelineMedia':
