@@ -54,14 +54,17 @@ module "auth" {
 }
 
 # ルームの出来事(チャット、文字起こし、翻訳テキスト、メディアのメッセージ)を時刻順に持つ。
-# event_id は時刻順に並ぶ ID(ULID)にし、ルームの履歴を1回の Query で取る。
+# event_id は `<occurred_at>#<source_id>`(文字列の順が時刻の順になる)にし、ルームの履歴を1回の Query で取る。
 # 翻訳テキストは届いた断片ではなく、確定した文だけを書く(1つのパーティションに書き込みが集中するため)
+# アップロード中のメディアの仮の行(room_id が media-upload#<room_id>)も置き、TTL で消す
+# (services/api の timeline_store.py)
 module "timeline_table" {
   source = "../../modules/dynamodb"
 
   name                   = "${local.name_prefix}-timeline"
   hash_key               = "room_id"
   range_key              = "event_id"
+  ttl_attribute          = "expires_at_epoch"
   deletion_protection    = false
   point_in_time_recovery = false
 }
@@ -147,10 +150,17 @@ data "aws_iam_policy_document" "api" {
     resources = [module.users_table.table_arn, module.rooms_table.table_arn]
   }
 
-  # 署名付き URL の発行(アップロードと、必要なら直接の取得)
+  # 署名付き URL の発行(アップロードと、必要なら直接の取得)。HeadObject は GetObject の権限で動く
   statement {
     actions   = ["s3:PutObject", "s3:GetObject"]
     resources = ["${module.media.bucket_arn}/*"]
+  }
+
+  # ListBucket がないと、ないオブジェクトの HeadObject が 404 ではなく 403 になり、
+  # メディアの complete で「まだ置かれていない」(409)を見分けられない
+  statement {
+    actions   = ["s3:ListBucket"]
+    resources = [module.media.bucket_arn]
   }
 
   statement {

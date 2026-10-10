@@ -122,6 +122,14 @@ def admin_user(user: Annotated[Principal, Depends(current_user)]) -> Principal:
     return user
 
 
+def agent_principal(principal: Annotated[Principal, Depends(current_principal)]) -> Principal:
+    """Agent(client credentials)のトークンだけを通す。利用者のトークンは 403。"""
+    if not principal.is_agent:
+        raise ForbiddenError("Agent のトークンが要る")
+    return principal
+
+
 # ルートの引数に付けて使う
 CurrentUser = Annotated[Principal, Depends(current_user)]
 AdminUser = Annotated[Principal, Depends(admin_user)]
+AgentPrincipal = Annotated[Principal, Depends(agent_principal)]
