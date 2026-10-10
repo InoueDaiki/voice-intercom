@@ -62,3 +62,30 @@ def get_settings() -> Settings:
         rooms_table=_require("ROOMS_TABLE"),
         users_table=_require("USERS_TABLE"),
     )
+
+
+@dataclass(frozen=True)
+class TimelineSettings:
+    """履歴とメディアの API(timeline.py、media.py)が使う設定。
+
+    ルームとユーザーの API だけを動かすときに、要らない環境変数を求めないよう、
+    Settings と分けてある。
+    """
+
+    # DynamoDB の timeline テーブル(アップロード中のメディアの仮の行も置く。timeline_store.py)
+    timeline_table: str
+    # 画像・動画を置く S3 のバケット
+    media_bucket: str
+    # 表示・再生の URL の元(本番は CloudFront、ローカルは SeaweedFS のバケットの URL)。
+    # 末尾の / は除く
+    media_base_url: str
+
+
+@cache
+def get_timeline_settings() -> TimelineSettings:
+    """get_settings と同じく、コールドスタートのときに1回だけ読む。"""
+    return TimelineSettings(
+        timeline_table=_require("TIMELINE_TABLE"),
+        media_bucket=_require("MEDIA_BUCKET"),
+        media_base_url=_require("MEDIA_BASE_URL").rstrip("/"),
+    )

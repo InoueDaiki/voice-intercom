@@ -3,7 +3,9 @@ analysis_options.yaml
 lib/api.dart
 lib/api/health_api.dart
 lib/api/livekit_api.dart
+lib/api/media_api.dart
 lib/api/rooms_api.dart
+lib/api/timeline_api.dart
 lib/api/users_api.dart
 lib/api_client.dart
 lib/api_exception.dart
@@ -13,6 +15,8 @@ lib/auth/authentication.dart
 lib/auth/http_basic_auth.dart
 lib/auth/http_bearer_auth.dart
 lib/auth/oauth.dart
+lib/model/complete_media_upload_request.dart
+lib/model/create_media_upload_request.dart
 lib/model/create_room_request.dart
 lib/model/error_response.dart
 lib/model/health_response.dart
@@ -20,11 +24,16 @@ lib/model/http_validation_error.dart
 lib/model/live_kit_token_request.dart
 lib/model/live_kit_token_response.dart
 lib/model/location_inner.dart
+lib/model/media_upload.dart
+lib/model/put_timeline_event_request.dart
 lib/model/put_user_request.dart
 lib/model/register_device_request.dart
 lib/model/response_validation_error.dart
 lib/model/room.dart
 lib/model/room_list.dart
+lib/model/timeline_event.dart
+lib/model/timeline_media.dart
+lib/model/timeline_page.dart
 lib/model/unregister_device_request.dart
 lib/model/update_room_request.dart
 lib/model/user.dart

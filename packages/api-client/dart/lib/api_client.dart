@@ -183,6 +183,10 @@ class ApiClient {
           return valueString == 'true' || valueString == '1';
         case 'DateTime':
           return value is DateTime ? value : DateTime.tryParse(value);
+        case 'CompleteMediaUploadRequest':
+          return CompleteMediaUploadRequest.fromJson(value);
+        case 'CreateMediaUploadRequest':
+          return CreateMediaUploadRequest.fromJson(value);
         case 'CreateRoomRequest':
           return CreateRoomRequest.fromJson(value);
         case 'ErrorResponse':
@@ -197,6 +201,10 @@ class ApiClient {
           return LiveKitTokenResponse.fromJson(value);
         case 'LocationInner':
           return LocationInner.fromJson(value);
+        case 'MediaUpload':
+          return MediaUpload.fromJson(value);
+        case 'PutTimelineEventRequest':
+          return PutTimelineEventRequest.fromJson(value);
         case 'PutUserRequest':
           return PutUserRequest.fromJson(value);
         case 'RegisterDeviceRequest':
@@ -207,6 +215,12 @@ class ApiClient {
           return Room.fromJson(value);
         case 'RoomList':
           return RoomList.fromJson(value);
+        case 'TimelineEvent':
+          return TimelineEvent.fromJson(value);
+        case 'TimelineMedia':
+          return TimelineMedia.fromJson(value);
+        case 'TimelinePage':
+          return TimelinePage.fromJson(value);
         case 'UnregisterDeviceRequest':
           return UnregisterDeviceRequest.fromJson(value);
         case 'UpdateRoomRequest':

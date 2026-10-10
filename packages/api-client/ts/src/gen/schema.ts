@@ -23,6 +23,83 @@ export interface paths {
         patch: operations["updateRoom"];
         trace?: never;
     };
+    "/rooms/{room_id}/timeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** ルームの履歴を新しい順に取る(管理者かメンバー) */
+        get: operations["listTimeline"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms/{room_id}/timeline/{source_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 発話かテキスト入力を履歴に保存する(Agent)。同じ内容なら何度呼んでも同じ結果になる
+         * @description event_id は `<occurred_at>#<source_id>` で作る。同じ event_id があれば置き換える。
+         */
+        put: operations["putTimelineEvent"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms/{room_id}/media/uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 画像・動画をアップロードする署名付き URL を発行する(管理者かメンバー)
+         * @description PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。
+         */
+        post: operations["createMediaUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms/{room_id}/media/{media_id}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * アップロードした画像・動画を履歴に保存する(アップロードした本人)
+         * @description 本体(とサムネイル)が置かれていなければ 409。2回目からは、最初に保存した履歴を返す。
+         */
+        post: operations["completeMediaUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -132,6 +209,34 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** CompleteMediaUploadRequest */
+        CompleteMediaUploadRequest: {
+            /**
+             * Text
+             * @description 画像・動画に添える文
+             * @default
+             */
+            text: string;
+        };
+        /** CreateMediaUploadRequest */
+        CreateMediaUploadRequest: {
+            /**
+             * Content Type
+             * @enum {string}
+             */
+            content_type: "image/jpeg" | "image/png" | "image/webp" | "image/heic" | "video/mp4";
+            /**
+             * Size Bytes
+             * @description 本体のバイト数(上限 100MB。マルチパートは未対応)
+             */
+            size_bytes: number;
+            /**
+             * Has Thumbnail
+             * @description サムネイル(image/jpeg)も上げるなら true
+             * @default false
+             */
+            has_thumbnail: boolean;
+        };
         /** CreateRoomRequest */
         CreateRoomRequest: {
             /**
@@ -192,6 +297,74 @@ export interface components {
              */
             participant_token: string;
         };
+        /** MediaUpload */
+        MediaUpload: {
+            /** Media Id */
+            media_id: string;
+            /**
+             * Upload Url
+             * @description 本体を PUT する署名付き URL。Content-Type ヘッダーを content_type と同じにする
+             */
+            upload_url: string;
+            /**
+             * Thumbnail Upload Url
+             * @description サムネイルを PUT する署名付き URL(Content-Type は image/jpeg)。has_thumbnail が false なら null
+             */
+            thumbnail_upload_url: string | null;
+            /**
+             * Expires At
+             * @description 署名付き URL の期限(ISO 8601、UTC)
+             */
+            expires_at: string;
+        };
+        /**
+         * PutTimelineEventRequest
+         * @description Agent が発話とテキスト入力を保存するときの本文。
+         */
+        PutTimelineEventRequest: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "utterance" | "text";
+            /**
+             * Sender Id
+             * @description 話者・送信者の Cognito の sub(LiveKit の identity と同じ)
+             */
+            sender_id: string;
+            /**
+             * Occurred At
+             * @description ISO 8601(UTC、ミリ秒まで。例 2026-10-10T00:00:00.000Z)。リクエストではタイムゾーンつきの ISO 8601 を受け付け、この形にそろえる
+             */
+            occurred_at: string;
+            /**
+             * Language
+             * @description 原文の言語。分からなければ null
+             */
+            language: ("es" | "pt" | "fr" | "ja" | "ru" | "zh" | "de" | "ko" | "hi" | "id" | "vi" | "it" | "en") | null;
+            /**
+             * Text
+             * @description 原文
+             */
+            text: string;
+            /**
+             * Translations
+             * @description 言語コード → 訳文。訳がなければ空
+             */
+            translations: {
+                [key: string]: string;
+            };
+            /**
+             * Utterance Id
+             * @description 発話の ID(utterance のときだけ。字幕の proto と同じ)
+             */
+            utterance_id?: string | null;
+            /**
+             * Segment Index
+             * @description 発話の中の区切りの番号(utterance のときだけ。字幕の proto と同じ)
+             */
+            segment_index?: number | null;
+        };
         /** PutUserRequest */
         PutUserRequest: {
             /**
@@ -251,6 +424,99 @@ export interface components {
         RoomList: {
             /** Items */
             items: components["schemas"]["Room"][];
+        };
+        /**
+         * TimelineEvent
+         * @description ルームの履歴の1件。
+         */
+        TimelineEvent: {
+            /** Room Id */
+            room_id: string;
+            /**
+             * Event Id
+             * @description `<occurred_at>#<source_id>`。文字列の順が時刻の順になる。ページングの before に渡す
+             */
+            event_id: string;
+            /**
+             * Kind
+             * @description utterance は音声の発話(字幕の区切りごとに1件)、text はテキスト入力、media は画像・動画
+             * @enum {string}
+             */
+            kind: "utterance" | "text" | "media";
+            /**
+             * Sender Id
+             * @description 話者・送信者の Cognito の sub(LiveKit の identity と同じ)
+             */
+            sender_id: string;
+            /**
+             * Occurred At
+             * @description ISO 8601(UTC、ミリ秒まで。例 2026-10-10T00:00:00.000Z)
+             */
+            occurred_at: string;
+            /**
+             * Language
+             * @description 原文の言語。分からなければ null
+             */
+            language: ("es" | "pt" | "fr" | "ja" | "ru" | "zh" | "de" | "ko" | "hi" | "id" | "vi" | "it" | "en") | null;
+            /**
+             * Text
+             * @description 原文。media では空文字か、添えた文
+             */
+            text: string;
+            /**
+             * Translations
+             * @description 言語コード → 訳文。訳がなければ空
+             */
+            translations: {
+                [key: string]: string;
+            };
+            /**
+             * Utterance Id
+             * @description 発話の ID(utterance のときだけ。字幕の proto と同じ)
+             */
+            utterance_id: string | null;
+            /**
+             * Segment Index
+             * @description 発話の中の区切りの番号(utterance のときだけ。字幕の proto と同じ)
+             */
+            segment_index: number | null;
+            /** @description media のときだけ */
+            media: components["schemas"]["TimelineMedia"] | null;
+        };
+        /** TimelineMedia */
+        TimelineMedia: {
+            /** Media Id */
+            media_id: string;
+            /**
+             * Content Type
+             * @enum {string}
+             */
+            content_type: "image/jpeg" | "image/png" | "image/webp" | "image/heic" | "video/mp4";
+            /**
+             * Url
+             * @description 表示・再生の URL(CloudFront)
+             */
+            url: string;
+            /**
+             * Thumbnail Url
+             * @description サムネイルの URL。なければ null
+             */
+            thumbnail_url: string | null;
+            /** Size Bytes */
+            size_bytes: number;
+        };
+        /** TimelinePage */
+        TimelinePage: {
+            /**
+             * Items
+             * @description 新しい順
+             */
+            items: components["schemas"]["TimelineEvent"][];
+            /**
+             * Next Before
+             * @description 続き(より古いもの)を取るときに before に渡す。続きがなければ null
+             */
+            next_before: string | null;
         };
         /** UnregisterDeviceRequest */
         UnregisterDeviceRequest: {
@@ -483,6 +749,272 @@ export interface operations {
             };
             /** @description ルームがない */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listTimeline: {
+        parameters: {
+            query?: {
+                /** @description 件数 */
+                limit?: number;
+                /** @description この event_id より古いものを取る(前の応答の next_before) */
+                before?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description ルームの ID */
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TimelinePage"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description ルームがない */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    putTimelineEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ルームの ID */
+                room_id: string;
+                /** @description utterance では字幕の segment_id、text ではメッセージの ID */
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutTimelineEventRequest"];
+            };
+        };
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TimelineEvent"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description ルームがない */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    createMediaUpload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ルームの ID */
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateMediaUploadRequest"];
+            };
+        };
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaUpload"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description ルームがない */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    completeMediaUpload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ルームの ID */
+                room_id: string;
+                /** @description uploads が返した media_id */
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompleteMediaUploadRequest"];
+            };
+        };
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TimelineEvent"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description ルームか、アップロード(media_id)がない */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 本体かサムネイルがまだ置かれていない、または上限より大きい */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -13,19 +13,17 @@ from aws_lambda_powertools.event_handler import (
     Response,
 )
 from aws_lambda_powertools.event_handler.exceptions import (
-    ForbiddenError,
     NotFoundError,
     ServiceError,
 )
 from aws_lambda_powertools.event_handler.openapi.models import HTTPBearer
-from aws_lambda_powertools.event_handler.openapi.params import Body, Path
-from aws_lambda_powertools.event_handler.openapi.types import OpenAPIResponse
+from aws_lambda_powertools.event_handler.openapi.params import Body
 from aws_lambda_powertools.utilities.typing import LambdaContext
 from livekit import api as livekit
 from pydantic import BaseModel, Field
 
-from voice_intercom_api import devices, store
-from voice_intercom_api.auth import AdminUser, CurrentUser, Principal
+from voice_intercom_api import devices, media, store, timeline
+from voice_intercom_api.auth import AdminUser, CurrentUser
 from voice_intercom_api.config import get_settings
 from voice_intercom_api.models import (
     CreateRoomRequest,
@@ -36,6 +34,11 @@ from voice_intercom_api.models import (
     User,
     UserList,
 )
+from voice_intercom_api.routing import AUTH as _AUTH
+from voice_intercom_api.routing import ROOM_NOT_FOUND as _ROOM_NOT_FOUND
+from voice_intercom_api.routing import RoomIdPath
+from voice_intercom_api.routing import responses as _responses
+from voice_intercom_api.routing import visible_room as _visible_room
 
 # Agent が翻訳先を決めるのに使う、参加者の属性のキー(services/agent の languages.py)
 LANGUAGE_ATTRIBUTE = "language"
@@ -49,48 +52,6 @@ app.configure_openapi(
     version="0.1.0",
     security_schemes={"bearerAuth": HTTPBearer(bearerFormat="JWT")},
 )
-
-_AUTH = [{"bearerAuth": []}]
-
-
-class ErrorResponse(BaseModel):
-    """エラーの本文(Powertools の ServiceError が返す形)。"""
-
-    statusCode: int  # noqa: N815
-    message: str
-
-
-def _responses(
-    model: type[BaseModel] | None,
-    *,
-    status: int = 200,
-    description: str = "成功",
-    errors: dict[int, str] | None = None,
-) -> dict[int, OpenAPIResponse]:
-    """OpenAPI の応答。401 と 403 は必ず付ける。
-
-    Powertools は responses を渡すと成功の応答を出さず、content のない応答に戻り値の型を付けるので、
-    成功の応答も含めてすべて明示する。
-    """
-    ok: OpenAPIResponse = {"description": description, "content": {}}
-    if model is not None:
-        ok["content"] = {"application/json": {"model": model}}
-    descriptions = {
-        401: "トークンがない、または不正",
-        403: "このトークンでは使えない",
-    } | (errors or {})
-    responses: dict[int, OpenAPIResponse] = {status: ok}
-    for code, d in sorted(descriptions.items()):
-        responses[code] = {
-            "description": d,
-            "content": {"application/json": {"model": ErrorResponse}},
-        }
-    return responses
-
-
-_ROOM_NOT_FOUND = {404: "ルームがない"}
-
-RoomIdPath = Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]{1,64}$", description="ルームの ID")]
 
 
 @app.exception_handler(DependencyResolutionError)
@@ -112,16 +73,6 @@ def health() -> HealthResponse:
 
 
 # ルーム
-
-
-def _visible_room(room_id: str, user: Principal) -> Room:
-    """管理者かメンバーなら、ルームを返す。"""
-    room = store.get_room(room_id)
-    if room is None:
-        raise NotFoundError("ルームがない")
-    if not user.is_admin and user.sub not in room.member_ids:
-        raise ForbiddenError("このルームのメンバーではない")
-    return room
 
 
 @app.get(
@@ -289,7 +240,9 @@ def create_livekit_token(
     return LiveKitTokenResponse(server_url=settings.livekit_client_url, participant_token=token)
 
 
-# 別のモジュールに分けたルート
+# 機能ごとに Router に分けたルート
+app.include_router(timeline.router)
+app.include_router(media.router)
 app.include_router(devices.router)
 
 

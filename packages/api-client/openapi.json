@@ -250,6 +250,427 @@
         ]
       }
     },
+    "/rooms/{room_id}/timeline": {
+      "get": {
+        "tags": [
+          "timeline"
+        ],
+        "summary": "ルームの履歴を新しい順に取る(管理者かメンバー)",
+        "operationId": "listTimeline",
+        "parameters": [
+          {
+            "description": "ルームの ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Room Id",
+              "description": "ルームの ID"
+            },
+            "name": "room_id",
+            "in": "path"
+          },
+          {
+            "description": "件数",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100.0,
+              "minimum": 1.0,
+              "title": "Limit",
+              "description": "件数",
+              "default": 50
+            },
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "description": "この event_id より古いものを取る(前の応答の next_before)",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256,
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before",
+              "description": "この event_id より古いものを取る(前の応答の next_before)"
+            },
+            "name": "before",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimelinePage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ルームがない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/rooms/{room_id}/timeline/{source_id}": {
+      "put": {
+        "tags": [
+          "timeline"
+        ],
+        "summary": "発話かテキスト入力を履歴に保存する(Agent)。同じ内容なら何度呼んでも同じ結果になる",
+        "description": "event_id は `<occurred_at>#<source_id>` で作る。同じ event_id があれば置き換える。",
+        "operationId": "putTimelineEvent",
+        "parameters": [
+          {
+            "description": "ルームの ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Room Id",
+              "description": "ルームの ID"
+            },
+            "name": "room_id",
+            "in": "path"
+          },
+          {
+            "description": "utterance では字幕の segment_id、text ではメッセージの ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$",
+              "title": "Source Id",
+              "description": "utterance では字幕の segment_id、text ではメッセージの ID"
+            },
+            "name": "source_id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutTimelineEventRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimelineEvent"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ルームがない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/rooms/{room_id}/media/uploads": {
+      "post": {
+        "tags": [
+          "media"
+        ],
+        "summary": "画像・動画をアップロードする署名付き URL を発行する(管理者かメンバー)",
+        "description": "PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。",
+        "operationId": "createMediaUpload",
+        "parameters": [
+          {
+            "description": "ルームの ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Room Id",
+              "description": "ルームの ID"
+            },
+            "name": "room_id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMediaUploadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaUpload"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ルームがない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/rooms/{room_id}/media/{media_id}/complete": {
+      "post": {
+        "tags": [
+          "media"
+        ],
+        "summary": "アップロードした画像・動画を履歴に保存する(アップロードした本人)",
+        "description": "本体(とサムネイル)が置かれていなければ 409。2回目からは、最初に保存した履歴を返す。",
+        "operationId": "completeMediaUpload",
+        "parameters": [
+          {
+            "description": "ルームの ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Room Id",
+              "description": "ルームの ID"
+            },
+            "name": "room_id",
+            "in": "path"
+          },
+          {
+            "description": "uploads が返した media_id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$",
+              "title": "Media Id",
+              "description": "uploads が返した media_id"
+            },
+            "name": "media_id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteMediaUploadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimelineEvent"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ルームか、アップロード(media_id)がない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "本体かサムネイルがまだ置かれていない、または上限より大きい",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/health": {
       "get": {
         "tags": [
@@ -804,6 +1225,53 @@
   },
   "components": {
     "schemas": {
+      "CompleteMediaUploadRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 10000,
+            "title": "Text",
+            "description": "画像・動画に添える文",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "CompleteMediaUploadRequest"
+      },
+      "CreateMediaUploadRequest": {
+        "properties": {
+          "content_type": {
+            "type": "string",
+            "enum": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/heic",
+              "video/mp4"
+            ],
+            "title": "Content Type"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "maximum": 104857600.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Size Bytes",
+            "description": "本体のバイト数(上限 100MB。マルチパートは未対応)"
+          },
+          "has_thumbnail": {
+            "type": "boolean",
+            "title": "Has Thumbnail",
+            "description": "サムネイル(image/jpeg)も上げるなら true",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "content_type",
+          "size_bytes"
+        ],
+        "title": "CreateMediaUploadRequest"
+      },
       "CreateRoomRequest": {
         "properties": {
           "room_id": {
@@ -915,6 +1383,146 @@
           "participant_token"
         ],
         "title": "LiveKitTokenResponse"
+      },
+      "MediaUpload": {
+        "properties": {
+          "media_id": {
+            "type": "string",
+            "title": "Media Id"
+          },
+          "upload_url": {
+            "type": "string",
+            "title": "Upload Url",
+            "description": "本体を PUT する署名付き URL。Content-Type ヘッダーを content_type と同じにする"
+          },
+          "thumbnail_upload_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thumbnail Upload Url",
+            "description": "サムネイルを PUT する署名付き URL(Content-Type は image/jpeg)。has_thumbnail が false なら null"
+          },
+          "expires_at": {
+            "type": "string",
+            "title": "Expires At",
+            "description": "署名付き URL の期限(ISO 8601、UTC)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "media_id",
+          "upload_url",
+          "thumbnail_upload_url",
+          "expires_at"
+        ],
+        "title": "MediaUpload"
+      },
+      "PutTimelineEventRequest": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "utterance",
+              "text"
+            ],
+            "title": "Kind"
+          },
+          "sender_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Sender Id",
+            "description": "話者・送信者の Cognito の sub(LiveKit の identity と同じ)"
+          },
+          "occurred_at": {
+            "type": "string",
+            "title": "Occurred At",
+            "description": "ISO 8601(UTC、ミリ秒まで。例 2026-10-10T00:00:00.000Z)。リクエストではタイムゾーンつきの ISO 8601 を受け付け、この形にそろえる"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "es",
+                  "pt",
+                  "fr",
+                  "ja",
+                  "ru",
+                  "zh",
+                  "de",
+                  "ko",
+                  "hi",
+                  "id",
+                  "vi",
+                  "it",
+                  "en"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language",
+            "description": "原文の言語。分からなければ null"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 10000,
+            "title": "Text",
+            "description": "原文"
+          },
+          "translations": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Translations",
+            "description": "言語コード → 訳文。訳がなければ空"
+          },
+          "utterance_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Utterance Id",
+            "description": "発話の ID(utterance のときだけ。字幕の proto と同じ)"
+          },
+          "segment_index": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Segment Index",
+            "description": "発話の中の区切りの番号(utterance のときだけ。字幕の proto と同じ)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "sender_id",
+          "occurred_at",
+          "language",
+          "text",
+          "translations"
+        ],
+        "title": "PutTimelineEventRequest",
+        "description": "Agent が発話とテキスト入力を保存するときの本文。"
       },
       "PutUserRequest": {
         "properties": {
@@ -1038,6 +1646,213 @@
           "items"
         ],
         "title": "RoomList"
+      },
+      "TimelineEvent": {
+        "properties": {
+          "room_id": {
+            "type": "string",
+            "title": "Room Id"
+          },
+          "event_id": {
+            "type": "string",
+            "title": "Event Id",
+            "description": "`<occurred_at>#<source_id>`。文字列の順が時刻の順になる。ページングの before に渡す"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "utterance",
+              "text",
+              "media"
+            ],
+            "title": "Kind",
+            "description": "utterance は音声の発話(字幕の区切りごとに1件)、text はテキスト入力、media は画像・動画"
+          },
+          "sender_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Sender Id",
+            "description": "話者・送信者の Cognito の sub(LiveKit の identity と同じ)"
+          },
+          "occurred_at": {
+            "type": "string",
+            "title": "Occurred At",
+            "description": "ISO 8601(UTC、ミリ秒まで。例 2026-10-10T00:00:00.000Z)"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "es",
+                  "pt",
+                  "fr",
+                  "ja",
+                  "ru",
+                  "zh",
+                  "de",
+                  "ko",
+                  "hi",
+                  "id",
+                  "vi",
+                  "it",
+                  "en"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language",
+            "description": "原文の言語。分からなければ null"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "原文。media では空文字か、添えた文"
+          },
+          "translations": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Translations",
+            "description": "言語コード → 訳文。訳がなければ空"
+          },
+          "utterance_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Utterance Id",
+            "description": "発話の ID(utterance のときだけ。字幕の proto と同じ)"
+          },
+          "segment_index": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Segment Index",
+            "description": "発話の中の区切りの番号(utterance のときだけ。字幕の proto と同じ)"
+          },
+          "media": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TimelineMedia"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "media のときだけ"
+          }
+        },
+        "type": "object",
+        "required": [
+          "room_id",
+          "event_id",
+          "kind",
+          "sender_id",
+          "occurred_at",
+          "language",
+          "text",
+          "translations",
+          "utterance_id",
+          "segment_index",
+          "media"
+        ],
+        "title": "TimelineEvent",
+        "description": "ルームの履歴の1件。"
+      },
+      "TimelineMedia": {
+        "properties": {
+          "media_id": {
+            "type": "string",
+            "title": "Media Id"
+          },
+          "content_type": {
+            "type": "string",
+            "enum": [
+              "image/jpeg",
+              "image/png",
+              "image/webp",
+              "image/heic",
+              "video/mp4"
+            ],
+            "title": "Content Type"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "表示・再生の URL(CloudFront)"
+          },
+          "thumbnail_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thumbnail Url",
+            "description": "サムネイルの URL。なければ null"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "media_id",
+          "content_type",
+          "url",
+          "thumbnail_url",
+          "size_bytes"
+        ],
+        "title": "TimelineMedia"
+      },
+      "TimelinePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TimelineEvent"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "新しい順"
+          },
+          "next_before": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Before",
+            "description": "続き(より古いもの)を取るときに before に渡す。続きがなければ null"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "next_before"
+        ],
+        "title": "TimelinePage"
       },
       "UnregisterDeviceRequest": {
         "properties": {
