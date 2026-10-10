@@ -1,6 +1,8 @@
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable, Iterable
+from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -146,14 +148,38 @@ class FakeTranslator:
                 yield lang, self.results[lang]
 
 
+class FakeHistory:
+    def __init__(self) -> None:
+        self.originals: list[dict[str, Any]] = []
+        self.translations: list[tuple[str, str, str | None]] = []
+
+    def original(self, segment_id: str, text: str, **kwargs: Any) -> None:
+        self.originals.append({"segment_id": segment_id, "text": text, **kwargs})
+
+    def translation(self, segment_id: str, language: str, text: str | None) -> None:
+        self.translations.append((segment_id, language, text))
+
+
+NOW = datetime(2026, 10, 10, 1, 2, 3, tzinfo=UTC)
+
+
 class Harness:
     def __init__(self, translator: FakeTranslator, tts: FakeTts | None = None) -> None:
         self.translator = translator
         self.tts = tts or FakeTts()
         self.captions = FakeCaptions()
+        self.history = FakeHistory()
         self.audio: list[tuple[str, str, bytes | None]] = []
         self.opened: list[tuple[str, int]] = []
-        self.text = TextInput(translator, self.tts, self.captions, self._open, max_chars=100)
+        self.text = TextInput(
+            translator,
+            self.tts,
+            self.captions,
+            self._open,
+            max_chars=100,
+            history=self.history,
+            now=lambda: NOW,
+        )
 
     def _open(self, language: str, sample_rate: int) -> FakeSink:
         self.opened.append((language, sample_rate))
@@ -280,3 +306,38 @@ def test_speech_mismatch_is_logged(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING):
         h.handle("ja", ["ja"], "今何時ですか?")
     assert "読み上げのテキストが渡した文と違う" in caplog.text
+
+
+# --- 履歴の保存 ---
+
+
+def test_history_gets_original_and_translations() -> None:
+    h = Harness(FakeTranslator({"en": "Yes.", "ko": "네."}))
+    h.handle("ja", ["ja", "en", "ko"], "はい。")
+    segment_id = h.captions.sent[0].segment_id
+    assert h.history.originals == [
+        {
+            "segment_id": segment_id,
+            "text": "はい。",
+            "sender_id": "alice",
+            "language": "ja",
+            "occurred_at": NOW,
+            "targets": ["en", "ko"],
+            "kind": "text",
+        }
+    ]
+    assert h.history.translations == [(segment_id, "en", "Yes."), (segment_id, "ko", "네.")]
+
+
+def test_history_marks_missing_translations_as_failed() -> None:
+    h = Harness(FakeTranslator({"en": "Yes.", "ko": "네."}, fail_after=1))
+    h.handle("ja", ["en", "ko"], "はい")
+    segment_id = h.captions.sent[0].segment_id
+    assert h.history.translations == [(segment_id, "en", "Yes."), (segment_id, "ko", None)]
+
+
+def test_history_is_not_called_for_dropped_text() -> None:
+    h = Harness(FakeTranslator({"en": "x"}))
+    h.handle("ja", ["en"], "   ")
+    assert h.history.originals == []
+    assert h.history.translations == []

@@ -284,6 +284,7 @@ class IntercomAgent:
             self._deps.captions,
             self._deps.tracks.speech_input,
             max_chars=settings.text_max_chars,
+            history=self._deps.history,
         )
         room.on("data_received", self._on_data_received)
         room.on("participant_connected", self._prepare_speech)

@@ -10,6 +10,7 @@
 4. 読み上げ音声は、言語別のトラック(translation-<言語>)に混ぜる。原文の読み上げは、送信者と
    同じ言語のトラックに流す。同じ言語の読み上げは1つずつ順に行い、重ならないようにする。
 5. モデルが返す読み上げのテキストを渡した文と比べ、大きく違えばログに残す。
+6. 原文と訳がそろったら、履歴に保存する(history.py。kind は "text")。
 
 LiveKit と OpenAI には直接依存しない。翻訳・読み上げ・字幕・音声の出口は呼び出し側から渡す。
 """
@@ -18,6 +19,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Protocol
 
 from google.protobuf.message import DecodeError
@@ -45,6 +47,23 @@ class AudioSink(Protocol):
     def push(self, pcm: bytes) -> None: ...
 
     def close(self) -> None: ...
+
+
+class HistorySink(Protocol):
+    # history.py の HistoryRecorder と同じ形
+    def original(
+        self,
+        segment_id: str,
+        text: str,
+        *,
+        sender_id: str,
+        language: str | None,
+        occurred_at: datetime,
+        targets: list[str],
+        kind: str = ...,
+    ) -> None: ...
+
+    def translation(self, segment_id: str, language: str, text: str | None) -> None: ...
 
 
 class MessageTranslator(Protocol):
@@ -98,8 +117,12 @@ class TextInput:
         open_audio: Callable[[str, int], AudioSink],
         *,
         max_chars: int,
+        history: HistorySink | None = None,
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._translator = translator
+        self._history = history
+        self._now = now
         self._tts = tts
         self._captions = captions
         # (言語, サンプルレート) から、その言語のトラックへの音声の出口を作る
@@ -128,6 +151,7 @@ class TextInput:
                 len(message.text),
             )
             return
+        received_at = self._now()
         plan = plan_text(sender_language, listeners)
         segment_id = new_segment_id()
 
@@ -141,6 +165,17 @@ class TextInput:
             )
 
         self._captions.send(caption(sender_language or "", translated=False).final(text))
+        if self._history is not None:
+            # 履歴の source_id は segment_id(Agent が振る)。アプリが振る message_id は重なりうる
+            self._history.original(
+                segment_id,
+                text,
+                sender_id=sender,
+                language=sender_language,
+                occurred_at=received_at,
+                targets=list(plan.targets),
+                kind="text",
+            )
         logger.info(
             "テキストを受け取った: %s(%s → %s)%s: %s",
             sender,
@@ -162,6 +197,8 @@ class TextInput:
                     done.add(lang)
                     translated = translated.strip()
                     self._captions.send(caption(lang, translated=True).final(translated))
+                    if self._history is not None:
+                        self._history.translation(segment_id, lang, translated)
                     logger.info("テキストの訳(%s): %s", lang, translated)
                     if translated:
                         speeches.append(asyncio.create_task(self._speak(translated, lang)))
@@ -169,6 +206,9 @@ class TextInput:
                 logger.exception("テキストの翻訳に失敗した")
             if missing := [lang for lang in plan.targets if lang not in done]:
                 logger.warning("訳がそろわなかった言語: %s", ",".join(missing))
+                if self._history is not None:
+                    for lang in missing:
+                        self._history.translation(segment_id, lang, None)
         await asyncio.gather(*speeches)
 
     async def _speak(self, text: str, language: str) -> None:
