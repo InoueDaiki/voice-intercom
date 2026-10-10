@@ -182,3 +182,117 @@ body {
 .danger-button {
   color: crimson;
 }
+
+/* ---- ユーザーと履歴の画面 ---- */
+
+.filters {
+  margin: 0.75rem 0;
+}
+
+.inline-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timeline {
+  display: grid;
+  gap: 0.75rem;
+  max-width: 50rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timeline-entry {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: 4px;
+}
+
+.timeline-entry.kind-utterance {
+  border-left-color: color-mix(in srgb, royalblue 60%, transparent);
+}
+
+.timeline-entry.kind-text {
+  border-left-color: color-mix(in srgb, seagreen 60%, transparent);
+}
+
+.timeline-entry.kind-media {
+  border-left-color: color-mix(in srgb, orange 60%, transparent);
+}
+
+.timeline-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-size: 0.9rem;
+}
+
+.sender {
+  font-weight: bold;
+}
+
+.tag {
+  padding: 0 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.8rem;
+}
+
+.timeline-text {
+  margin: 0;
+}
+
+/* 発話の区切り。つなげて読めるよう行内に並べ、境目だけを薄い線で示す */
+.segment + .segment {
+  margin-left: 0.35rem;
+  padding-left: 0.35rem;
+  border-left: 1px dotted var(--border);
+}
+
+.translations summary {
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.translations dl {
+  margin: 0.5rem 0 0;
+}
+
+.translation {
+  display: contents;
+}
+
+.media img {
+  max-width: 240px;
+  max-height: 180px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.media video {
+  max-width: 100%;
+  width: 360px;
+}
+
+.media-placeholder {
+  display: grid;
+  place-content: center;
+  width: 240px;
+  height: 120px;
+  margin-bottom: 0.25rem;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+}
+
+.more {
+  margin-top: 1rem;
+}

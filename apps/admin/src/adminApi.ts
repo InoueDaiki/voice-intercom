@@ -1,9 +1,11 @@
-// 管理 API(ルームとユーザー)の呼び出し。画面はここに置いた関数だけを使う。
-// 型は生成クライアント(@voice-intercom/api-client)から取る。
+// 管理 API(ルーム、ユーザー、履歴)の呼び出し。画面はここに置いた関数だけを使う。
+// 型は生成クライアント(@voice-intercom/api-client)から取る(履歴だけは、型が入るまでこのファイルに一時的に置く)。
 
 import type { Schemas } from "@voice-intercom/api-client";
 
 import { api } from "./api.ts";
+import { getAccessToken } from "./auth.ts";
+import { config } from "./config.ts";
 
 // ---- 型 ----
 
@@ -15,6 +17,54 @@ export type Language = User["language"];
 
 export interface ListResponse<T> {
   items: T[];
+}
+
+// ---- ルームの履歴(一時的な型) ----
+// TODO(生成クライアント): 履歴の API(GET /rooms/{room_id}/timeline)が openapi.json に入ったら、
+// 次の4つの型を消して `Schemas["TimelineEvent"]` などに置き換える(名前は生成物に合わせる)。
+// 形はサーバーの担当と決めたもの。
+
+// 履歴の1件の種類。utterance は音声の発話(長い発話は区切られて複数件になる)、text はテキスト入力、media は画像・動画
+export type TimelineKind = "utterance" | "text" | "media";
+
+export interface TimelineMedia {
+  media_id: string;
+  content_type: string;
+  // 本体と縮小画像の URL(CloudFront)
+  url: string;
+  thumbnail_url: string | null;
+  size_bytes: number;
+}
+
+export interface TimelineEvent {
+  room_id: string;
+  // `<occurred_at>#<source_id>`。並びとページングのキー
+  event_id: string;
+  kind: TimelineKind;
+  // 送信者の Cognito の sub
+  sender_id: string;
+  occurred_at: string;
+  // 原文の言語。わからないときは null
+  language: string | null;
+  text: string;
+  // 言語コード → 訳文
+  translations: Record<string, string>;
+  // utterance のとき。同じ発話の区切りは utterance_id が同じで、segment_index で順番がわかる
+  utterance_id?: string | null;
+  segment_index?: number | null;
+  media: TimelineMedia | null;
+}
+
+// 新しい順。next_before が null なら、それより古いものはない
+export interface TimelinePage {
+  items: TimelineEvent[];
+  next_before: string | null;
+}
+
+export interface TimelineQuery {
+  limit?: number;
+  // この event_id より古いものを返す
+  before?: string;
 }
 
 // 話者の言語(services/api の定義と同じ並び)。型は生成物と突き合わせる
@@ -89,9 +139,39 @@ export interface AdminApi {
   updateRoom(roomId: string, body: RoomUpdate): Promise<Room>;
   deleteRoom(roomId: string): Promise<void>;
   listUsers(): Promise<ListResponse<User>>;
+  listTimeline(roomId: string, query?: TimelineQuery): Promise<TimelinePage>;
 }
 
 const path = (room_id: string) => ({ params: { path: { room_id } } });
+
+// TODO(生成クライアント): 履歴の API が生成クライアントに入ったら、この関数を消して、httpAdminApi.listTimeline を
+//   call(api.GET("/rooms/{room_id}/timeline", { params: { path: { room_id: roomId }, query } }))
+// にする。それまでは openapi-fetch が型の無いパスを呼べないので、素の fetch とアクセストークンで呼ぶ
+async function fetchTimeline(roomId: string, query: TimelineQuery = {}): Promise<TimelinePage> {
+  const params = new URLSearchParams();
+  if (query.limit !== undefined) {
+    params.set("limit", String(query.limit));
+  }
+  if (query.before !== undefined) {
+    params.set("before", query.before);
+  }
+  const base = config.apiBaseUrl.replace(/\/+$/, "");
+  const qs = params.size > 0 ? `?${params}` : "";
+  const token = await getAccessToken();
+  let response: Response;
+  try {
+    response = await fetch(`${base}/rooms/${encodeURIComponent(roomId)}/timeline${qs}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    throw new ApiError(0);
+  }
+  const body: unknown = await response.json().catch(() => undefined);
+  if (!response.ok) {
+    throw new ApiError(response.status, detailOf(body));
+  }
+  return body as TimelinePage;
+}
 
 const httpAdminApi: AdminApi = {
   listRooms: () => call(api.GET("/rooms")),
@@ -102,6 +182,7 @@ const httpAdminApi: AdminApi = {
     await call(api.DELETE("/rooms/{room_id}", path(roomId)));
   },
   listUsers: () => call(api.GET("/users")),
+  listTimeline: fetchTimeline,
 };
 
 // 開発サーバーで VITE_API_MOCK=1 のときだけ、メモリ上のモックで応答する。
@@ -121,4 +202,5 @@ export const adminApi: AdminApi = {
   updateRoom: async (roomId, body) => (await load()).updateRoom(roomId, body),
   deleteRoom: async (roomId) => (await load()).deleteRoom(roomId),
   listUsers: async () => (await load()).listUsers(),
+  listTimeline: async (roomId, query) => (await load()).listTimeline(roomId, query),
 };

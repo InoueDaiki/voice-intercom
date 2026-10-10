@@ -8,6 +8,8 @@ import { NotFound } from "./pages/NotFound.tsx";
 import { RoomCreate } from "./pages/RoomCreate.tsx";
 import { RoomDetail } from "./pages/RoomDetail.tsx";
 import { RoomList } from "./pages/RoomList.tsx";
+import { RoomTimeline } from "./pages/RoomTimeline.tsx";
+import { UserList } from "./pages/UserList.tsx";
 
 export const router = createBrowserRouter([
   // 認可コードを受け取る(処理は AuthProvider がする)
@@ -22,6 +24,8 @@ export const router = createBrowserRouter([
           { path: "rooms", element: <RoomList /> },
           { path: "rooms/new", element: <RoomCreate /> },
           { path: "rooms/:roomId", element: <RoomDetail /> },
+          { path: "rooms/:roomId/timeline", element: <RoomTimeline /> },
+          { path: "users", element: <UserList /> },
           { path: "*", element: <NotFound /> },
         ],
       },
