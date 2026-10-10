@@ -26,6 +26,7 @@ export function Layout() {
           ホーム
         </NavLink>
         <NavLink to="/rooms">ルーム</NavLink>
+        <NavLink to="/users">ユーザー</NavLink>
       </nav>
       <main className="content">
         <Outlet />
