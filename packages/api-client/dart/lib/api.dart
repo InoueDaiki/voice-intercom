@@ -30,13 +30,23 @@ part 'auth/http_bearer_auth.dart';
 
 part 'api/health_api.dart';
 part 'api/livekit_api.dart';
+part 'api/rooms_api.dart';
+part 'api/users_api.dart';
 
+part 'model/create_room_request.dart';
+part 'model/error_response.dart';
 part 'model/http_validation_error.dart';
 part 'model/health_response.dart';
 part 'model/live_kit_token_request.dart';
 part 'model/live_kit_token_response.dart';
 part 'model/location_inner.dart';
+part 'model/put_user_request.dart';
 part 'model/response_validation_error.dart';
+part 'model/room.dart';
+part 'model/room_list.dart';
+part 'model/update_room_request.dart';
+part 'model/user.dart';
+part 'model/user_list.dart';
 part 'model/validation_error.dart';
 
 

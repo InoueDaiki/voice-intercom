@@ -76,7 +76,8 @@ module "users_table" {
   point_in_time_recovery = false
 }
 
-# ルームの設定と参加者
+# ルームの設定と参加者(member_ids)。「自分がメンバーのルーム」は Scan で取る。
+# ルームの数が少ないので GSI や所属のテーブルは作らない(services/api の store.py)
 module "rooms_table" {
   source = "../../modules/dynamodb"
 
@@ -125,6 +126,12 @@ data "aws_iam_policy_document" "api" {
       "dynamodb:TransactWriteItems",
     ]
     resources = local.table_arns
+  }
+
+  # ルームとユーザーの一覧(件数が少ないので Scan で取る)。timeline は Query だけにする
+  statement {
+    actions   = ["dynamodb:Scan"]
+    resources = [module.users_table.table_arn, module.rooms_table.table_arn]
   }
 
   # 署名付き URL の発行(アップロードと、必要なら直接の取得)

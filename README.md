@@ -129,6 +129,25 @@ VS Code で「Reopen in Container」を選ぶ。初回に `.devcontainer/post-cr
 
 LiveKit の URL と API キーは `TF_VAR_livekit_client_url`、`TF_VAR_livekit_api_key` で渡す。
 
+## REST API
+
+`services/api`(API Gateway + Lambda)。`/health` 以外はアクセストークン(Bearer)が要る。管理者は `cognito:groups` に `admin` がある人。型の正は Pydantic のモデルで、仕様は [packages/api-client/openapi.json](packages/api-client/openapi.json)。
+
+| エンドポイント | 内容 | 使える人 |
+| --- | --- | --- |
+| `GET /health` | 死活監視 | だれでも |
+| `GET /rooms` | ルームの一覧(`{items}`) | 管理者はすべて、それ以外は自分がメンバーのルーム |
+| `POST /rooms` | ルームを作る。同じ `room_id` があれば 409 | 管理者 |
+| `GET /rooms/{room_id}` | ルームを取る | 管理者、メンバー |
+| `PATCH /rooms/{room_id}` | 名前とメンバー(`member_ids`、Cognito の sub)を変える | 管理者 |
+| `DELETE /rooms/{room_id}` | ルームを消す(204) | 管理者 |
+| `GET /users/me` | 自分のプロフィール(表示名、言語)。未登録なら 404 | 本人 |
+| `PUT /users/me` | プロフィールを登録・更新する | 本人 |
+| `GET /users` | プロフィールを登録したユーザーの一覧(`{items}`) | 管理者 |
+| `POST /livekit/token` | LiveKit の参加用トークン。プロフィールの表示名を name に、言語を参加者の属性 `language` に入れる。ルームがなければ 404、プロフィールが未登録なら 409 | 管理者、メンバー |
+
+言語は gpt-realtime-translate が出力できる13言語のコード(`ja`、`en` など)。Agent の翻訳先はこの言語で決まるので、プロフィールがないとトークンを発行しない。
+
 ## ローカルの認証(模擬 OIDC サーバー)
 
 本番は Cognito を標準の OIDC(認可コード + PKCE)で使う。ローカルでは、devContainer と一緒に起動する [mock-oauth2-server](https://github.com/navikt/mock-oauth2-server) に差し替える。

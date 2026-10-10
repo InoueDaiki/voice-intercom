@@ -8,6 +8,8 @@ ENV = {
     "OIDC_CLIENT_IDS": "mobile, admin,,agent",
     "LIVEKIT_CLIENT_URL": "ws://livekit.test:7880",
     "LIVEKIT_API_KEY": "devkey",
+    "ROOMS_TABLE": "rooms",
+    "USERS_TABLE": "users",
 }
 
 

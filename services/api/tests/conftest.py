@@ -3,16 +3,20 @@ import time
 from collections.abc import Callable, Iterator
 from typing import Any
 
+import boto3
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
+from moto import mock_aws
 
-from voice_intercom_api import auth, config
+from voice_intercom_api import auth, config, store
 
 ISSUER = "http://oidc.test/default"
 CLIENT_ID = "mobile"
 LIVEKIT_API_KEY = "devkey"
 LIVEKIT_API_SECRET = "secret-secret-secret-secret-secret"
+ROOMS_TABLE = "voice-intercom-test-rooms"
+USERS_TABLE = "voice-intercom-test-users"
 
 
 @pytest.fixture(scope="session")
@@ -63,12 +67,42 @@ def env(monkeypatch: pytest.MonkeyPatch, verifier: auth.TokenVerifier) -> Iterat
         "LIVEKIT_CLIENT_URL": "ws://livekit.test:7880",
         "LIVEKIT_API_KEY": LIVEKIT_API_KEY,
         "LIVEKIT_API_SECRET": LIVEKIT_API_SECRET,
+        "ROOMS_TABLE": ROOMS_TABLE,
+        "USERS_TABLE": USERS_TABLE,
     }.items():
         monkeypatch.setenv(name, value)
     config.get_settings.cache_clear()
     monkeypatch.setattr(auth, "get_verifier", lambda: verifier)
     yield
     config.get_settings.cache_clear()
+
+
+@pytest.fixture
+def tables(monkeypatch: pytest.MonkeyPatch, env: None) -> Iterator[None]:
+    """moto で DynamoDB を模擬し、rooms と users のテーブルを作る(キーは dev 環境と揃える)。"""
+    # 本物の AWS に向かないよう、ダミーの鍵を使う
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
+    monkeypatch.delenv("AWS_ENDPOINT_URL_DYNAMODB", raising=False)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "ap-northeast-1")
+    monkeypatch.setenv("AWS_REGION", "ap-northeast-1")
+    with mock_aws():
+        dynamodb = boto3.client("dynamodb")
+        for name, key in [(ROOMS_TABLE, "room_id"), (USERS_TABLE, "user_id")]:
+            dynamodb.create_table(
+                TableName=name,
+                BillingMode="PAY_PER_REQUEST",
+                AttributeDefinitions=[{"AttributeName": key, "AttributeType": "S"}],
+                KeySchema=[{"AttributeName": key, "KeyType": "HASH"}],
+            )
+        store._table.cache_clear()  # pyright: ignore[reportPrivateUsage]
+        yield
+        store._table.cache_clear()  # pyright: ignore[reportPrivateUsage]
+
+
+def auth_headers(token: str | None) -> dict[str, str]:
+    return {"authorization": f"Bearer {token}"} if token else {}
 
 
 def http_event(

@@ -22,6 +22,9 @@ class Settings:
     livekit_client_url: str
     livekit_api_key: str
     livekit_api_secret: str
+    # DynamoDB のテーブル名(infra/envs/<env>/main.tf、ローカルは scripts/with-local-aws.sh)
+    rooms_table: str
+    users_table: str
 
 
 def _require(name: str) -> str:
@@ -56,4 +59,6 @@ def get_settings() -> Settings:
         livekit_client_url=_require("LIVEKIT_CLIENT_URL"),
         livekit_api_key=_require("LIVEKIT_API_KEY"),
         livekit_api_secret=_livekit_api_secret(),
+        rooms_table=_require("ROOMS_TABLE"),
+        users_table=_require("USERS_TABLE"),
     )

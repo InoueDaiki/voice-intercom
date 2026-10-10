@@ -183,6 +183,10 @@ class ApiClient {
           return valueString == 'true' || valueString == '1';
         case 'DateTime':
           return value is DateTime ? value : DateTime.tryParse(value);
+        case 'CreateRoomRequest':
+          return CreateRoomRequest.fromJson(value);
+        case 'ErrorResponse':
+          return ErrorResponse.fromJson(value);
         case 'HTTPValidationError':
           return HTTPValidationError.fromJson(value);
         case 'HealthResponse':
@@ -193,8 +197,20 @@ class ApiClient {
           return LiveKitTokenResponse.fromJson(value);
         case 'LocationInner':
           return LocationInner.fromJson(value);
+        case 'PutUserRequest':
+          return PutUserRequest.fromJson(value);
         case 'ResponseValidationError':
           return ResponseValidationError.fromJson(value);
+        case 'Room':
+          return Room.fromJson(value);
+        case 'RoomList':
+          return RoomList.fromJson(value);
+        case 'UpdateRoomRequest':
+          return UpdateRoomRequest.fromJson(value);
+        case 'User':
+          return User.fromJson(value);
+        case 'UserList':
+          return UserList.fromJson(value);
         case 'ValidationError':
           return ValidationError.fromJson(value);
         default:
