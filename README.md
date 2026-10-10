@@ -107,6 +107,7 @@ VS Code で「Reopen in Container」を選ぶ。初回に `.devcontainer/post-cr
 | `mise run lint` | buf lint、ruff、pyright、tsc | devContainer |
 | `mise run fmt` | 整形 | devContainer |
 | `mise run test` | pytest | devContainer |
+| `mise run api` | REST API をローカルで起動する(`http://localhost:3000`。ローカルの DynamoDB・S3・模擬 OIDC につなぐ) | devContainer |
 | `mise run admin` | 管理コンソールの開発サーバーを起動する(`http://localhost:5173`) | devContainer |
 | `mise run livekit` | ローカルの LiveKit サーバーを起動する(`--dev`、LAN に公開) | ホスト |
 | `mise run build:api` | Lambda に載せるディレクトリ(`.build/api`)を作る | devContainer |
@@ -306,8 +307,7 @@ result = notify.send_to_users(
   | `/rooms/:roomId/timeline` | ルームの履歴(新しい順。「もっと見る」で古いものを読む)。区切られた発話はまとめて出し、訳文は折りたたむ。種類と言語で絞り込める(読み込んだ分の中で) |
   | `/users` | プロフィールを登録したユーザーの一覧と、所属しているルーム。名前で絞り込める |
 
-  履歴の API(`GET /rooms/{room_id}/timeline`)は、生成クライアントに型が入るまで `apps/admin/src/adminApi.ts` に一時的な型と fetch を置いている(`TODO(生成クライアント)` の箇所)。
-- API は Vite が中継する(`/api` → `http://localhost:3000`)。同じオリジンになるので、ローカルでは CORS が要らない。
+- API は Vite が中継する(`/api` → `http://localhost:3000`。`/api` は外して渡す)。同じオリジンになるので、ローカルでは CORS が要らない。API は別に `mise run api` で起動しておく([ローカルで API を動かす](#ローカルで-api-を動かす))。
 - 設定は `VITE_` で始まる環境変数で渡す。ローカルでは何も設定しなくてよい。
 
   | 変数 | 内容 | ローカルの既定 |
@@ -343,3 +343,44 @@ AWS に接続せずに API を動かせるように、devContainer と一緒に�
 - CloudFront の代わりに、バケットを匿名で読めるようにしている(`MEDIA_BASE_URL` は `http://${DEV_HOST}:8333/voice-intercom-local-media`)。書き込みと一覧には鍵が要る。設定は [.devcontainer/seaweedfs-s3.json](.devcontainer/seaweedfs-s3.json)。
 - 鍵を設定しているので、SeaweedFS も署名を確かめる。Content-Type が署名と違う PUT は、本番の S3 と同じく 403 になる。
 - 起動直後の数秒は、S3 の読み取りが 500 を返すことがある(SeaweedFS の内部の登録待ち)。
+
+## ローカルで API を動かす
+
+`mise run api` で、REST API(`services/api`)を `http://localhost:3000` で起動する。HTTP のリクエストを API Gateway HTTP API(ペイロード 2.0)のイベントに変換して Lambda の `handler` を呼ぶ、開発用のサーバー(`services/api/src/voice_intercom_api/local_server.py`、標準ライブラリだけ。Lambda には載せない)。
+
+1. 先に `mise run local:init` を済ませておく(上の「ローカルの DynamoDB と S3」)。
+2. `.env` に `OIDC_ISSUER`、`OIDC_JWKS_URL`、`OIDC_CLIENT_IDS`、`LIVEKIT_API_KEY`、`LIVEKIT_API_SECRET`、`LIVEKIT_CLIENT_URL` があるか確かめる(`.env.example` を参照)。テーブル名と DynamoDB・S3 の接続先は、タスクが `scripts/with-local-aws.sh` で渡す。
+3. `mise run api` で起動する。`services/api/src` の `.py` を変えると、自動で起動し直す(止めるときは `--no-reload` を付ける: `mise run api -- --no-reload`)。
+
+- 管理コンソールからは Vite の中継(`/api`)で、Agent からは `http://localhost:3000` で、実機やエミュレーターからは `http://${DEV_HOST}:3000` で届く(compose が 3000 番を LAN に公開するので、サーバーはコンテナの中の `0.0.0.0` で待ち受ける)。
+- `/health` は設定がなくても応答する。設定が足りないときは、起動時に警告を出し、ほかのルートは 500 になる。
+
+本番(`infra/modules/api`)との違い:
+
+- **JWT オーソライザーがない**。本番は API Gateway の JWT オーソライザーが先にトークンを確かめ、Lambda の中でも確かめる。ローカルは Lambda の中の検証(`auth.py`。署名・期限・iss・`token_use`・`client_id`)だけになる。Lambda は `requestContext.authorizer` を使わないので、イベントにも入れない。`routeKey` は `public_routes`(`GET /health`)と同じものだけ、それ以外は `$default` にする。
+- ステージは本番と同じ `$default` なので、パスに前置きはない。
+- CORS は本番と同じ設定(メソッド、`authorization`・`content-type`)で、このサーバーが返す。許可するオリジンは `API_CORS_ALLOWED_ORIGINS`(カンマ区切り、既定は `http://localhost:5173`)。Flutter の実機アプリはブラウザではないので CORS は関係しない。Flutter Web から直接呼ぶときだけ、そのオリジンを足す。
+- リクエストは1つずつ処理する(Lambda の1つの実行環境と同じ)。
+
+トークンは模擬 OIDC から取る。`iss` が `OIDC_ISSUER` と合うよう、`DEV_HOST` で接続する。
+
+```sh
+oidc="http://${DEV_HOST}:8090/default"
+
+# 利用者のトークン。ログイン画面のフォームを curl で送り、認可コードを交換する(claims は上の例と同じ)
+code=$(curl -s -o /dev/null -w '%{redirect_url}' -X POST \
+  "$oidc/authorize?client_id=admin&response_type=code&scope=openid&state=x&redirect_uri=http://localhost:5173/cb" \
+  --data-urlencode username=admin-1 \
+  --data-urlencode 'claims={"cognito:groups":["admin"],"token_use":"access","client_id":"admin"}' \
+  | sed -E 's/.*[?&]code=([^&]+).*/\1/')
+token=$(curl -s "$oidc/token" -d grant_type=authorization_code -d code="$code" \
+  -d client_id=admin -d redirect_uri=http://localhost:5173/cb | jq -r .access_token)
+
+curl -H "Authorization: Bearer $token" http://localhost:3000/rooms
+
+# Agent のトークン(client credentials。scope が voice-intercom/agent になる)
+agent=$(curl -s "$oidc/token" -d grant_type=client_credentials -d client_id=agent -d client_secret=x \
+  | jq -r .access_token)
+```
+
+`username` はトークンの `sub`(users テーブルの `user_id`、ルームの `member_ids`)になる。管理者でない利用者のトークンは、claims から `cognito:groups` を外し、`client_id` を `mobile` にして取る。

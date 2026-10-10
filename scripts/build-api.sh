@@ -20,6 +20,8 @@ uv pip install --quiet \
   --only-binary :all:
 
 cp -R "$root/services/api/src/voice_intercom_api" "$out/"
+# 開発用のローカルサーバー(mise run api)は Lambda に要らない
+rm -f "$out/voice_intercom_api/local_server.py"
 find "$out" -name __pycache__ -type d -prune -exec rm -rf {} +
 
 echo "built: $out"
