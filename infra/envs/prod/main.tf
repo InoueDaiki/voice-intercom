@@ -32,6 +32,8 @@ provider "aws" {
   }
 }
 
+data "aws_caller_identity" "current" {}
+
 # 秘密情報。値は Terraform の外で入れる(state に残さない)
 #   aws ssm put-parameter --overwrite --type SecureString \
 #     --name /voice-intercom-prod/livekit/api-secret --value <secret>
@@ -57,6 +59,15 @@ resource "aws_ssm_parameter" "openai_api_key" {
   }
 }
 
+# 話者ごと・発話ごとの録音(Agent が書く)。media は CloudFront でバケット全体を配信するので、
+# 録音は非公開の別のバケットに置く(infra/modules/recordings)
+module "recordings" {
+  source = "../../modules/recordings"
+
+  bucket_name    = "${local.name_prefix}-recordings-${data.aws_caller_identity.current.account_id}"
+  retention_days = var.recording_retention_days
+}
+
 # LiveKit Agent(ECS Fargate)。公式の目安の 4 vCPU・8GB から始め、CPU 使用率でオートスケールする。
 # 最小は 1(0 台からは CPU の指標が出ず増えない)。冗長にするなら agent_min_count を 2 にする
 # (1つが落ちても、ルームは約15秒で残りに再ディスパッチされる)
@@ -78,6 +89,12 @@ module "agent" {
   # prod にはまだ Cognito と API が無いので、履歴は保存しない。入れるときは dev と同じく
   # Agent のクライアントシークレットの SSM パラメーターを作り、history を渡す
   history = null
+
+  # 話者ごと・発話ごとの録音を S3 に置く(Egress は使わない。設計メモの「録音の方式」)
+  recording = {
+    bucket_name = module.recordings.bucket_name
+    bucket_arn  = module.recordings.bucket_arn
+  }
 
   vpc_cidr           = "10.20.0.0/16"
   log_retention_days = 90

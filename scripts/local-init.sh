@@ -46,12 +46,19 @@ create_table "$TIMELINE_TABLE" room_id event_id
 create_table "$USERS_TABLE" user_id
 create_table "$ROOMS_TABLE" room_id
 
-if aws s3api head-bucket --bucket "$MEDIA_BUCKET" >/dev/null 2>&1; then
-  echo "既にある: $MEDIA_BUCKET"
-else
-  aws s3api create-bucket --bucket "$MEDIA_BUCKET" >/dev/null
-  echo "作成した: $MEDIA_BUCKET"
-fi
+create_bucket() {
+  local name="$1"
+  if aws s3api head-bucket --bucket "$name" >/dev/null 2>&1; then
+    echo "既にある: $name"
+    return
+  fi
+  aws s3api create-bucket --bucket "$name" >/dev/null
+  echo "作成した: $name"
+}
+
+create_bucket "$MEDIA_BUCKET"
+# 録音(Agent が書く)。匿名では読めない(.devcontainer/seaweedfs-s3.json は media だけを許している)
+create_bucket "$RECORDING_BUCKET"
 
 # 管理コンソール(ブラウザ)から署名付き URL で PUT するため。infra/modules/media と揃える
 aws s3api put-bucket-cors --bucket "$MEDIA_BUCKET" --cors-configuration '{

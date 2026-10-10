@@ -29,3 +29,9 @@ variable "agent_max_count" {
   type        = number
   default     = 2
 }
+
+variable "recording_retention_days" {
+  description = "録音を残す日数。過ぎたものは S3 のライフサイクルで消す"
+  type        = number
+  default     = 30
+}

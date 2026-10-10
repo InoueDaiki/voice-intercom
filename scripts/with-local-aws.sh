@@ -27,5 +27,7 @@ export ROOMS_TABLE=voice-intercom-local-rooms
 export MEDIA_BUCKET=voice-intercom-local-media
 # CloudFront の代わりに、S3 のバケットを匿名で読む
 export MEDIA_BASE_URL="http://${DEV_HOST}:8333/${MEDIA_BUCKET}"
+# Agent の録音(services/agent の recording.py)。本番は ECS のタスク定義が渡す
+export RECORDING_BUCKET=voice-intercom-local-recordings
 
 exec "$@"

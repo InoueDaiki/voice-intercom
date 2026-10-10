@@ -22,6 +22,13 @@ locals {
   history_secrets = var.history == null ? [] : [
     { name = "AGENT_CLIENT_SECRET", valueFrom = var.history.client_secret_parameter_arn },
   ]
+
+  # 録音(services/agent の recording.py)。var.recording が null なら録音しない。
+  # boto3 は AWS_REGION ではなく AWS_DEFAULT_REGION を読むので、明示して渡す
+  recording_environment = var.recording == null ? {} : {
+    RECORDING_BUCKET   = var.recording.bucket_name
+    AWS_DEFAULT_REGION = data.aws_region.current.region
+  }
 }
 
 # ---- ECR ----
@@ -115,7 +122,7 @@ resource "aws_iam_role_policy" "execution_secrets" {
   policy = data.aws_iam_policy_document.execution_secrets.json
 }
 
-# タスクロール: コンテナの中のコードが使う(タスク保護)
+# タスクロール: コンテナの中のコードが使う(タスク保護と録音)
 # (履歴の保存は API Gateway を Cognito のトークンで呼ぶので、IAM の権限は要らない)
 resource "aws_iam_role" "task" {
   name               = "${var.name}-task"
@@ -141,6 +148,25 @@ resource "aws_iam_role_policy" "task_protection" {
   name   = "task-protection"
   role   = aws_iam_role.task.id
   policy = data.aws_iam_policy_document.task_protection.json
+}
+
+# 録音を置く。録音のバケットの rooms/ の下への PutObject だけを許す(読み取り、一覧、削除はしない)。
+# マルチパートアップロード(CreateMultipartUpload・UploadPart・CompleteMultipartUpload)も
+# s3:PutObject の権限で動く。途中で止まったものはバケットのライフサイクルで消す
+data "aws_iam_policy_document" "recording" {
+  count = var.recording == null ? 0 : 1
+
+  statement {
+    actions   = ["s3:PutObject"]
+    resources = ["${var.recording.bucket_arn}/rooms/*"]
+  }
+}
+
+resource "aws_iam_role_policy" "recording" {
+  count  = var.recording == null ? 0 : 1
+  name   = "recording"
+  role   = aws_iam_role.task.id
+  policy = data.aws_iam_policy_document.recording[0].json
 }
 
 # ---- ECS ----
@@ -175,7 +201,7 @@ resource "aws_ecs_task_definition" "this" {
       essential = true
 
       environment = [
-        for k, v in merge(var.environment, local.history_environment, {
+        for k, v in merge(var.environment, local.history_environment, local.recording_environment, {
           LIVEKIT_URL     = var.livekit_url
           LIVEKIT_API_KEY = var.livekit_api_key
         }) : { name = k, value = v }

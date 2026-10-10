@@ -19,6 +19,7 @@ from .history import HistoryRecorder, create_history, utc_now
 from .languages import participant_language, target_languages
 from .output import CaptionPublisher, TranslationTracks
 from .realtime import INPUT_SAMPLE_RATE, TranslateSession, WhisperSession
+from .recording import Recorder, create_recorder
 from .segmenter import Segmenter
 from .speech_realtime import RealtimeSpeech
 from .talk_gate import Action, TalkGate
@@ -36,6 +37,7 @@ class Deps:
     captions: CaptionPublisher
     tracks: TranslationTracks
     history: HistoryRecorder
+    recordings: Recorder
     background: set[asyncio.Task[Any]]
 
     def spawn(self, coro: Coroutine[Any, Any, None]) -> None:
@@ -68,6 +70,13 @@ class Utterance:
         self._open = 0
         # 区切りの番号ごとの開始時刻(履歴の occurred_at)
         self._started_at = {0: utc_now()}
+        # 話者の元の音声の録音(recording.py)。設定が無ければ何もしない
+        self._recording = deps.recordings.start(
+            utterance_id=self.utterance_id,
+            speaker_id=speaker,
+            language=speaker_language,
+            started_at=self._started_at[0],
+        )
         self._translations: list[asyncio.Task[None]] = []
         self._whisper = WhisperSession(
             deps.http,
@@ -121,6 +130,7 @@ class Utterance:
     def push(self, pcm: bytes) -> None:
         for s in self._sessions:
             s.push(pcm)
+        self._recording.push(pcm)
         if self._segmenter is not None and self._segmenter.audio(pcm):
             # このフレームまでを1つの区切りとして確定させる
             self._whisper.split()
@@ -131,6 +141,7 @@ class Utterance:
     def finish(self) -> None:
         for s in self._sessions:
             s.finish()
+        self._recording.finish()
 
     async def run(self) -> None:
         await asyncio.gather(*(s.run() for s in self._sessions))
@@ -264,6 +275,7 @@ class IntercomAgent:
             tracks=TranslationTracks(room),
             # ルーム名(API の room_id)は接続してから決まるので、保存するときに読む
             history=create_history(http, lambda: room.name),
+            recordings=create_recorder(lambda: room.name),
             background=set(),
         )
         room.on("track_subscribed", self._on_track_subscribed)
@@ -361,8 +373,8 @@ class IntercomAgent:
             task.cancel()
         await asyncio.gather(*self._deps.background, return_exceptions=True)
         await self._tts.aclose()
-        # 打ち切った発話の分も含めて、履歴の送り残しを送る
-        await self._deps.history.aclose()
+        # 打ち切った発話の分も含めて、履歴の送り残しと録音を送る(どちらも5秒まで。同時に待つ)
+        await asyncio.gather(self._deps.history.aclose(), self._deps.recordings.aclose())
         await self._deps.tracks.aclose()
         await self._deps.captions.aclose()
         await self._deps.http.close()

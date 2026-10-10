@@ -9,6 +9,8 @@ dependencies = [
   "numpy>=2.5.3",
   "openai>=2.54.0",
   "voice-intercom-schema",
+  "av>=19.0.1",
+  "boto3>=1.43.110",
 ]
 
 [project.scripts]

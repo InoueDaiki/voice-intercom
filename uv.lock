@@ -2017,6 +2017,8 @@ version = "0.1.0"
 source = { editable = "services/agent" }
 dependencies = [
     { name = "aiohttp" },
+    { name = "av" },
+    { name = "boto3" },
     { name = "livekit-agents" },
     { name = "numpy" },
     { name = "openai" },
@@ -2026,6 +2028,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.14.4" },
+    { name = "av", specifier = ">=19.0.1" },
+    { name = "boto3", specifier = ">=1.43.110" },
     { name = "livekit-agents", specifier = ">=1.8.5,<2" },
     { name = "numpy", specifier = ">=2.5.3" },
     { name = "openai", specifier = ">=2.54.0" },
