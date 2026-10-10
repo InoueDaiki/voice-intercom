@@ -15,7 +15,6 @@ flowchart LR
 
   subgraph livekit["LiveKit Cloud"]
     sfu["LiveKit サーバー<br>音声・データチャネル"]
-    egress["Egress<br>録音"]
   end
 
   subgraph aws["AWS(voice-intercom-*)"]
@@ -48,8 +47,7 @@ flowchart LR
   agent -->|"WebSocket"| openai
   agent --> tts
   agent -->|"テキストの保存<br>(client credentials)"| apigw
-  sfu --> egress
-  egress -->|"録音"| s3
+  agent -->|"録音"| s3
 
   mobile -->|"署名付き URL でアップロード"| s3
   mobile -->|"表示・再生"| cf
@@ -70,7 +68,7 @@ flowchart LR
   class s3 storage
   class cf network
   class cognito security
-  class mobile,admin,sfu,egress,openai,tts,fcm external
+  class mobile,admin,sfu,openai,tts,fcm external
 ```
 
 ## 構成
