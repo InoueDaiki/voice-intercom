@@ -6,6 +6,7 @@ LiveKit Agent。話者の音声を OpenAI に中継し、字幕と翻訳音声�
 - 翻訳音声: 翻訳先の言語ごとに gpt-realtime-translate のセッションを作り、言語別のトラックで配信する
 - 翻訳の字幕: whisper の書き起こしが確定したら、gpt-6-luna でテキスト翻訳する(STS の翻訳テキストはログに残すだけ)。長い発話は途中で区切り、区切りごとに確定と翻訳を進める
 - 履歴: 区切りごとに、確定した原文と訳を REST API で DynamoDB の timeline に保存する(設定があるときだけ)
+- 話し始めの通知: 話者がミュートを外したら REST API に知らせ、ルームにいないメンバーに push 通知を送ってもらう(設定があるときだけ。「話し始めの通知」を参照)
 - テキスト入力: アプリが送ったテキストを、原文と訳の字幕で配信し、gpt-realtime-2.1-mini で読み上げて言語別のトラックに流す(「テキスト入力」を参照)
 
 PoC(`poc/`)は LiveKit を使わずに OpenAI だけを測るスクリプトで、この Agent とは別に動く。
@@ -48,7 +49,7 @@ PoC で分かったことに従う(`realtime.py` の先頭にまとめてある)
 
 ## 履歴の保存
 
-確定した字幕を、REST API の `PUT /rooms/{room_id}/timeline/{source_id}` で履歴(DynamoDB の timeline)に保存する(`history.py`)。設定(下の表の `API_BASE_URL` など)が無ければ保存せず、「履歴の保存は無効」と、ジョブのプロセスごとに一度だけログに出す。ローカルで API がなくても Agent は動く。
+確定した字幕を、REST API の `PUT /rooms/{room_id}/timeline/{source_id}` で履歴(DynamoDB の timeline)に保存する(`history.py`)。設定(下の表の `API_BASE_URL` など)が無ければ保存せず、「履歴の保存と話し始めの通知は無効」と、ジョブのプロセスごとに一度だけログに出す。ローカルで API がなくても Agent は動く。
 
 - **いつ保存するか**: 1つの区切り(`segment_id`)について、原文の確定と、翻訳先の全言語の訳の確定がそろったら1回だけ PUT する。訳の失敗も「そろった」に数え、その言語は `translations` に入れない(途中までの訳は残さない)。原文の確定から `HISTORY_TRANSLATION_WAIT_S`(既定30秒)たっても訳がそろわなければ、そろった分だけで保存する。後から届いた訳は捨てる。原文が空の区切りは保存しない。
 - **中身**: `kind` は `utterance`、`sender_id` は話者の identity、`occurred_at` は区切りの開始時刻(UTC、ミリ秒まで。最初の区切りはミュートを外した時刻、以降は区切った時刻)、`language` は話者の言語(分からなければ null)、`utterance_id` と `segment_index` は字幕と同じ。`room_id` は LiveKit のルーム名。
@@ -58,6 +59,17 @@ PoC で分かったことに従う(`realtime.py` の先頭にまとめてある)
 - **字幕を待たせない**: PUT はバックグラウンドのタスクで送り、同時に4本まで。保存の失敗で字幕の配信や発話の処理は止まらない。
 - **テキスト入力**: 1通ごとに `kind` を `text` にして、同じ流れで保存する(原文の確定と翻訳先の全言語の訳がそろったら1回)。`occurred_at` はテキストを受け取った時刻、`source_id` は Agent が振った `segment_id`(アプリが振る `message_id` は重なりうるので使わない)。`utterance_id` と `segment_index` は付けない。
 - **ジョブの終わり**: 訳がそろっていない区切りも、そろった分だけで送る。送り中のものと合わせて `HISTORY_FLUSH_TIMEOUT_S`(既定5秒)まで待ち、残りは捨てる(ログに件数を出す)。livekit-agents はジョブの終了処理を10秒(`shutdown_process_timeout`)で打ち切るので、それより短くしてある。
+
+## 話し始めの通知
+
+話者が話し始めた(ミュートを外した)ら、REST API の `POST /rooms/{room_id}/notifications/speaking` を呼び、ルームに入っていないメンバーに push 通知を送ってもらう(`notify.py`)。設定は履歴の保存と同じ(`API_BASE_URL` など)で、無ければ呼ばない。
+
+- **中身**: `{"speaker_id": 話者の identity, "present_ids": [今ルームにいる人の identity, ...]}`。`present_ids` は、発話を始めた時点のルームの参加者のうち、kind が `STANDARD`(アプリから入った人)のもの。Agent、Egress、SIP などは除く。話者本人も入る(API 側で除く)。`room_id` は LiveKit のルーム名。応答は 200 で `{"sent": n, "skipped": m}`。
+- **間引き**: API が「同じルーム × 同じ受け手には10分に1回まで」に絞るので、毎回呼んでも通知は増えない。API の呼び出しを減らすために、Agent でも同じルームについて `SPEAKING_NOTIFY_MIN_INTERVAL_S`(既定30秒)に1回までにする。間引いた発話の開始は、後から送り直さない。呼び出しが失敗しても、間隔は空ける。
+- **トークン**: 履歴の保存と同じ client credentials のトークンを共有する(取り直しも共通)。HTTP のセッションも同じものを使う。
+- **失敗への備え**: 通知は遅れて届いても意味が薄いので、通信の失敗(トークンを取れないことを含む)と 5xx だけ、0.5秒後に1回やり直す。401 はトークンを取り直して1回だけやり直す。404(API にルームがない)、408・429 を含むその他の 4xx は、やり直さずにログに出して捨てる。
+- **発話を待たせない**: 呼び出しはバックグラウンドのタスクで行い、発話の処理と字幕を待たせない。
+- **ジョブの終わり**: 送り中のものを1.5秒だけ待って打ち切る(履歴の送り残しと同時に待つ)。
 
 ## テキスト入力
 
@@ -119,12 +131,13 @@ PoC で分かったことに従う(`realtime.py` の先頭にまとめてある)
 | `SEGMENT_LONG_PAUSE_S` | `1` | 文末でなくても区切る無音(秒) |
 | `SEGMENT_MAX_S` | `15` | これより長い区切りは、文末でなくても `SEGMENT_PAUSE_S` の無音で区切る(秒) |
 | `SEGMENT_SILENCE_DBFS` | `-50` | これより小さい音量(10ms ごとの RMS)を無音とみなす |
-| `API_BASE_URL` | (なし) | 履歴を保存する API の URL(例: `https://xxxx.execute-api.ap-northeast-1.amazonaws.com`)。無ければ保存しない |
-| `AGENT_CLIENT_ID`、`AGENT_CLIENT_SECRET` | (なし) | client credentials の Cognito のクライアント(Agent 用)。無ければ保存しない。模擬 OIDC では何でもよい(`agent` にする) |
+| `API_BASE_URL` | (なし) | 履歴の保存と話し始めの通知で呼ぶ API の URL(例: `https://xxxx.execute-api.ap-northeast-1.amazonaws.com`)。無ければどちらもしない |
+| `AGENT_CLIENT_ID`、`AGENT_CLIENT_SECRET` | (なし) | client credentials の Cognito のクライアント(Agent 用)。無ければ API を呼ばない。模擬 OIDC では何でもよい(`agent` にする) |
 | `OIDC_TOKEN_URL` | (なし) | トークンエンドポイント。無ければ `OIDC_ISSUER` の探索で得る |
 | `OIDC_ISSUER` | (なし) | `OIDC_TOKEN_URL` が無いときに探索に使う。ローカルでは `.env` の値がそのまま使われる |
 | `HISTORY_TRANSLATION_WAIT_S` | `30` | 原文の確定から、訳がそろうのを待つ上限(秒) |
 | `HISTORY_FLUSH_TIMEOUT_S` | `5` | ジョブの終わりに、送り残しを送るのを待つ上限(秒) |
+| `SPEAKING_NOTIFY_MIN_INTERVAL_S` | `30` | 同じルームについて、話し始めの通知の API を呼ぶ最短の間隔(秒)。`0` なら発話の開始のたびに呼ぶ |
 | `ECS_AGENT_URI` | | ECS が入れる。あれば、ジョブを持つ間だけタスクのスケールイン保護を付ける(`task_protection.py`。無ければ何もしない) |
 | `TASK_PROTECTION_EXPIRES_MIN` | `60` | 1回で付ける保護の長さ(分、1〜2880)。Agent が落ちたら、この長さで保護が切れる |
 | `TASK_PROTECTION_RENEW_MIN` | `20` | ジョブがある間、保護を延長する間隔(分)。期限より短くする |
@@ -209,6 +222,20 @@ LiveKit サーバーはホスト、Agent と確認用ツール(`devtools/`)は d
 
 4. 上の「ローカルで確かめる」の 3〜4 のとおり、聞き手と話者を入れて話す。区切りの訳がそろうたびに1回 PUT が届く。聞き手を `--language en` と `--language ko` の2人にすると、`translations` に2言語が入る。聞き手を退室させてジョブを終わらせると、訳を待っている区切りがそろった分だけで送られる。
 
+### 話し始めの通知を確かめる
+
+上の「履歴の保存を確かめる」と同じ準備で確かめられる。`devtools/timeline_sink.py` は `POST /rooms/{room_id}/notifications/speaking` も受け、中身とトークンの claims を表示する(通知は送らず、`{"sent": 0, "skipped": 0}` を返す)。`--fail` と `--not-found` は、こちらのパスにも効く。
+
+1. `timeline_sink.py` か API を 3000 番で起動し、設定を渡して Agent を起動する(「履歴の保存を確かめる」の 2〜3)。間引きを確かめるときは、`SPEAKING_NOTIFY_MIN_INTERVAL_S=10` のように短くする。
+2. 聞き手と話者を入れて、`publish_wav.py` で WAV を2つ以上流す。
+
+見るべき点:
+
+- 最初の発話の開始で `POST … notifications/speaking` が1回届き、`speaker_id` が話者、`present_ids` に聞き手と話者が入り、Agent は入っていないか。
+- 30秒(`SPEAKING_NOTIFY_MIN_INTERVAL_S`)以内の続く発話では届かないか(Agent のログを DEBUG にすると「話し始めの通知を間引いた」が出る)。
+- `--fail 1` で 503 を1回返すと、Agent が1回だけやり直すか。`--fail 2` では2回目でやめて、ログに「話し始めを通知できなかった」が出るか。
+- API で確かめる場合は、ルームのメンバーで `present_ids` に入っていない人に通知が届き、応答の `sent` と `skipped` が Agent のログ(「話し始めを通知した」)に出るか。
+
 ### テキスト入力を確かめる
 
 OpenAI の API を使うので課金される(1通で、翻訳が約 0.0001 USD、読み上げが音声1秒あたり約 0.00044 USD)。
@@ -265,7 +292,7 @@ OpenAI の API を使うので課金される(1通で、翻訳が約 0.0001 USD�
 
 ## テスト
 
-OpenAI と LiveKit に依存しない部分(言語の決め方、発話の開始と終了の判断、字幕の区切りの判断、字幕の組み立て、翻訳音声の混ぜ方、履歴の保存)を単体テストにしている。履歴の保存は、テストの中でローカルに立てた偽の OIDC と API に向けて試す(トークンの使い回しと取り直し、そろったら1回だけ送ること、待つ上限、再送、404、ジョブの終わりの送り残し)。テキスト入力は、翻訳先と原文の読み上げの決め方、ストリーミングの JSON から言語ごとに訳を取り出すところ、読み上げのテキストの比較、読み上げの応答のイベントの読み方と、翻訳と読み上げを偽物にした一連の流れ(原文を翻訳を待たずに読む、同じ言語の読み上げが重ならない、など)をテストしている。whisper の区切りと書き起こしのイベントの対応も、通信せずにテストしている。
+OpenAI と LiveKit に依存しない部分(言語の決め方、発話の開始と終了の判断、字幕の区切りの判断、字幕の組み立て、翻訳音声の混ぜ方、履歴の保存)を単体テストにしている。履歴の保存は、テストの中でローカルに立てた偽の OIDC と API に向けて試す(トークンの使い回しと取り直し、そろったら1回だけ送ること、待つ上限、再送、404、ジョブの終わりの送り残し)。話し始めの通知は、間引きと `present_ids` の作り方を単体で、HTTP(1回だけのやり直し、401 の取り直し、4xx を捨てること、ジョブの終わりの打ち切り)を偽のサーバーで試す。テキスト入力は、翻訳先と原文の読み上げの決め方、ストリーミングの JSON から言語ごとに訳を取り出すところ、読み上げのテキストの比較、読み上げの応答のイベントの読み方と、翻訳と読み上げを偽物にした一連の流れ(原文を翻訳を待たずに読む、同じ言語の読み上げが重ならない、など)をテストしている。whisper の区切りと書き起こしのイベントの対応も、通信せずにテストしている。
 
 ```sh
 uv run pytest services/agent
