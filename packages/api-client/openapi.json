@@ -682,6 +682,124 @@
           }
         ]
       }
+    },
+    "/users/me/devices": {
+      "put": {
+        "tags": [
+          "users"
+        ],
+        "summary": "自分の端末トークンを登録する。アプリの起動時とトークンの更新時に呼ぶ。1人 10 台までで、超えたら最後の登録がいちばん古い端末を外す。同じトークンを別の人が登録していたら、その人から外す",
+        "operationId": "registerMyDevice",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterDeviceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "登録した",
+            "content": {}
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "users"
+        ],
+        "summary": "自分の端末トークンを外す(ログアウトのとき)。登録されていなくても 204",
+        "operationId": "unregisterMyDevice",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnregisterDeviceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "外した",
+            "content": {}
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -834,6 +952,33 @@
         ],
         "title": "PutUserRequest"
       },
+      "RegisterDeviceRequest": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "^[\\x21-\\x7e]+$",
+            "title": "Token",
+            "description": "FCM の登録トークン(firebase_messaging の getToken())"
+          },
+          "platform": {
+            "type": "string",
+            "enum": [
+              "ios",
+              "android"
+            ],
+            "title": "Platform",
+            "description": "端末の OS。通知の送り方(優先度)を分ける"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "platform"
+        ],
+        "title": "RegisterDeviceRequest"
+      },
       "Room": {
         "properties": {
           "room_id": {
@@ -893,6 +1038,23 @@
           "items"
         ],
         "title": "RoomList"
+      },
+      "UnregisterDeviceRequest": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "^[\\x21-\\x7e]+$",
+            "title": "Token",
+            "description": "FCM の登録トークン(firebase_messaging の getToken())"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "title": "UnregisterDeviceRequest"
       },
       "UpdateRoomRequest": {
         "properties": {

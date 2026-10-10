@@ -110,6 +110,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/users/me/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 自分の端末トークンを登録する。アプリの起動時とトークンの更新時に呼ぶ。1人 10 台までで、超えたら最後の登録がいちばん古い端末を外す。同じトークンを別の人が登録していたら、その人から外す */
+        put: operations["registerMyDevice"];
+        post?: never;
+        /** 自分の端末トークンを外す(ログアウトのとき)。登録されていなくても 204 */
+        delete: operations["unregisterMyDevice"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -187,6 +205,20 @@ export interface components {
              */
             language: "es" | "pt" | "fr" | "ja" | "ru" | "zh" | "de" | "ko" | "hi" | "id" | "vi" | "it" | "en";
         };
+        /** RegisterDeviceRequest */
+        RegisterDeviceRequest: {
+            /**
+             * Token
+             * @description FCM の登録トークン(firebase_messaging の getToken())
+             */
+            token: string;
+            /**
+             * Platform
+             * @description 端末の OS。通知の送り方(優先度)を分ける
+             * @enum {string}
+             */
+            platform: "ios" | "android";
+        };
         /** Room */
         Room: {
             /**
@@ -219,6 +251,14 @@ export interface components {
         RoomList: {
             /** Items */
             items: components["schemas"]["Room"][];
+        };
+        /** UnregisterDeviceRequest */
+        UnregisterDeviceRequest: {
+            /**
+             * Token
+             * @description FCM の登録トークン(firebase_messaging の getToken())
+             */
+            token: string;
         };
         /** UpdateRoomRequest */
         UpdateRoomRequest: {
@@ -802,6 +842,104 @@ export interface operations {
             };
             /** @description プロフィール(表示名と言語)をまだ登録していない */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    registerMyDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisterDeviceRequest"];
+            };
+        };
+        responses: {
+            /** @description 登録した */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unregisterMyDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnregisterDeviceRequest"];
+            };
+        };
+        responses: {
+            /** @description 外した */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

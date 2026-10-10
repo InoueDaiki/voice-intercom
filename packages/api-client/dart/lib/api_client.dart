@@ -199,12 +199,16 @@ class ApiClient {
           return LocationInner.fromJson(value);
         case 'PutUserRequest':
           return PutUserRequest.fromJson(value);
+        case 'RegisterDeviceRequest':
+          return RegisterDeviceRequest.fromJson(value);
         case 'ResponseValidationError':
           return ResponseValidationError.fromJson(value);
         case 'Room':
           return Room.fromJson(value);
         case 'RoomList':
           return RoomList.fromJson(value);
+        case 'UnregisterDeviceRequest':
+          return UnregisterDeviceRequest.fromJson(value);
         case 'UpdateRoomRequest':
           return UpdateRoomRequest.fromJson(value);
         case 'User':

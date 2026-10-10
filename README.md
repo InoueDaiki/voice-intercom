@@ -143,6 +143,15 @@ PR と main への push で動く。ツールは mise で `mise.toml` と同じ�
      --name /voice-intercom-dev/livekit/api-secret --value <secret>
    ```
 
+5. push 通知(FCM)のサービスアカウントの JSON を SSM に入れる。Firebase コンソールの「プロジェクトの設定 > サービス アカウント」で秘密鍵(JSON)を作り、ファイルのまま入れる(`file://` で読ませると改行も崩れない)。入れたらファイルは消す。
+
+   ```sh
+   aws ssm put-parameter --overwrite --type SecureString \
+     --name /voice-intercom-dev/fcm/service-account --value file://service-account.json
+   ```
+
+   API の Lambda は実行環境が立ち上がるときに1回だけ読む。値を入れ替えたら、Lambda のコードか設定を更新して実行環境を入れ替える。値が初期値(`CHANGE_ME`)のままだと、通知を送るところでエラーになる。
+
 LiveKit の URL と API キーは `TF_VAR_livekit_client_url`、`TF_VAR_livekit_api_key` で渡す。
 
 ### LiveKit Agent(ECS Fargate)
@@ -192,10 +201,42 @@ SSM の値を変えたときは、新しいタスクでないと読み直さな�
 | `DELETE /rooms/{room_id}` | ルームを消す(204) | 管理者 |
 | `GET /users/me` | 自分のプロフィール(表示名、言語)。未登録なら 404 | 本人 |
 | `PUT /users/me` | プロフィールを登録・更新する | 本人 |
+| `PUT /users/me/devices` | push 通知の端末トークンを登録する(`{token, platform: "ios" \| "android"}`、204)。アプリの起動時とトークンの更新時に呼ぶ | 本人 |
+| `DELETE /users/me/devices` | 端末トークンを外す(本文に `{token}`、204)。ログアウトのときに呼ぶ。登録されていなくても 204 | 本人 |
 | `GET /users` | プロフィールを登録したユーザーの一覧(`{items}`) | 管理者 |
 | `POST /livekit/token` | LiveKit の参加用トークン。プロフィールの表示名を name に、言語を参加者の属性 `language` に入れる。ルームがなければ 404、プロフィールが未登録なら 409 | 管理者、メンバー |
 
 言語は gpt-realtime-translate が出力できる13言語のコード(`ja`、`en` など)。Agent の翻訳先はこの言語で決まるので、プロフィールがないとトークンを発行しない。
+
+### push 通知
+
+端末トークンは users テーブルの項目(`devices`)に持たせる。詳しくは `services/api/src/voice_intercom_api/device_store.py` と `devices.py`。
+
+- 解除はトークンを本文で渡す。FCM のトークンは長く `:` などを含み、知っていればその端末に通知を送れるので、URL(パス)には出さない。
+- 1人 10 台まで。超えたら、最後に登録した時刻がいちばん古い端末を外す(再インストールで残った古いトークンから外れる)。
+- 同じトークンを別の人が登録したら、前の人から外す(ログアウトせずに別の人がログインした端末に、前の人の通知が届かないように)。
+- プロフィールの登録より先に端末を登録してもよい。プロフィールが未登録のうちは `GET /users/me` は 404 のまま。
+
+送るのは `voice_intercom_api.notify` の `send_to_users`。どこから送るか(チャット、発話)は、履歴の API ができてからつなぐ。
+
+```python
+from voice_intercom_api import notify
+
+# だれに送るか(送り主を除く、など)は呼び出し側で決める
+recipients = [uid for uid in room.member_ids if uid != sender_id]
+result = notify.send_to_users(
+    recipients,
+    title=room.name,
+    body=f"{sender_name}: {text}",
+    data={"type": "chat", "room_id": room.room_id},  # 値は文字列だけ
+)
+```
+
+- Android は高優先度、iOS は通常の alert 通知で送る。FCM HTTP v1 は1トークンに1リクエストなので、並べて送る(同時に 8 本)。
+- FCM が `UNREGISTERED` か、トークンが原因の `INVALID_ARGUMENT` を返したトークンは users から消す。それ以外の失敗(5xx、429、通信の失敗)はやり直さず、`SendResult` の `failed` に数えてログに出す。
+- サービスアカウントの JSON が読めない(SSM の値が `CHANGE_ME` のままなど)と例外になる。チャットの保存などを通知の失敗で落とさないよう、呼び出し側で例外を捕まえてログに残す。
+- 送る時間は API の Lambda の timeout(15秒)に含まれる。1回の HTTP は5秒で切る。人数が増えて応答が遅くなったら、SQS などで別の Lambda に分ける。
+- ローカルでは、環境変数 `FCM_SERVICE_ACCOUNT` に JSON そのものを入れると送れる。`FCM_SERVICE_ACCOUNT` も `FCM_SERVICE_ACCOUNT_PARAMETER` もなければ、送らずにログだけ出す。
 
 ## ローカルの認証(模擬 OIDC サーバー)
 

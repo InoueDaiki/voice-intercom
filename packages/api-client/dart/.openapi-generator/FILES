@@ -21,9 +21,11 @@ lib/model/live_kit_token_request.dart
 lib/model/live_kit_token_response.dart
 lib/model/location_inner.dart
 lib/model/put_user_request.dart
+lib/model/register_device_request.dart
 lib/model/response_validation_error.dart
 lib/model/room.dart
 lib/model/room_list.dart
+lib/model/unregister_device_request.dart
 lib/model/update_room_request.dart
 lib/model/user.dart
 lib/model/user_list.dart

@@ -135,13 +135,16 @@ def delete_room(room_id: str) -> None:
 
 def list_users() -> list[User]:
     """プロフィールを登録したユーザーの一覧(user_id の順)。"""
-    users = [User.model_validate(item) for item in _scan(_users())]
+    # 端末トークンだけを登録した人(device_store.py)の項目には display_name がない
+    items = _scan(_users(), FilterExpression=Attr("display_name").exists())
+    users = [User.model_validate(item) for item in items]
     return sorted(users, key=lambda u: u.user_id)
 
 
 def get_user(user_id: str) -> User | None:
     item = _users().get_item(Key={"user_id": user_id}).get("Item")
-    return None if item is None else User.model_validate(item)
+    # 端末トークンだけの項目は、プロフィールが未登録として扱う
+    return None if item is None or "display_name" not in item else User.model_validate(item)
 
 
 def put_user(user_id: str, *, display_name: str, language: str) -> User:
