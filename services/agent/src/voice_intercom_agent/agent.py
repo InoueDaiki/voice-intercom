@@ -1,4 +1,7 @@
-"""ルームの中の処理。話者のトラックを購読し、発話ごとに OpenAI のセッションを開いて閉じる。"""
+"""ルームの中の処理。話者のトラックを購読し、発話ごとに OpenAI のセッションを開いて閉じる。
+
+テキスト入力(データチャネルの topic "text")は text_input.py に渡す。
+"""
 
 import asyncio
 import functools
@@ -16,7 +19,9 @@ from .languages import participant_language, target_languages
 from .output import CaptionPublisher, TranslationTracks
 from .realtime import INPUT_SAMPLE_RATE, TranslateSession, WhisperSession
 from .segmenter import Segmenter
+from .speech_realtime import RealtimeSpeech
 from .talk_gate import Action, TalkGate
+from .text_input import TEXT_TOPIC, TextInput, parse_text_message
 from .text_translation import TextTranslator
 
 logger = logging.getLogger(__name__)
@@ -243,6 +248,53 @@ class IntercomAgent:
         room.on("track_unsubscribed", self._on_track_unsubscribed)
         room.on("track_muted", self._on_track_muted)
         room.on("track_unmuted", self._on_track_unmuted)
+        # テキスト入力。読み上げの窓口(speech.py)の実装はここで選ぶ
+        self._tts = RealtimeSpeech(
+            self._deps.http,
+            settings.openai_api_key,
+            model=settings.tts_model,
+            voice=settings.tts_voice,
+            timeout_s=settings.tts_timeout_s,
+        )
+        self._text = TextInput(
+            translator,
+            self._tts,
+            self._deps.captions,
+            self._deps.tracks.speech_input,
+            max_chars=settings.text_max_chars,
+        )
+        room.on("data_received", self._on_data_received)
+        room.on("participant_connected", self._prepare_speech)
+        room.on("participant_attributes_changed", self._prepare_speech)
+
+    def connected(self) -> None:
+        """ルームに入った後に呼ぶ。"""
+        self._prepare_speech()
+
+    def _prepare_speech(self, *_: object) -> None:
+        """ルームにある言語の読み上げのセッションを、先に開いておく。"""
+        if self._deps.settings.tts_prewarm:
+            self._tts.prepare({lang for lang in listener_languages(self._room) if lang})
+
+    def _on_data_received(self, packet: rtc.DataPacket) -> None:
+        sender = packet.participant
+        if packet.topic != TEXT_TOPIC or sender is None or is_agent(sender):
+            return
+        message = parse_text_message(packet.data)
+        if message is None:
+            logger.warning("テキストを読めなかった: %s", sender.identity)
+            return
+        # 送信者と言語は、メッセージではなく送信元の参加者から取る(なりすましを防ぐ)
+        listeners = [
+            participant_language(p.attributes)
+            for p in self._room.remote_participants.values()
+            if not is_agent(p) and p.identity != sender.identity
+        ]
+        self._deps.spawn(
+            self._text.handle(
+                sender.identity, participant_language(sender.attributes), listeners, message
+            )
+        )
 
     def _on_track_subscribed(
         self,
@@ -285,6 +337,7 @@ class IntercomAgent:
         for task in list(self._deps.background):
             task.cancel()
         await asyncio.gather(*self._deps.background, return_exceptions=True)
+        await self._tts.aclose()
         await self._deps.tracks.aclose()
         await self._deps.captions.aclose()
         await self._deps.http.close()

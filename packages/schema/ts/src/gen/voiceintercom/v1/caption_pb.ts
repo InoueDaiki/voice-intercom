@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file voiceintercom/v1/caption.proto.
  */
 export const file_voiceintercom_v1_caption: GenFile = /*@__PURE__*/
-  fileDesc("Ch52b2ljZWludGVyY29tL3YxL2NhcHRpb24ucHJvdG8SEHZvaWNlaW50ZXJjb20udjEiqgEKB0NhcHRpb24SGAoQc3BlYWtlcl9pZGVudGl0eRgBIAEoCRISCgpzZWdtZW50X2lkGAIgASgJEhAKCGxhbmd1YWdlGAMgASgJEhIKCnRyYW5zbGF0ZWQYBCABKAgSDAoEdGV4dBgFIAEoCRIQCghpc19maW5hbBgGIAEoCBIUCgx1dHRlcmFuY2VfaWQYByABKAkSFQoNc2VnbWVudF9pbmRleBgIIAEoDWIGcHJvdG8z");
+  fileDesc("Ch52b2ljZWludGVyY29tL3YxL2NhcHRpb24ucHJvdG8SEHZvaWNlaW50ZXJjb20udjEivgEKB0NhcHRpb24SGAoQc3BlYWtlcl9pZGVudGl0eRgBIAEoCRISCgpzZWdtZW50X2lkGAIgASgJEhAKCGxhbmd1YWdlGAMgASgJEhIKCnRyYW5zbGF0ZWQYBCABKAgSDAoEdGV4dBgFIAEoCRIQCghpc19maW5hbBgGIAEoCBIUCgx1dHRlcmFuY2VfaWQYByABKAkSFQoNc2VnbWVudF9pbmRleBgIIAEoDRISCgptZXNzYWdlX2lkGAkgASgJYgZwcm90bzM");
 
 /**
  * 字幕。Agent がデータチャネル(topic は "caption"、reliable)で配信する。
@@ -21,6 +21,10 @@ export const file_voiceintercom_v1_caption: GenFile = /*@__PURE__*/
  * 受信側は (segment_id, language, translated) ごとに、断片(is_final が false)を順に連結して
  * 途中の字幕として表示し、確定(is_final が true)が届いたらその text で置き換える。
  * utterance_id を知らない受信側は、区切りを別々の字幕として表示すればよい。
+ *
+ * テキスト入力(text.proto の TextMessage)の原文と訳もこのメッセージで配信する。その場合は
+ * message_id に TextMessage の message_id が入り、断片は送らず確定(is_final が true)だけを
+ * (segment_id, language, translated) ごとに1回送る。segment_id は Agent が振る。
  *
  * @generated from message voiceintercom.v1.Caption
  */
@@ -82,6 +86,14 @@ export type Caption = Message<"voiceintercom.v1.Caption"> & {
    * @generated from field: uint32 segment_index = 8;
    */
   segmentIndex: number;
+
+  /**
+   * テキスト入力の字幕なら、送信者のアプリが振った TextMessage の message_id。音声の字幕なら空。
+   * 送信者のアプリは、これで自分の送ったテキストと配信された字幕を結び付けられる
+   *
+   * @generated from field: string message_id = 9;
+   */
+  messageId: string;
 };
 
 /**

@@ -20,6 +20,15 @@ class Settings:
     whisper_commit_timeout_s: float
     # 長い発話の字幕の区切り。None なら区切らない(PTT を離すまで確定しない)
     segment_rules: SegmentRules | None
+    # テキスト入力の読み上げ(speech_realtime.py)
+    tts_model: str
+    tts_voice: str
+    # 1回の読み上げの上限(PoC では、5秒の音声を約1.2秒で受け取り終える)
+    tts_timeout_s: float
+    # ルームにある言語の読み上げのセッションを、先に開いておくか(接続と設定に約0.9秒かかる)
+    tts_prewarm: bool
+    # テキスト入力の最大の文字数。超えたものは断る
+    text_max_chars: int
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -34,6 +43,11 @@ class Settings:
             translate_close_timeout_s=float(os.environ.get("TRANSLATE_CLOSE_TIMEOUT_S", "40")),
             whisper_commit_timeout_s=float(os.environ.get("WHISPER_COMMIT_TIMEOUT_S", "10")),
             segment_rules=segment_rules_from_env(),
+            tts_model=os.environ.get("TTS_MODEL", "gpt-realtime-2.1-mini"),
+            tts_voice=os.environ.get("TTS_VOICE", "marin"),
+            tts_timeout_s=float(os.environ.get("TTS_TIMEOUT_S", "30")),
+            tts_prewarm=os.environ.get("TTS_PREWARM", "1") != "0",
+            text_max_chars=int(os.environ.get("TEXT_MAX_CHARS", "500")),
         )
 
 

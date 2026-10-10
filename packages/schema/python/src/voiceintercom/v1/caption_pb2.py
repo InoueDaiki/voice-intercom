@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1evoiceintercom/v1/caption.proto\x12\x10voiceintercom.v1\"\x86\x02\n\x07\x43\x61ption\x12)\n\x10speaker_identity\x18\x01 \x01(\tR\x0fspeakerIdentity\x12\x1d\n\nsegment_id\x18\x02 \x01(\tR\tsegmentId\x12\x1a\n\x08language\x18\x03 \x01(\tR\x08language\x12\x1e\n\ntranslated\x18\x04 \x01(\x08R\ntranslated\x12\x12\n\x04text\x18\x05 \x01(\tR\x04text\x12\x19\n\x08is_final\x18\x06 \x01(\x08R\x07isFinal\x12!\n\x0cutterance_id\x18\x07 \x01(\tR\x0butteranceId\x12#\n\rsegment_index\x18\x08 \x01(\rR\x0csegmentIndexb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1evoiceintercom/v1/caption.proto\x12\x10voiceintercom.v1\"\xa5\x02\n\x07\x43\x61ption\x12)\n\x10speaker_identity\x18\x01 \x01(\tR\x0fspeakerIdentity\x12\x1d\n\nsegment_id\x18\x02 \x01(\tR\tsegmentId\x12\x1a\n\x08language\x18\x03 \x01(\tR\x08language\x12\x1e\n\ntranslated\x18\x04 \x01(\x08R\ntranslated\x12\x12\n\x04text\x18\x05 \x01(\tR\x04text\x12\x19\n\x08is_final\x18\x06 \x01(\x08R\x07isFinal\x12!\n\x0cutterance_id\x18\x07 \x01(\tR\x0butteranceId\x12#\n\rsegment_index\x18\x08 \x01(\rR\x0csegmentIndex\x12\x1d\n\nmessage_id\x18\t \x01(\tR\tmessageIdb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,5 +32,5 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'voiceintercom.v1.caption_pb
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_CAPTION']._serialized_start=53
-  _globals['_CAPTION']._serialized_end=315
+  _globals['_CAPTION']._serialized_end=346
 # @@protoc_insertion_point(module_scope)

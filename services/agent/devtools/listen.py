@@ -1,6 +1,7 @@
 """聞き手としてルームに入り、自分の言語の翻訳音声と字幕を確かめる。
 
-- 翻訳音声のトラック(translation-<言語>)だけを購読し、WAV に保存する
+- 翻訳音声のトラック(translation-<言語>)だけを購読し、WAV に保存する。テキスト入力の
+  読み上げも、このトラックに流れる
 - データチャネルの字幕(Caption)をデコードして表示する
 
 使い方は services/agent/README.md を参照する。
@@ -65,11 +66,16 @@ async def record(track: rtc.Track, path: Path, clock: Clock) -> None:
 
 def show_caption(caption: Caption, clock: Clock, verbose: bool) -> None:
     kind = "訳" if caption.translated else "原文"
+    if caption.message_id:
+        # テキスト入力の字幕(確定だけが届く)
+        kind = f"テキスト{kind}"
     head = f"{clock.stamp()} {kind}({caption.language or '?'}) {caption.speaker_identity}"
     if caption.is_final:
         # 長い発話は区切りごとに確定する。同じ発話の区切りは utterance_id が同じ
         where = caption.segment_id[:8]
-        if caption.utterance_id:
+        if caption.message_id:
+            where = f"message {caption.message_id[:8]}"
+        elif caption.utterance_id:
             where = f"{caption.utterance_id[:8]} #{caption.segment_index}"
         print(f"{head} 確定: {caption.text}  [{where}]")
     elif verbose:

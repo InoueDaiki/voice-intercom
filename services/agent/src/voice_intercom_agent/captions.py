@@ -6,6 +6,9 @@
 
 同じ発話(PTT を押してから離すまで)の区切りは utterance_id を共有し、segment_index で
 順番を表す。古いアプリはこの2つを知らないが、区切りを別々の字幕として表示できる。
+
+テキスト入力(text_input.py)の原文と訳もこの形で送る。message_id にアプリが振った ID を入れ、
+確定だけを送る。
 """
 
 import uuid
@@ -31,6 +34,7 @@ class CaptionTrack:
     translated: bool
     utterance_id: str = ""
     segment_index: int = 0
+    message_id: str = ""
     _sent: list[str] = field(default_factory=list)
     _finalized: bool = False
 
@@ -61,4 +65,5 @@ class CaptionTrack:
             is_final=is_final,
             utterance_id=self.utterance_id,
             segment_index=self.segment_index,
+            message_id=self.message_id,
         )

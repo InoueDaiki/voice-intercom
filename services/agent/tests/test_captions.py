@@ -71,3 +71,15 @@ def test_utterance_fields() -> None:
     caption = track.final("後半です。")
     assert caption is not None
     assert (caption.segment_id, caption.utterance_id, caption.segment_index) == ("seg-1", "utt", 1)
+
+
+def test_message_id_for_text_input() -> None:
+    track = CaptionTrack(
+        speaker_identity="u1", segment_id="seg", language="ja", translated=False, message_id="m1"
+    )
+    caption = track.final("はい")
+    assert caption is not None
+    assert caption.message_id == "m1"
+    # 音声の字幕では空
+    voice = make().final("はい")
+    assert voice is not None and voice.message_id == ""

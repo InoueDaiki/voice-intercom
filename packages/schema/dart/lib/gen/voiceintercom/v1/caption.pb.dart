@@ -24,6 +24,10 @@ export 'package:protobuf/protobuf.dart' show GeneratedMessageGenericExtensions;
 /// 受信側は (segment_id, language, translated) ごとに、断片(is_final が false)を順に連結して
 /// 途中の字幕として表示し、確定(is_final が true)が届いたらその text で置き換える。
 /// utterance_id を知らない受信側は、区切りを別々の字幕として表示すればよい。
+///
+/// テキスト入力(text.proto の TextMessage)の原文と訳もこのメッセージで配信する。その場合は
+/// message_id に TextMessage の message_id が入り、断片は送らず確定(is_final が true)だけを
+/// (segment_id, language, translated) ごとに1回送る。segment_id は Agent が振る。
 class Caption extends $pb.GeneratedMessage {
   factory Caption({
     $core.String? speakerIdentity,
@@ -34,6 +38,7 @@ class Caption extends $pb.GeneratedMessage {
     $core.bool? isFinal,
     $core.String? utteranceId,
     $core.int? segmentIndex,
+    $core.String? messageId,
   }) {
     final result = Caption._();
     if (speakerIdentity != null) result.speakerIdentity = speakerIdentity;
@@ -44,6 +49,7 @@ class Caption extends $pb.GeneratedMessage {
     if (isFinal != null) result.isFinal = isFinal;
     if (utteranceId != null) result.utteranceId = utteranceId;
     if (segmentIndex != null) result.segmentIndex = segmentIndex;
+    if (messageId != null) result.messageId = messageId;
     return result;
   }
 
@@ -70,6 +76,7 @@ class Caption extends $pb.GeneratedMessage {
     ..aOS(7, _omitFieldNames ? '' : 'utteranceId')
     ..aI(8, _omitFieldNames ? '' : 'segmentIndex',
         fieldType: $pb.PbFieldType.OU3)
+    ..aOS(9, _omitFieldNames ? '' : 'messageId')
     ..hasRequiredFields = false;
 
   @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
@@ -173,6 +180,17 @@ class Caption extends $pb.GeneratedMessage {
   $core.bool hasSegmentIndex() => $_has(7);
   @$pb.TagNumber(8)
   void clearSegmentIndex() => $_clearField(8);
+
+  /// テキスト入力の字幕なら、送信者のアプリが振った TextMessage の message_id。音声の字幕なら空。
+  /// 送信者のアプリは、これで自分の送ったテキストと配信された字幕を結び付けられる
+  @$pb.TagNumber(9)
+  $core.String get messageId => $_getSZ(8);
+  @$pb.TagNumber(9)
+  set messageId($core.String value) => $_setString(8, value);
+  @$pb.TagNumber(9)
+  $core.bool hasMessageId() => $_has(8);
+  @$pb.TagNumber(9)
+  void clearMessageId() => $_clearField(9);
 }
 
 const $core.bool _omitFieldNames =
