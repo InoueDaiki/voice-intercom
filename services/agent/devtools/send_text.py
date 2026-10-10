@@ -24,7 +24,7 @@ async def main() -> None:
     add_connection_args(p, identity="sender")
     p.add_argument("texts", nargs="+", help="送るテキスト。1つが1通")
     p.add_argument("--gap", type=float, default=6.0, help="次のテキストを送るまでの秒数")
-    p.add_argument("--wait", type=float, default=2.0, help="入室してから最初に送るまでの秒数")
+    p.add_argument("--wait", type=float, default=4.0, help="入室してから最初に送るまでの秒数")
     args = p.parse_args()
 
     room = rtc.Room()
@@ -40,7 +40,9 @@ async def main() -> None:
 
     await room.connect(args.url, make_token(args), rtc.RoomOptions(auto_subscribe=False))
     print(f"入室した: {args.room} / {args.identity}({args.language})")
-    # Agent が入って、読み上げのセッションを開くのを待つ
+    # Agent が入って、読み上げのセッションを開くのを待つ。入室の直後に送ると、ほかの参加者に
+    # この参加者の情報が届く前にテキストが届き、Agent は送信元が分からず捨てる(ローカルの
+    # LiveKit では、参加者の情報は約3秒おきにまとめて届いた)
     await asyncio.sleep(args.wait)
 
     for text in args.texts:

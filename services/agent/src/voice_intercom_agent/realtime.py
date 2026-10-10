@@ -325,6 +325,16 @@ class WhisperSession(RealtimeSession):
         return self._commit_timeout_s
 
     def _handle(self, ev: dict[str, Any]) -> bool:
+        if item_id := ev.get("item_id"):
+            # 区切りと item_id の対応を確かめるため(--log-level debug で出る)
+            logger.debug(
+                "%s: %s item=%s → #%d %r",
+                self.name,
+                ev.get("type"),
+                item_id,
+                self._items.get(item_id, -1),
+                ev.get("delta") or ev.get("transcript") or "",
+            )
         match ev.get("type"):
             case "conversation.item.input_audio_transcription.delta":
                 index = self._index(ev.get("item_id"))

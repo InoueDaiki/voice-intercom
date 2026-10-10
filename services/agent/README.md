@@ -69,6 +69,8 @@ PoC で分かったことに従う(`realtime.py` の先頭にまとめてある)
 4. ルームにある言語(送信者と Agent を除く参加者の言語から、送信者の言語を除く)だけを、gpt-6-luna の1回の呼び出しでまとめて訳す(Structured Outputs で `{"en": "...", "ko": "..."}` の形)。出力をストリーミングで読み、訳の文字列が閉じた言語から `Caption`(`translated` が true)で配信し、読み上げを始める(`json_stream.py`)。数字は「値は保ち、書き方は翻訳先に合わせる」と指示する。
 5. 訳がそろわなかった言語は、字幕も読み上げも出さず、ログに残す。
 
+入室の直後(ローカルの LiveKit では約3秒以内)に送ったテキストは、Agent に参加者の情報より先に届くことがある。送信元(identity と言語)が分からないので、Agent は「送信元が分からないテキストを捨てた」と警告を出して捨てる(結合確認で、入室から1〜2秒後に送った6通のうち3通)。LiveKit は参加者の情報をまとめて配るが、データパケットはすぐに届けるため。アプリは、入室してしばらくは送らないか、自分の `message_id` の字幕が返ってこなければ送り直す(未対応。設計メモの「Agent の結合確認」)。
+
 字幕の決まり:
 
 - `segment_id` は Agent が1通ごとに振り、原文と訳で共有する。`message_id` はアプリが振った値をそのまま入れる。アプリが振る値は重なりうるので、`segment_id` には使わない。
@@ -140,6 +142,14 @@ LiveKit サーバーはホスト、Agent と確認用ツール(`devtools/`)は d
    mise run livekit
    ```
 
+   **devContainer の中で動かす場合**: 実機をつながず、Agent と確認用ツールだけで確かめるなら、LiveKit サーバーも devContainer で動かせる(`mise.toml` で入る。arm64 でも動く)。127.0.0.1 だけで待ち受けるので、Agent にも確認用ツールにも `--url ws://localhost:7880` を渡す(`.env` の `LIVEKIT_URL` はホストを指している)。環境変数で上書きするときは、`mise run` や `mise x` を通さない(mise が `.env` の値で上書きし直す)。
+
+   ```sh
+   livekit-server --dev --bind 127.0.0.1 --node-ip 127.0.0.1
+   uv run python -m voice_intercom_agent start --url ws://localhost:7880
+   uv run services/agent/devtools/listen.py --url ws://localhost:7880 --room test --language en --dispatch
+   ```
+
 2. devContainer で Agent を起動する。`registered worker` と出れば待ち受けている。
 
    ```sh
@@ -200,7 +210,7 @@ LiveKit サーバーはホスト、Agent と確認用ツール(`devtools/`)は d
      uv run services/agent/devtools/timeline_sink.py --port 3000
      ```
 
-3. 設定を渡して Agent を起動する。`OIDC_ISSUER` は `.env` の値が使われ、探索でトークンエンドポイントを得る。
+3. 設定を渡して Agent を起動する。`OIDC_ISSUER` は `.env` の値が使われ、探索でトークンエンドポイントを得る。コンテナから `.env` の `DEV_HOST` に届かない(ホストの LAN の IP が変わったなど)ときは、まず `.env` の `DEV_HOST` と `OIDC_ISSUER` を今の IP に直す。直せないときは、API と Agent の両方に同じ `OIDC_ISSUER`(今の IP か、コンテナの中だけで済ませるなら `http://oidc:8090/default`)を渡す(トークンの `iss` は接続した Host で決まるので、両方を揃える)。このときは `mise run api` ではなく `scripts/with-local-aws.sh uv run python -m voice_intercom_api.local_server` で起動する。`mise run` と `mise x` は、コマンドの前に付けた環境変数も `.env` の値で上書きし直す。
 
    ```sh
    API_BASE_URL=http://localhost:3000 AGENT_CLIENT_ID=agent AGENT_CLIENT_SECRET=secret \
@@ -243,6 +253,14 @@ OpenAI の API を使うので課金される(1通で、翻訳が約 0.0001 USD�
 
    ```sh
    sh services/agent/poc/make_audio.sh
+   ```
+
+   `say` は macOS 専用なので、devContainer では `devtools/concat_wav.py` で既にある WAV を無音を挟んでつなぐ(数字の引数が無音の秒数)。つないだ後の無音の区間(`SEGMENT_SILENCE_DBFS` と同じ -50 dBFS 未満)を表示する。FLEURS の英語の録音は多くが -50 dBFS より小さく、全体が無音とみなされるので、音量を表示で確かめて選ぶ。
+
+   ```sh
+   a=services/agent/poc/audio
+   uv run services/agent/devtools/concat_wav.py -o $a/long-ja-cat.wav \
+     $a/ja-01.wav 1.2 $a/ja-03.wav 1.0 $a/ja-02.wav 1.5 $a/fleurs/ja/1544.wav 1.2 $a/ja-05.wav
    ```
 
 2. 上の 1〜3 のとおり、LiveKit サーバー、Agent、聞き手(`--verbose` を付ける)を起動する。
