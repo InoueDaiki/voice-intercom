@@ -166,6 +166,16 @@ Agent は `services/agent/Dockerfile` のイメージ(linux/arm64)を、ECS Farg
      --name /voice-intercom-dev/openai/api-key --value <key>
    ```
 
+   dev では、Agent が履歴を保存する(確定した字幕を API に PUT する)ときに使う、Cognito の Agent のクライアントシークレットも SSM に入れる。値は Cognito が作るので、Terraform の出力(sensitive)から写す。Terraform のタスク定義には SSM のパラメーターの ARN だけを渡す(OpenAI のキーと同じ)。シークレットの値は Cognito のクライアントのリソースとして state に入っているが、SSM のパラメーターの値としては持たせない。prod にはまだ Cognito と API が無いので、履歴は保存しない(`history = null`)。
+
+   ```sh
+   aws ssm put-parameter --overwrite --type SecureString \
+     --name /voice-intercom-dev/cognito/agent-client-secret \
+     --value "$(terraform -chdir=infra/envs/dev output -raw agent_client_secret)"
+   ```
+
+   Cognito のクライアントを作り直したとき(シークレットが変わる)も、同じコマンドで入れ直し、下の `update-service` でタスクを入れ替える。
+
 3. コミットしてから、イメージを ECR に push する。最後に apply に渡すタグ(コミットのハッシュ)が表示される。
 
    ```sh

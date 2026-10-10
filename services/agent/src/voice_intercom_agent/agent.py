@@ -12,6 +12,7 @@ from livekit import rtc
 
 from .captions import CaptionTrack, new_segment_id
 from .config import Settings
+from .history import HistoryRecorder, create_history, utc_now
 from .languages import participant_language, target_languages
 from .output import CaptionPublisher, TranslationTracks
 from .realtime import INPUT_SAMPLE_RATE, TranslateSession, WhisperSession
@@ -29,6 +30,7 @@ class Deps:
     translator: TextTranslator
     captions: CaptionPublisher
     tracks: TranslationTracks
+    history: HistoryRecorder
     background: set[asyncio.Task[Any]]
 
     def spawn(self, coro: Coroutine[Any, Any, None]) -> None:
@@ -59,6 +61,8 @@ class Utterance:
         self._segment_ids: dict[int, str] = {}
         self._originals: dict[int, CaptionTrack] = {}
         self._open = 0
+        # 区切りの番号ごとの開始時刻(履歴の occurred_at)
+        self._started_at = {0: utc_now()}
         self._translations: list[asyncio.Task[None]] = []
         self._whisper = WhisperSession(
             deps.http,
@@ -116,6 +120,7 @@ class Utterance:
             # このフレームまでを1つの区切りとして確定させる
             self._whisper.split()
             self._open += 1
+            self._started_at[self._open] = utc_now()
             logger.info("字幕を区切った: %s #%d", self.utterance_id, self._open - 1)
 
     def finish(self) -> None:
@@ -136,6 +141,16 @@ class Utterance:
 
     def _on_transcript(self, index: int, text: str) -> None:
         self._deps.captions.send(self._original(index).final(text))
+        self._deps.history.original(
+            self._segment_id(index),
+            text,
+            sender_id=self._speaker_identity,
+            language=self._speaker_language,
+            occurred_at=self._started_at.get(index) or utc_now(),
+            targets=self._targets,
+            utterance_id=self.utterance_id,
+            segment_index=index,
+        )
         if not text.strip():
             return
         logger.info("原文 #%d: %s", index, text)
@@ -145,14 +160,18 @@ class Utterance:
     async def _translate(self, index: int, text: str, target: str) -> None:
         track = self._caption_track(index, target, translated=True)
         parts: list[str] = []
+        failed = False
         try:
             async for delta in self._deps.translator.stream(text, self._speaker_language, target):
                 parts.append(delta)
                 self._deps.captions.send(track.delta(delta))
         except Exception:
             logger.exception("字幕の翻訳に失敗した(%s)", target)
+            failed = True
         result = "".join(parts).strip()
         self._deps.captions.send(track.final(result))
+        # 失敗したときの途中までの訳は、履歴には残さない
+        self._deps.history.translation(track.segment_id, target, None if failed else result)
         logger.info("訳 #%d(%s): %s", index, target, result)
 
 
@@ -231,12 +250,15 @@ class IntercomAgent:
     def __init__(self, room: rtc.Room, settings: Settings, translator: TextTranslator) -> None:
         self._room = room
         self._speakers: dict[str, Speaker] = {}
+        http = aiohttp.ClientSession()
         self._deps = Deps(
             settings=settings,
-            http=aiohttp.ClientSession(),
+            http=http,
             translator=translator,
             captions=CaptionPublisher(room),
             tracks=TranslationTracks(room),
+            # ルーム名(API の room_id)は接続してから決まるので、保存するときに読む
+            history=create_history(http, lambda: room.name),
             background=set(),
         )
         room.on("track_subscribed", self._on_track_subscribed)
@@ -285,6 +307,8 @@ class IntercomAgent:
         for task in list(self._deps.background):
             task.cancel()
         await asyncio.gather(*self._deps.background, return_exceptions=True)
+        # 打ち切った発話の分も含めて、履歴の送り残しを送る
+        await self._deps.history.aclose()
         await self._deps.tracks.aclose()
         await self._deps.captions.aclose()
         await self._deps.http.close()

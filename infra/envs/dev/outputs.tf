@@ -14,6 +14,12 @@ output "cognito_client_ids" {
   }
 }
 
+# Agent のクライアントシークレット。SSM に写すときだけ使う(README の「LiveKit Agent(ECS Fargate)」)
+output "agent_client_secret" {
+  value     = module.auth.agent_client_secret
+  sensitive = true
+}
+
 output "api_endpoint" {
   value = module.api.api_endpoint
 }

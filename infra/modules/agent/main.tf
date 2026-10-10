@@ -8,6 +8,16 @@ locals {
   # タグが無いうちは起動しない(初回の apply で ECR を作り、push してからもう一度 apply する)
   desired_count = var.image_tag == "" ? 0 : var.desired_count
   image         = "${aws_ecr_repository.this.repository_url}:${var.image_tag == "" ? "latest" : var.image_tag}"
+
+  # 履歴の保存(services/agent の history.py)。var.history が null なら何も足さない
+  history_environment = var.history == null ? {} : {
+    API_BASE_URL    = var.history.api_base_url
+    OIDC_TOKEN_URL  = var.history.oidc_token_url
+    AGENT_CLIENT_ID = var.history.client_id
+  }
+  history_secrets = var.history == null ? [] : [
+    { name = "AGENT_CLIENT_SECRET", valueFrom = var.history.client_secret_parameter_arn },
+  ]
 }
 
 # ---- ECR ----
@@ -88,10 +98,10 @@ resource "aws_iam_role_policy_attachment" "execution" {
 data "aws_iam_policy_document" "execution_secrets" {
   statement {
     actions = ["ssm:GetParameters"]
-    resources = [
-      var.livekit_api_secret_parameter_arn,
-      var.openai_api_key_parameter_arn,
-    ]
+    resources = concat(
+      [var.livekit_api_secret_parameter_arn, var.openai_api_key_parameter_arn],
+      [for s in local.history_secrets : s.valueFrom],
+    )
   }
 }
 
@@ -102,6 +112,7 @@ resource "aws_iam_role_policy" "execution_secrets" {
 }
 
 # タスクロール: コンテナの中のコードが使う。今の Agent は AWS の API を呼ばないので、権限は持たせない
+# (履歴の保存は API Gateway を Cognito のトークンで呼ぶので、IAM の権限は要らない)
 resource "aws_iam_role" "task" {
   name               = "${var.name}-task"
   assume_role_policy = data.aws_iam_policy_document.assume_ecs_tasks.json
@@ -139,17 +150,17 @@ resource "aws_ecs_task_definition" "this" {
       essential = true
 
       environment = [
-        for k, v in merge(var.environment, {
+        for k, v in merge(var.environment, local.history_environment, {
           LIVEKIT_URL     = var.livekit_url
           LIVEKIT_API_KEY = var.livekit_api_key
         }) : { name = k, value = v }
       ]
 
       # 値は SSM に置き、Terraform(state)には持たせない
-      secrets = [
+      secrets = concat([
         { name = "LIVEKIT_API_SECRET", valueFrom = var.livekit_api_secret_parameter_arn },
         { name = "OPENAI_API_KEY", valueFrom = var.openai_api_key_parameter_arn },
-      ]
+      ], local.history_secrets)
 
       # livekit-agents の HTTP サーバー(start のときは 8081)。LiveKit に繋がらないと 503 を返す。
       # 失敗が続くと ECS がタスクを入れ替える(実行中のルームは再ディスパッチされる)
