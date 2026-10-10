@@ -1,0 +1,90 @@
+# lint・型検査、テスト、proto の互換性。PR と main への push で毎回動かす
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# 同じブランチ(PR)の古い実行は止める
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # CI では .env がないので、mise.toml だけを信頼する
+  MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+  # ローカルの LiveKit サーバーと CLI は CI では使わない
+  MISE_DISABLE_TOOLS: github:livekit/livekit,github:livekit/livekit-cli,terraform
+
+jobs:
+  lint:
+    name: lint と型検査
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          mise-cache-prefix: mise-v1-lint
+          python: "true"
+          node: "true"
+      # buf lint、ruff check、ruff format --check、pyright、pnpm -r typecheck
+      - run: mise run lint
+      - run: uv cache prune --ci
+
+  test:
+    name: テスト
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # pytest は Python だけで動く(DynamoDB Local や外部サービスには接続しない)
+      MISE_DISABLE_TOOLS: github:livekit/livekit,github:livekit/livekit-cli,terraform,node,pnpm,buf
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          mise-cache-prefix: mise-v1-test
+          python: "true"
+      - run: mise run test
+      - run: uv cache prune --ci
+
+  proto-breaking:
+    name: proto の互換性
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MISE_DISABLE_TOOLS: github:livekit/livekit,github:livekit/livekit-cli,terraform,python,uv,node,pnpm
+      # PR はベースブランチの先頭と、main への push は push 前の main と比べる
+      BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # 比べる相手の proto を別のディレクトリに取り出す(buf.yaml の modules は proto だけなので、
+      # buf lint などの対象には入らない)
+      - name: 比べる相手を取り出す
+        if: env.BASE_SHA != '0000000000000000000000000000000000000000'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BASE_SHA }}
+          path: .base
+          persist-credentials: false
+          sparse-checkout: |
+            buf.yaml
+            proto
+          sparse-checkout-cone-mode: false
+      - uses: ./.github/actions/setup
+        with:
+          mise-cache-prefix: mise-v1-buf
+      # 古いアプリが使われ続けるので、互換を壊す変更(buf.yaml の breaking の規則)は落とす
+      - name: buf breaking
+        if: env.BASE_SHA != '0000000000000000000000000000000000000000'
+        run: buf breaking --against .base

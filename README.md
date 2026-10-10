@@ -115,6 +115,20 @@ VS Code で「Reopen in Container」を選ぶ。初回に `.devcontainer/post-cr
 | `mise run plan:dev` | `build:api` の後に、dev 環境の `terraform plan` を実行する | devContainer |
 | `mise run local:init` | ローカルの DynamoDB と S3 に、テーブルとバケットを作る | devContainer |
 
+## CI(GitHub Actions)
+
+PR と main への push で動く。ツールは mise で `mise.toml` と同じ版を入れ、ジョブの中身は上の `mise run` のタスクと揃えてある。Flutter はまだ対象にしていない。
+
+| ワークフロー | 動く条件 | 内容 |
+| --- | --- | --- |
+| `ci.yml` | 毎回 | `mise run lint`、`mise run test`、`buf breaking`(PR はベースブランチ、main への push は push 前と比べる) |
+| `gen.yml` | proto、`services/api`、生成物、lock ファイル、`mise.toml` などが変わったとき | `mise run gen` の後に差分がないか(生成物が古ければ落ちる) |
+| `terraform.yml` | `infra/` か `mise.toml` が変わったとき | `terraform fmt -check`、`envs/dev`・`envs/prod` の `init -backend=false` と `validate`(AWS には接続しない) |
+
+- action はタグではなくコミット SHA で固定し、横にタグを書く。共通の準備(mise、uv、pnpm とそのキャッシュ)は `.github/actions/setup` にまとめてある。
+- `terraform init` は lock ファイルを書き換えない(`-lockfile=readonly`)。プロバイダーを上げたら、`terraform providers lock -platform=linux_amd64 -platform=linux_arm64 -platform=darwin_arm64` で CI の分のハッシュも入れる。
+- `gen.yml` と `terraform.yml` はパスで絞っているので、必須のチェックにすると、関係のない PR が待ち続ける。必須にするのは `ci.yml` のジョブだけにする。
+
 ## AWS(Terraform)
 
 `infra/modules` に Cognito、DynamoDB、S3 + CloudFront(`media`)、API Gateway + Lambda(`api`)、LiveKit Agent の ECS Fargate(`agent`)のモジュールがあり、`infra/envs/<env>` から呼ぶ。
