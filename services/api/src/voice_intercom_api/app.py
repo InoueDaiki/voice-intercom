@@ -22,7 +22,7 @@ from aws_lambda_powertools.utilities.typing import LambdaContext
 from livekit import api as livekit
 from pydantic import BaseModel, Field
 
-from voice_intercom_api import devices, media, store, timeline
+from voice_intercom_api import devices, media, notifications, store, timeline
 from voice_intercom_api.auth import AdminUser, CurrentUser
 from voice_intercom_api.config import get_settings
 from voice_intercom_api.models import (
@@ -244,6 +244,7 @@ def create_livekit_token(
 app.include_router(timeline.router)
 app.include_router(media.router)
 app.include_router(devices.router)
+app.include_router(notifications.router)
 
 
 def handler(event: dict, context: LambdaContext) -> dict:

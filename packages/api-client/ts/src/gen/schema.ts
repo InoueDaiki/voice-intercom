@@ -100,6 +100,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rooms/{room_id}/notifications/speaking": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 誰かが話し始めたことを、ルームにいないメンバーに push 通知する(Agent)
+         * @description ルームのメンバーから、話者と present_ids を除いた人に送る。同じルーム × 同じ受け手には、間隔(既定 600 秒)に1回まで。送信に失敗しても 500 にはせず、sent を 0 にして返す。
+         */
+        post: operations["notifySpeaking"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -424,6 +444,33 @@ export interface components {
         RoomList: {
             /** Items */
             items: components["schemas"]["Room"][];
+        };
+        /** SpeakingNotificationRequest */
+        SpeakingNotificationRequest: {
+            /**
+             * Speaker Id
+             * @description 話者の user_id(sub)
+             */
+            speaker_id: string;
+            /**
+             * Present Ids
+             * @description 今ルームに入っている人の user_id(sub)。この人たちには送らない
+             * @default []
+             */
+            present_ids: string[];
+        };
+        /** SpeakingNotificationResult */
+        SpeakingNotificationResult: {
+            /**
+             * Sent
+             * @description 送った人数
+             */
+            sent: number;
+            /**
+             * Skipped
+             * @description 前回の通知から間隔がたっていないので、送らなかった人数
+             */
+            skipped: number;
         };
         /**
          * TimelineEvent
@@ -1015,6 +1062,69 @@ export interface operations {
             };
             /** @description 本体かサムネイルがまだ置かれていない、または上限より大きい */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    notifySpeaking: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ルームの ID */
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpeakingNotificationRequest"];
+            };
+        };
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpeakingNotificationResult"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description ルームがない */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

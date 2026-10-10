@@ -229,10 +229,11 @@ SSM の値を変えたときは、新しいタスクでないと読み直さな�
 | `PUT /rooms/{room_id}/timeline/{source_id}` | 発話(`utterance`、字幕の区切りごと)かテキスト入力(`text`)を履歴に保存する。`event_id` は `<occurred_at>#<source_id>` で、同じなら置き換える(再送しても1件) | Agent |
 | `POST /rooms/{room_id}/media/uploads` | 画像・動画を S3 に PUT する署名付き URL(本体と、`has_thumbnail` ならサムネイル)。期限は1時間 | 管理者、メンバー |
 | `POST /rooms/{room_id}/media/{media_id}/complete` | アップロードした画像・動画を履歴(`media`)に保存する。本体かサムネイルがまだ置かれていなければ 409。2回目からは同じ履歴を返す | アップロードした本人 |
+| `POST /rooms/{room_id}/notifications/speaking` | 誰かが話し始めたことを push 通知する(`{speaker_id, present_ids}`)。ルームのメンバーから話者と `present_ids` を除いた人に送り、`{sent, skipped}` を返す。同じルーム × 同じ受け手には `SPEAKING_NOTIFY_INTERVAL_S`(既定 600 秒)に1回まで。ルームがなければ 404。送信に失敗しても 500 にせず `sent: 0` | Agent |
 
 言語は gpt-realtime-translate が出力できる13言語のコード(`ja`、`en` など)。Agent の翻訳先はこの言語で決まるので、プロフィールがないとトークンを発行しない。
 
-Agent は client credentials のトークン(スコープ `voice-intercom/agent`)で呼ぶ。Agent のトークンは利用者向けのエンドポイントでは 403、`PUT .../timeline/...` は利用者のトークンでは 403 になる。
+Agent は client credentials のトークン(スコープ `voice-intercom/agent`)で呼ぶ。Agent のトークンは利用者向けのエンドポイントでは 403、`PUT .../timeline/...` と `POST .../notifications/speaking` は利用者のトークンでは 403 になる。
 
 画像・動画のアップロード:
 
@@ -254,7 +255,16 @@ Agent は client credentials のトークン(スコープ `voice-intercom/agent`
 - 同じトークンを別の人が登録したら、前の人から外す(ログアウトせずに別の人がログインした端末に、前の人の通知が届かないように)。
 - プロフィールの登録より先に端末を登録してもよい。プロフィールが未登録のうちは `GET /users/me` は 404 のまま。
 
-送るのは `voice_intercom_api.notify` の `send_to_users`。どこから送るか(チャット、発話)は、履歴の API ができてからつなぐ。
+送るのは `voice_intercom_api.notify` の `send_to_users`。
+
+どこから送るか: 誰かが話し始めたときに、Agent が `POST /rooms/{room_id}/notifications/speaking` を呼んで送る(`services/api` の `notifications.py`)。今ルームに入っていないメンバーに、タイトルはルームの名前、本文は「<話者の表示名>さんが話しています」(プロフィールが無ければ「誰か」)、data は `{"type": "speaking", "room_id": ...}` で届く。チャット(テキスト入力)や画像・動画からは、今は送らない。
+
+- 送る相手は、ルームの `member_ids` から、`speaker_id` と `present_ids`(今ルームに入っている人)を除いた人。
+- 同じルーム × 同じ受け手には、`SPEAKING_NOTIFY_INTERVAL_S` 秒(既定 600)に1回まで。間隔の内側の人は `skipped` に数える。受け手ごとの最後の送信時刻は timeline テーブルの別のパーティション(`room_id` が `notify-speaking#<room_id>`、`event_id` が受け手の sub。履歴には出ない)に置き、条件付きの UpdateItem(前回が間隔より前なら更新)で決めるので、同時に呼ばれても二重に送らない。テーブルを増やさず、メディアの仮の行と同じく TTL で消える。
+- `sent` は送信の対象にした人数(端末を登録していない人も含む)。サービスアカウントが未設定・読めない、FCM の呼び出しが例外になった、などのときはログに残して `sent: 0` を返し、取った時刻を戻す(次の呼び出しで送れる)。
+- 送信は 10 秒で待つのをやめて応答する(Lambda の timeout 15 秒に収めるため)。待ちきれなかった送信は続いているものとして数え、時刻は戻さない。Agent は応答を待たずに次へ進む前提。
+
+ほかの場所から送るときの例:
 
 ```python
 from voice_intercom_api import notify
