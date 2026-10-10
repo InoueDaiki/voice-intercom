@@ -67,7 +67,11 @@ def show_caption(caption: Caption, clock: Clock, verbose: bool) -> None:
     kind = "訳" if caption.translated else "原文"
     head = f"{clock.stamp()} {kind}({caption.language or '?'}) {caption.speaker_identity}"
     if caption.is_final:
-        print(f"{head} 確定: {caption.text}  [{caption.segment_id[:8]}]")
+        # 長い発話は区切りごとに確定する。同じ発話の区切りは utterance_id が同じ
+        where = caption.segment_id[:8]
+        if caption.utterance_id:
+            where = f"{caption.utterance_id[:8]} #{caption.segment_index}"
+        print(f"{head} 確定: {caption.text}  [{where}]")
     elif verbose:
         print(f"{head} 断片: {caption.text}")
 

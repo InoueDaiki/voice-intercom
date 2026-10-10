@@ -8,6 +8,8 @@ PoC(poc/translate_bench.py)で分かった手順に従う。
 - 翻訳は、発話が終わったらすぐ session.close を送り、session.closed まで受信を続ける。
   出力は入力が届くのに合わせてしか進まないので、時間を置いてから close すると翻訳音声が捨てられる。
 - whisper は turn_detection を null にして、発話の終わりに input_audio_buffer.commit を送る。
+  gpt-realtime-whisper は自動区切りに対応していない(公式の決まり)。長い発話は、Agent が
+  区切り(segmenter.py)を決めて、発話の途中でも commit を送る。
 """
 
 import asyncio
@@ -34,6 +36,8 @@ WHISPER_URL = "wss://api.openai.com/v1/realtime?intent=transcription"
 READY_TIMEOUT_S = 10.0
 
 _END = object()
+# WhisperSession.split() の目印
+_SPLIT = object()
 
 
 class RealtimeSession:
@@ -90,9 +94,13 @@ class RealtimeSession:
             if item is _END:
                 await self._send_end(ws)
                 return
+            if item is _SPLIT:
+                await self._send_split(ws)
+                continue
             assert isinstance(item, bytes)
             audio = base64.b64encode(item).decode()
             await ws.send_json({"type": self._append_type(), "audio": audio})
+            self._on_append()
 
     async def _receive(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         # 発話が終わってからは、上限の時間までに終わらなければ打ち切る
@@ -139,6 +147,12 @@ class RealtimeSession:
 
     async def _send_end(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         raise NotImplementedError
+
+    async def _send_split(self, ws: aiohttp.ClientWebSocketResponse) -> None:
+        pass
+
+    def _on_append(self) -> None:
+        pass
 
     def _end_timeout_s(self) -> float:
         raise NotImplementedError
@@ -211,7 +225,15 @@ class TranslateSession(RealtimeSession):
 
 
 class WhisperSession(RealtimeSession):
-    """gpt-realtime-whisper。原文の断片を on_delta、確定した全文を on_completed に渡す。"""
+    """gpt-realtime-whisper。原文の断片を on_delta、確定した全文を on_completed に渡す。
+
+    split() で発話の途中に区切りを作れる(input_audio_buffer.commit を送り、続きの音声は次の
+    区切りになる)。区切りには先頭から 0, 1, 2... と番号を振り、コールバックには番号も渡す。
+    確定は区切りごとに1回ずつ、必ず呼ぶ(確定できなければ空の全文で呼ぶ)。
+
+    書き起こしのイベントの item_id は、commit ごとに作られる会話のアイテムの ID。アイテムは
+    commit の順に作られるので、初めて見た item_id に、まだ結び付けていない最も若い番号を結ぶ。
+    """
 
     name = "whisper"
 
@@ -223,8 +245,8 @@ class WhisperSession(RealtimeSession):
         model: str,
         language: str | None,
         commit_timeout_s: float,
-        on_delta: Callable[[str], None],
-        on_completed: Callable[[str], None],
+        on_delta: Callable[[int, str], None],
+        on_completed: Callable[[int, str], None],
     ) -> None:
         super().__init__(http, api_key)
         self._model = model
@@ -232,7 +254,24 @@ class WhisperSession(RealtimeSession):
         self._commit_timeout_s = commit_timeout_s
         self._on_delta = on_delta
         self._on_completed = on_completed
-        self._completed = False
+        # 送信側で、いま音声を送っている区切りの番号
+        self._open = 0
+        # 前の commit の後に音声を送ったか
+        self._appended = False
+        # 最後の commit(発話の終わり)を送ったか
+        self._end_sent = False
+        # item_id と区切りの番号の対応。アイテムができない区切り(音声が無いなど)は _no_item に入れる
+        self._items: dict[str, int] = {}
+        self._next_item = 0
+        self._no_item: set[int] = set()
+        # commit の event_id と区切りの番号(error の event_id から、失敗した区切りを探す)
+        self._commits: dict[str, int] = {}
+        self._completed: set[int] = set()
+
+    def split(self) -> None:
+        """ここまでの音声で区切りを確定させる。push() と同じ順番で送る。"""
+        if not self._finished.is_set():
+            self._queue.put_nowait(_SPLIT)
 
     def _url(self) -> str:
         return WHISPER_URL
@@ -247,6 +286,7 @@ class WhisperSession(RealtimeSession):
                 "input": {
                     "format": {"type": "audio/pcm", "rate": INPUT_SAMPLE_RATE},
                     "transcription": transcription,
+                    # gpt-realtime-whisper は自動区切り(VAD)に対応していない。null にする決まり
                     "turn_detection": None,
                     "noise_reduction": None,
                 }
@@ -256,8 +296,30 @@ class WhisperSession(RealtimeSession):
     def _append_type(self) -> str:
         return "input_audio_buffer.append"
 
+    def _on_append(self) -> None:
+        self._appended = True
+
+    async def _send_split(self, ws: aiohttp.ClientWebSocketResponse) -> None:
+        index = self._open
+        self._open += 1
+        if not self._appended:
+            # 空のバッファは commit できない。アイテムができないので、空の全文で確定する
+            self._skip_item(index)
+            self._complete(index, "")
+            return
+        await self._commit(ws, index)
+
     async def _send_end(self, ws: aiohttp.ClientWebSocketResponse) -> None:
-        await ws.send_json({"type": "input_audio_buffer.commit"})
+        # 音声が無くても送る(従来どおり、失敗したら error で終える)
+        index = self._open
+        self._end_sent = True
+        await self._commit(ws, index)
+
+    async def _commit(self, ws: aiohttp.ClientWebSocketResponse, index: int) -> None:
+        event_id = f"commit-{index}"
+        self._commits[event_id] = index
+        self._appended = False
+        await ws.send_json({"type": "input_audio_buffer.commit", "event_id": event_id})
 
     def _end_timeout_s(self) -> float:
         return self._commit_timeout_s
@@ -265,17 +327,51 @@ class WhisperSession(RealtimeSession):
     def _handle(self, ev: dict[str, Any]) -> bool:
         match ev.get("type"):
             case "conversation.item.input_audio_transcription.delta":
-                self._on_delta(ev.get("delta", ""))
+                index = self._index(ev.get("item_id"))
+                if index not in self._completed:
+                    self._on_delta(index, ev.get("delta", ""))
+            case "input_audio_buffer.committed":
+                self._index(ev.get("item_id"))
             case "conversation.item.input_audio_transcription.completed":
-                self._completed = True
-                self._on_completed(ev.get("transcript", ""))
-                return True
-            case "error" if self._finished.is_set():
-                # 短すぎる発話の commit などは確定できない。空の全文で終える
-                return True
-        return False
+                self._complete(self._index(ev.get("item_id")), ev.get("transcript", ""))
+            case "error":
+                event_id = (ev.get("error") or {}).get("event_id")
+                index = self._commits.get(event_id) if event_id else None
+                if index is not None:
+                    # 短すぎる区切りの commit などは確定できない。空の全文で確定する
+                    self._skip_item(index)
+                    self._complete(index, "")
+                elif self._end_sent:
+                    # どの commit の失敗か分からない。最後の commit の失敗とみなして空で確定する
+                    self._complete(self._open, "")
+        return self._end_sent and all(i in self._completed for i in range(self._open + 1))
+
+    def _index(self, item_id: str | None) -> int:
+        """item_id の区切りの番号。item_id が無ければ、いま音声を送っている区切りとみなす。"""
+        if not item_id:
+            return self._open
+        index = self._items.get(item_id)
+        if index is None:
+            index = self._items[item_id] = self._next_item
+            self._next_item += 1
+            self._advance_next_item()
+        return index
+
+    def _skip_item(self, index: int) -> None:
+        if index not in self._items.values():
+            self._no_item.add(index)
+            self._advance_next_item()
+
+    def _advance_next_item(self) -> None:
+        while self._next_item in self._no_item:
+            self._next_item += 1
+
+    def _complete(self, index: int, text: str) -> None:
+        if index not in self._completed:
+            self._completed.add(index)
+            self._on_completed(index, text)
 
     def _on_done(self) -> None:
-        if not self._completed:
-            self._completed = True
-            self._on_completed("")
+        # 確定していない区切りを、空の全文で確定する(断片を出していれば字幕が消える)
+        for index in range(self._open + 1):
+            self._complete(index, "")

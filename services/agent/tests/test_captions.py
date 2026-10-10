@@ -56,3 +56,18 @@ def test_nothing_after_final() -> None:
 
 def test_segment_ids_are_unique() -> None:
     assert new_segment_id() != new_segment_id()
+
+
+def test_utterance_fields() -> None:
+    # 長い発話の区切りは、segment_id を分け、utterance_id と順番で同じ発話とわかるようにする
+    track = CaptionTrack(
+        speaker_identity="u1",
+        segment_id="seg-1",
+        language="ja",
+        translated=False,
+        utterance_id="utt",
+        segment_index=1,
+    )
+    caption = track.final("後半です。")
+    assert caption is not None
+    assert (caption.segment_id, caption.utterance_id, caption.segment_index) == ("seg-1", "utt", 1)
