@@ -5,6 +5,7 @@ import 'package:livekit_client/livekit_client.dart';
 import 'package:voice_intercom_schema/gen/voiceintercom/v1/caption.pb.dart';
 import 'package:voice_intercom_schema/gen/voiceintercom/v1/text.pb.dart';
 
+import 'background_audio.dart';
 import 'caption_board.dart';
 import 'subscription.dart';
 import 'text_sender.dart';
@@ -15,7 +16,12 @@ const textTopic = 'text';
 
 /// 1つのルームへの接続。PTT、購読、字幕、テキスト入力を受け持つ。
 class RoomSession extends ChangeNotifier {
-  RoomSession({required this.myIdentity, required this.myLanguage}) {
+  RoomSession({
+    required this.myIdentity,
+    required this.myLanguage,
+    required this.roomName,
+    this.backgroundAudio = const BackgroundAudio(),
+  }) {
     textSender = TextSender(send: _sendText, onChanged: _changed);
   }
 
@@ -27,6 +33,12 @@ class RoomSession extends ChangeNotifier {
 
   /// 自分の言語。この言語の翻訳音声と訳の字幕を受け取る
   final String myLanguage;
+
+  /// ルームの名前。入室中の通知に出す
+  final String roomName;
+
+  /// 入室中はバックグラウンドでも音声を保つ
+  final BackgroundAudio backgroundAudio;
 
   final Room room = Room(
     roomOptions: const RoomOptions(
@@ -73,6 +85,7 @@ class RoomSession extends ChangeNotifier {
         ..on<RoomDisconnectedEvent>((e) {
           connected = false;
           talking = false;
+          _stopBackground();
           error ??= '切断された(${e.reason?.name ?? '理由不明'})';
           _changed();
         });
@@ -91,15 +104,46 @@ class RoomSession extends ChangeNotifier {
       // もう一度試す。それでもだめなら既定のモードのまま使う(ミュート音が鳴るだけで、PTT は動く)
       muteModeSet = muteModeSet || await _setMuteMode();
       if (!muteModeSet) {
-        warning = 'ミュートのモードを設定できなかった(OS のミュート音が鳴ることがある)';
+        _warn('ミュートのモードを設定できなかった(OS のミュート音が鳴ることがある)');
       }
+      // マイクの権限を得た後(publish の後)に始める。権限が無いとマイクのサービスにできない
+      await _startBackground();
       connected = true;
       _changed();
     } catch (e) {
+      _stopBackground();
       error = '入室できなかった: $e';
       _changed();
       rethrow;
     }
+  }
+
+  void _warn(String message) {
+    warning = warning == null ? message : '$warning\n$message';
+  }
+
+  /// バックグラウンドでの音声を保つ。始められなくても入室は止めない(前面にいる間は使える)
+  Future<void> _startBackground() async {
+    if (_disposed) {
+      return;
+    }
+    try {
+      final withMic = await backgroundAudio.start('$roomName に入室中');
+      if (!withMic) {
+        _warn('マイクの権限が無いので、バックグラウンドでは受信だけになる');
+      }
+    } catch (e) {
+      debugPrint('バックグラウンドの音声を始められなかった: $e');
+      _warn('バックグラウンドに回ると音声が止まることがある');
+    }
+  }
+
+  void _stopBackground() {
+    unawaited(
+      backgroundAudio.stop().catchError(
+        (Object e) => debugPrint('バックグラウンドの音声を止められなかった: $e'),
+      ),
+    );
   }
 
   /// ミュートの切り替えを速く、OS のミュート音を鳴らさずに行う(iOS だけ。設計メモの「PTT の方式」)。
@@ -234,6 +278,7 @@ class RoomSession extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _stopBackground();
     textSender.dispose();
     unawaited(_listener?.dispose());
     unawaited(room.disconnect().then((_) => room.dispose()));

@@ -6,6 +6,12 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
+    <!-- 入室中はバックグラウンドでも音声を保つ(InRoomService)。受信だけなら mediaPlayback で足りる -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+    <!-- 入室中の通知(Android 13 以降) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="Voice Intercom"
         android:name="${applicationName}"
@@ -32,6 +38,11 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- 入室中のフォアグラウンドサービス。マイクの権限が無ければ mediaPlayback だけで始める -->
+        <service
+            android:name=".InRoomService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|mediaPlayback"/>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

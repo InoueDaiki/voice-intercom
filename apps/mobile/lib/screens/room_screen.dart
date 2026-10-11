@@ -30,6 +30,7 @@ class _RoomScreenState extends State<RoomScreen> {
     _session = RoomSession(
       myIdentity: profile.userId,
       myLanguage: profile.language.toJson(),
+      roomName: widget.room.name,
     );
     _join();
   }
