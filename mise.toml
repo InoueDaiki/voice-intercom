@@ -1,6 +1,10 @@
 # ツールの版とタスク。devContainer とホストの両方でこのファイルを使う。
 # Flutter だけは apps/mobile/mise.toml で管理する(ホスト専用)。
 
+[vars]
+# LiveKit サーバーの版。devContainer の livekit-server と、ホストの mise run livekit のイメージの両方に使う
+livekit_version = "1.13.9"
+
 [tools]
 python = "3.14.8"
 uv = "0.12.23"
@@ -8,7 +12,9 @@ node = "24.21.0"
 pnpm = "12.10.1"
 terraform = "1.16.5"
 buf = "1.73.0"
-"github:livekit/livekit" = { version = "1.13.9", bin = "livekit-server" }
+# macOS 向けのバイナリは配布されていないので、linux(devContainer)でだけ入れる。
+# ホストでは mise run livekit が公式のイメージで動かす
+"github:livekit/livekit" = { version = "{{vars.livekit_version}}", bin = "livekit-server", os = ["linux"] }
 "github:livekit/livekit-cli" = { version = "2.18.8", bin = "lk" }
 # GitHub CLI(PR や CI の確認。devContainer で使う。CI では入れない)
 gh = "2.102.0"
@@ -91,8 +97,13 @@ description = "管理コンソールの開発サーバーを起動する(http://
 run = "pnpm --dir apps/admin dev"
 
 [tasks.livekit]
-description = "ローカルの LiveKit サーバーを起動する(ホストで実行)"
-run = "livekit-server --dev --bind 0.0.0.0 --node-ip {{env.DEV_HOST}}"
+description = "ローカルの LiveKit サーバーを公式のイメージで起動する(ホストで実行。Docker が要る)"
+run = """
+docker run --rm --name voice-intercom-livekit \
+  -p 7880:7880 -p 7881:7881 -p 7882:7882/udp \
+  livekit/livekit-server:v{{vars.livekit_version}} \
+  --dev --bind 0.0.0.0 --node-ip {{env.DEV_HOST}}
+"""
 
 [tasks.api]
 description = "REST API をローカルで起動する(http://localhost:3000。ローカルの DynamoDB・S3・模擬 OIDC につなぐ)"

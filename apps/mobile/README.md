@@ -42,13 +42,7 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
 
 ### 注意
 
-- `mise.toml` の `github:livekit/livekit`(1.13.9)は macOS 向けのバイナリが配布されていないので、ホストの `mise install` / `mise x` / `mise run livekit` がその取得で失敗する。直るまでは、Flutter は `~/.local/share/mise/installs/flutter/<版>/bin` を PATH に足して使い、LiveKit サーバーは公式のイメージで動かす。
-
-  ```sh
-  docker run --rm -p 7880:7880 -p 7881:7881 -p 7882:7882/udp \
-    livekit/livekit-server:v1.13.9 --dev --bind 0.0.0.0 --node-ip "$DEV_HOST"
-  ```
-
+- LiveKit サーバーは macOS 向けのバイナリが配布されていないので、ホストの `mise run livekit` は公式のイメージ(`livekit/livekit-server`)を Docker で動かす(ルートの `mise.toml`)。Docker Desktop を起動しておく。
 - ローカルは http / ws なので、Android は debug ビルドだけ平文の通信を許している(`android/app/src/debug/AndroidManifest.xml`)。OIDC も http のときだけ平文を許す(`lib/auth.dart`)。
 
 ## 構成
