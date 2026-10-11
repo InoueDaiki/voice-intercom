@@ -118,17 +118,18 @@ GitHub CLI(`gh`。版は `mise.toml`)を使うときは、初回に `gh auth log
 
 ## CI(GitHub Actions)
 
-PR と main への push で動く。ツールは mise で `mise.toml` と同じ版を入れ、ジョブの中身は上の `mise run` のタスクと揃えてある。Flutter はまだ対象にしていない。
+PR と main への push で動く。ツールは mise で `mise.toml` と同じ版を入れ、ジョブの中身は上の `mise run` のタスクと揃えてある。Flutter は `apps/mobile/mise.toml` と同じ版を mise で入れ、`apps/mobile/README.md` の「テスト」と同じコマンドを動かす。
 
 | ワークフロー | 動く条件 | 内容 |
 | --- | --- | --- |
 | `ci.yml` | 毎回 | `mise run lint`、`mise run test`、`buf breaking`(PR はベースブランチ、main への push は push 前と比べる) |
 | `gen.yml` | proto、`services/api`、生成物、lock ファイル、`mise.toml` などが変わったとき | `mise run gen` の後に差分がないか(生成物が古ければ落ちる) |
 | `terraform.yml` | `infra/` か `mise.toml` が変わったとき | `terraform fmt -check`、`envs/dev`・`envs/prod` の `init -backend=false` と `validate`(AWS には接続しない) |
+| `flutter.yml` | `apps/mobile`、それが参照する `packages/api-client/dart`・`packages/schema/dart`、`mise.toml` などが変わったとき | `flutter pub get --enforce-lockfile`、`flutter analyze`、`flutter test`(`test/` の単体テストだけ。`integration_test/` はシミュレーターとローカルの環境が要るので動かさない) |
 
 - action はタグではなくコミット SHA で固定し、横にタグを書く。共通の準備(mise、uv、pnpm とそのキャッシュ)は `.github/actions/setup` にまとめてある。
 - `terraform init` は lock ファイルを書き換えない(`-lockfile=readonly`)。プロバイダーを上げたら、`terraform providers lock -platform=linux_amd64 -platform=linux_arm64 -platform=darwin_arm64` で CI の分のハッシュも入れる。
-- `gen.yml` と `terraform.yml` はパスで絞っているので、必須のチェックにすると、関係のない PR が待ち続ける。必須にするのは `ci.yml` のジョブだけにする。
+- `gen.yml`、`terraform.yml`、`flutter.yml` はパスで絞っているので、必須のチェックにすると、関係のない PR が待ち続ける。必須にするのは `ci.yml` のジョブだけにする。
 
 ## AWS(Terraform)
 

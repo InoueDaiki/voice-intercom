@@ -14,6 +14,11 @@ inputs:
       true なら、mise のキャッシュをジョブの最後に保存する。
       タスクの中で入るツール(gen:api の Java)もキャッシュに含めたいときに使う
     default: "false"
+  working-directory:
+    description: >-
+      mise を動かすディレクトリ。サブディレクトリの mise.toml(apps/mobile の Flutter など)の
+      ツールも入れたいときに指定する
+    default: "."
   python:
     description: true なら uv sync する
     default: "false"
@@ -30,6 +35,7 @@ runs:
         version: 2026.10.4
         cache_key_prefix: ${{ inputs.mise-cache-prefix }}
         cache_save_post: ${{ inputs.mise-cache-save-post }}
+        working_directory: ${{ inputs.working-directory }}
 
     - name: uv のキャッシュ
       if: inputs.python == 'true'
