@@ -235,6 +235,13 @@ def create_livekit_token(
         .with_attributes({LANGUAGE_ATTRIBUTE: profile.language})
         .with_ttl(LIVEKIT_TOKEN_TTL)
         .with_grants(livekit.VideoGrants(room_join=True, room=body.room_name))
+        # Agent は明示ディスパッチ(services/agent の README)。トークンのディスパッチは
+        # ルームを作るときにしか効かないので、だれが最初に入ってもよいよう全員のトークンに入れる
+        .with_room_config(
+            livekit.RoomConfiguration(
+                agents=[livekit.RoomAgentDispatch(agent_name=settings.agent_name)]
+            )
+        )
         .to_jwt()
     )
     return LiveKitTokenResponse(server_url=settings.livekit_client_url, participant_token=token)

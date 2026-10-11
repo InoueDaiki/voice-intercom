@@ -1,0 +1,34 @@
+name: voice_intercom
+description: 翻訳つきのボイスインカムアプリ(iOS / Android)
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.13.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # 生成物(mise run gen)。手で編集しない
+  voice_intercom_api_client:
+    path: ../../packages/api-client/dart
+  voice_intercom_schema:
+    path: ../../packages/schema/dart
+  # AudioManager.setMicrophoneMuteMode(inputMixer)は 2.9.0 以降
+  livekit_client: ^2.13.1
+  flutter_appauth: ^12.1.0
+  flutter_secure_storage: ^11.2.0
+  protobuf: ^6.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  fake_async: ^1.3.3
+  # 統合テスト(integration_test/)で模擬 OIDC からトークンを取る
+  http: ^1.6.0
+  integration_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

@@ -11,12 +11,16 @@
    同じ言語のトラックに流す。同じ言語の読み上げは1つずつ順に行い、重ならないようにする。
 5. モデルが返す読み上げのテキストを渡した文と比べ、大きく違えばログに残す。
 6. 原文と訳がそろったら、履歴に保存する(history.py。kind は "text")。
+7. アプリは、自分の message_id の字幕が返ってこなければ同じ message_id で送り直す(入室の直後は
+   送信元が分からず捨てることがあるため)。同じ (送信者, message_id) は1回だけ処理する。
 
 LiveKit と OpenAI には直接依存しない。翻訳・読み上げ・字幕・音声の出口は呼び出し側から渡す。
 """
 
 import asyncio
 import logging
+import time
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -106,6 +110,41 @@ def clean_text(text: str, max_chars: int) -> str | None:
     if not text or len(text) > max_chars:
         return None
     return text
+
+
+class RecentMessages:
+    """最近処理した (送信者, message_id)。アプリの送り直しを1回だけ処理するために使う。
+
+    送り直しは数秒のうちに届くので、ttl_s より古いものと、max_size を超えた古いものは忘れる。
+    message_id が空のものは見分けられないので、重複とみなさない。
+    """
+
+    def __init__(
+        self,
+        *,
+        ttl_s: float = 600.0,
+        max_size: int = 10_000,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._ttl_s = ttl_s
+        self._max_size = max_size
+        self._clock = clock
+        self._seen: OrderedDict[tuple[str, str], float] = OrderedDict()
+
+    def is_duplicate(self, sender: str, message_id: str) -> bool:
+        """既に処理したものなら True。初めてなら覚えて False を返す。"""
+        if not message_id:
+            return False
+        now = self._clock()
+        while self._seen and now - next(iter(self._seen.values())) >= self._ttl_s:
+            self._seen.popitem(last=False)
+        key = (sender, message_id)
+        if key in self._seen:
+            return True
+        if len(self._seen) >= self._max_size:
+            self._seen.popitem(last=False)
+        self._seen[key] = now
+        return False
 
 
 class TextInput:

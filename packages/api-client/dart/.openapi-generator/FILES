@@ -24,7 +24,6 @@ lib/model/health_response.dart
 lib/model/http_validation_error.dart
 lib/model/live_kit_token_request.dart
 lib/model/live_kit_token_response.dart
-lib/model/location_inner.dart
 lib/model/media_upload.dart
 lib/model/put_timeline_event_request.dart
 lib/model/put_user_request.dart

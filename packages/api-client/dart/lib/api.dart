@@ -44,7 +44,6 @@ part 'model/http_validation_error.dart';
 part 'model/health_response.dart';
 part 'model/live_kit_token_request.dart';
 part 'model/live_kit_token_response.dart';
-part 'model/location_inner.dart';
 part 'model/media_upload.dart';
 part 'model/put_timeline_event_request.dart';
 part 'model/put_user_request.dart';

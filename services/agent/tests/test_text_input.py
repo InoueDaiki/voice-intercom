@@ -8,6 +8,7 @@ import pytest
 
 from voice_intercom_agent.speech import SpeechResult
 from voice_intercom_agent.text_input import (
+    RecentMessages,
     TextInput,
     TextPlan,
     clean_text,
@@ -49,6 +50,30 @@ def test_parse_text_message() -> None:
     data = TextMessage(message_id="m1", text="はい").SerializeToString()
     assert parse_text_message(data) == TextMessage(message_id="m1", text="はい")
     assert parse_text_message(b"\xff\xff\xff") is None
+
+
+def test_recent_messages_drops_resent_message() -> None:
+    now = [0.0]
+    recent = RecentMessages(ttl_s=10, max_size=3, clock=lambda: now[0])
+
+    assert not recent.is_duplicate("a", "m1")
+    assert recent.is_duplicate("a", "m1")
+    # 送信者が違えば別のメッセージ(message_id はアプリが振るので重なりうる)
+    assert not recent.is_duplicate("b", "m1")
+    # message_id が空なら見分けられない
+    assert not recent.is_duplicate("a", "")
+    assert not recent.is_duplicate("a", "")
+    # ttl を過ぎたら忘れる
+    now[0] = 10.0
+    assert not recent.is_duplicate("a", "m1")
+
+
+def test_recent_messages_forgets_oldest_over_max_size() -> None:
+    recent = RecentMessages(ttl_s=100, max_size=2, clock=lambda: 0.0)
+    for m in ["m1", "m2", "m3"]:
+        assert not recent.is_duplicate("a", m)
+    assert recent.is_duplicate("a", "m3")
+    assert not recent.is_duplicate("a", "m1")
 
 
 def test_translation_schema_and_input() -> None:

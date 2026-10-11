@@ -199,8 +199,6 @@ class ApiClient {
           return LiveKitTokenRequest.fromJson(value);
         case 'LiveKitTokenResponse':
           return LiveKitTokenResponse.fromJson(value);
-        case 'LocationInner':
-          return LocationInner.fromJson(value);
         case 'MediaUpload':
           return MediaUpload.fromJson(value);
         case 'PutTimelineEventRequest':

@@ -17,7 +17,7 @@ class ValidationError {
     required this.type,
   });
 
-  List<LocationInner> loc;
+  List<Object> loc;
 
   String type;
 
@@ -61,7 +61,9 @@ class ValidationError {
       }());
 
       return ValidationError(
-        loc: LocationInner.listFromJson(json[r'loc']),
+        loc: json[r'loc'] is Iterable
+            ? (json[r'loc'] as Iterable).cast<Object>().toList(growable: false)
+            : const [],
         type: mapValueOfType<String>(json, r'type')!,
       );
     }
