@@ -16,11 +16,15 @@ class RoomScreen extends StatefulWidget {
   final Room room;
 
   @override
-  State<RoomScreen> createState() => _RoomScreenState();
+  State<RoomScreen> createState() => RoomScreenState();
 }
 
-class _RoomScreenState extends State<RoomScreen> {
+class RoomScreenState extends State<RoomScreen> {
   late final RoomSession _session;
+
+  /// 統合テストで、画面を描かずに(バックグラウンドで)接続の状態を見る
+  @visibleForTesting
+  RoomSession get session => _session;
   final _text = TextEditingController();
 
   @override

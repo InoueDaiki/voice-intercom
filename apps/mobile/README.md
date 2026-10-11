@@ -2,7 +2,7 @@
 
 Flutter のアプリ(iOS / Android)。ホストで開発する(devContainer には Flutter を入れない)。版は `mise.toml` で固定している。
 
-今あるのは動く最小の骨組み。push 通知、画像・動画の送信、バックグラウンドでの音声の維持、iOS の PushToTalk フレームワークは、まだ入れていない。
+今あるのは動く最小の骨組み。push 通知、画像・動画の送信、iOS の PushToTalk フレームワークは、まだ入れていない。入室中は、バックグラウンドでも音声を保つ(下の「バックグラウンドでの音声」)。
 
 ## 動かす
 
@@ -62,6 +62,8 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
 | `lib/room/subscription.dart` | 購読するトラックの決め方 |
 | `lib/room/caption_board.dart` | 字幕の組み立て |
 | `lib/room/text_sender.dart` | テキスト入力の送信と送り直し |
+| `lib/room/background_audio.dart` | 入室中のバックグラウンドでの音声(Android はフォアグラウンドサービスを動かす) |
+| `android/app/src/main/kotlin/.../InRoomService.kt` | Android の入室中のフォアグラウンドサービスと通知。`MainActivity.kt` の MethodChannel(`voiceintercom/in_room`)から始め、止める |
 | `lib/screens/` | ログイン、プロフィール、ルームの一覧、ルーム、履歴 |
 
 型は生成物を使う。REST は `packages/api-client/dart`、データチャネルのメッセージは `packages/schema/dart`(どちらも path で参照し、手で編集しない)。
@@ -76,6 +78,17 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
 - **テキスト入力**: topic `text` で `TextMessage` を送る。入室の直後(約3秒以内)に送ると、Agent が送信元を知らずに捨てることがある(設計メモの「Agent の結合確認」)。Agent は受け付けるとすぐ原文の字幕を `message_id` 付きで配信するので、自分の `message_id` の字幕が4秒のうちに届かなければ、同じ `message_id` で送り直す(3回まで。だめなら「届かなかった」と出す)。Agent は同じ `(identity, message_id)` を1回だけ処理する。
 - **履歴**: `GET /rooms/{room_id}/timeline` を50件ずつ、`next_before` で古いほうへ読む。
 
+## バックグラウンドでの音声
+
+入室している間は、アプリがバックグラウンドにいても(ホームに戻る、別のアプリに切り替える)、聞くことと送ること(マイクのトラック)を続ける(設計メモの「バックグラウンドでの音声」の方針案)。アプリを閉じている間は音声を受けない。
+
+- **iOS**: `Info.plist` の `UIBackgroundModes` に `audio` を入れるだけ(livekit_client の README の作法)。オーディオセッションは livekit_client の `AudioManager` が自動で持ち、マイクを publish している間は playAndRecord で有効にしておく。アプリからはセッションを触らない。マイクはミュートでも止めない(`stopAudioCaptureOnMute: false`)ので、裏に回っても録音のエンジンは動いたままになる。
+- **Android**: 入室中だけ、フォアグラウンドサービス(`InRoomService`)を動かし、「<ルーム名> に入室中」の通知を出す。サービスがないと、裏に回った直後に OS がマイクを止め(silenced)、しばらくするとプロセスが凍結されて、受信も止まる(エミュレーターで確かめた)。
+  - 種類は `microphone` と `mediaPlayback`。マイクの権限がなければ `mediaPlayback` だけ(受信だけ)で始め、画面に知らせる。
+  - Android 14 以降は、バックグラウンドからマイクのフォアグラウンドサービスを新しく始められない。そこで、入室の時点(フォアグラウンド。マイクを publish して権限を得た後)で始める。始められなくても入室は止めず、「バックグラウンドに回ると音声が止まることがある」と出す。
+  - 止めるのは、退室(ルームの画面を閉じる)、切断(`RoomDisconnectedEvent`)、入室の失敗、アプリの終了(Flutter のエンジンが外れるとき。タスクを消したとき)。エンジンが外れると flutter_webrtc がマイクのストリームも破棄する。
+  - 通知の権限(Android 13 以降)は、サービスを始めるときに求める。断られてもサービスは動く(通知が出ないだけ)。
+
 ## パッケージを選んだ理由
 
 | パッケージ | 理由 |
@@ -85,6 +98,7 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
 | `flutter_appauth` | 標準の OIDC(探索、認可コード + PKCE、リフレッシュ)を AppAuth(iOS / Android の公式ライブラリ)で行う。Cognito 専用の SDK を使わないので、模擬 OIDC と同じコードで動く。iOS は Cookie を共有しないブラウザ(ephemeral)でログインする |
 | `flutter_secure_storage` | リフレッシュトークンを Keychain / Keystore に置く |
 | `protobuf` | `packages/schema/dart` の実行時ライブラリ |
+| フォアグラウンドサービスのパッケージは使わない | 要るのは「入室で始め、退室・切断・終了で止め、通知を1つ出す」だけで、Kotlin で200行足らず(`InRoomService.kt` と `MainActivity.kt`)で足りる。音声は LiveKit が同じプロセスで扱うので、汎用のパッケージが持つ別の isolate での処理などは要らない。種類の選び方(マイクの権限の有無)、Android 14 の制限への対処、タスクを消したときの止め方を、手元のコードで確かめられるほうを選んだ。livekit_client の README の例(`flutter_background`)は画面共有(mediaProjection)向け |
 | `fake_async`(テスト) | 送り直しのタイマーを、時間を進めて試す |
 
 ## テスト
@@ -113,6 +127,28 @@ flutter test
    flutter test integration_test/room_flow_test.dart -d <シミュレーターの ID> --dart-define=DEV_HOST=<DEV_HOST>
    ```
 
+   Android では、`flutter test` がアプリを入れ直すたびに権限が消え、マイクの権限のダイアログで入室が止まる。入ったらすぐ権限を与えるよう、別のターミナルで先に次を動かしておく(`send_home_when_joined.sh` は同じことを自分で行う)。
+
+   ```sh
+   until adb shell pm list packages | grep -q jp.voiceintercom.voice_intercom; do sleep 0.2; done
+   adb shell pm grant jp.voiceintercom.voice_intercom android.permission.RECORD_AUDIO
+   adb shell pm grant jp.voiceintercom.voice_intercom android.permission.POST_NOTIFICATIONS
+   ```
+
+### バックグラウンドでの音声(Android)
+
+`integration_test/background_test.dart` は、入室したままホームに戻り、裏にいる間に別の参加者(相手役)の字幕と訳が届くこと、前面に戻ると出ていること、退室でサービスが止まることを確かめる。ホームに戻す・前面に戻すのは、ホストの `send_home_when_joined.sh` が adb で行う。テストの合図(`BG_TEST:`)は `flutter test` の出力に出る(統合テストの print は logcat には出ない)ので、出力をパイプで渡す。
+
+1. 上の 1. と 2. と同じ(相手役は1回の実行ごとに起動し直す)。
+2. ホストで実行する。
+
+   ```sh
+   flutter test integration_test/background_test.dart -d emulator-5554 --dart-define=DEV_HOST=<DEV_HOST> 2>&1 \
+     | integration_test/send_home_when_joined.sh
+   ```
+
+スクリプトは、裏にいる間と退室の後に、サービス(`types=0x00000082` は microphone と mediaPlayback)、プロセスの状態(`curProcState=4` はフォアグラウンドサービス)、再生(`state:started`)、録音(`not silenced` ならマイクは止められていない)を表示する。退室の後は「(サービスなし)」と `rec stop` になる。
+
 ユーザーとルームの名前は `--dart-define=TEST_USER=...`、`TEST_ROOM_NAME=...` で変えられる。
 
 iOS シミュレーターで、音声を開いた時点で `SetProperty: RPC timeout. Apparently deadlocked. Aborting now.`(CoreAudio)と出てアプリが落ちることがある。iOS の WebRTC は再生だけでもマイクと一緒に開くので、ホスト Mac の音声の環境の影響を受ける。仮想オーディオのドライバー(`/Library/Audio/Plug-Ins/HAL/` の Teams など)が原因になりうる。
@@ -125,3 +161,12 @@ iOS シミュレーターで、音声を開いた時点で `SetProperty: RPC tim
 - 2台で PTT をして、相手のアプリで元の音声と翻訳音声が聞こえるか、話していない間に音が漏れていないか。
 - 入室してすぐテキストを送り、送り直しで字幕が出るか(「送信中(2回目)」の後に字幕が出る)。
 - イヤホンとスピーカーの切り替え、Bluetooth のヘッドセット。
+- バックグラウンドでの音声(iOS はシミュレーターの音声が落ちるので、実機で確かめる。Android も実機で一度確かめる)。2台で同じルームに入り、片方(確かめる側)を次の状態にして、もう片方が話す。
+  1. ホームに戻す。元の音声と翻訳音声が聞こえ続けるか。前面に戻すと、裏にいた間の字幕が出ているか。
+  2. 画面をロックする。1. と同じ。iOS ではロック画面に再生中の表示が出るか、Android では「入室中」の通知が出ているか。
+  3. 裏に回したまま5分以上置く。切れずに聞こえ続けるか(iOS は audio mode でも、音声が途絶えるとアプリが停止されることがある)。
+  4. 裏にいる間に電話がかかってきたら(または別のアプリで音楽を鳴らしたら)、終わった後に音声が戻るか。
+  5. Bluetooth のヘッドセットをつないだまま 1. と 2.。音声がヘッドセットに出続けるか。
+  6. 退室すると、Android の通知が消え、iOS のステータスバーのマイクの表示(オレンジの点)が消えるか。アプリを上にスワイプして終了しても同じか。
+  7. Android 14 以降で、マイクの権限を「今回のみ」にして入室し、裏に回ってもマイクが止められないか。
+
