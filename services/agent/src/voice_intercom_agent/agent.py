@@ -99,6 +99,7 @@ class Utterance:
                     model=settings.translate_model,
                     language=lang,
                     close_timeout_s=settings.translate_close_timeout_s,
+                    tail_silence_s=settings.translate_tail_silence_s,
                     # 混ぜる入力の key は、この発話そのもの
                     on_audio=functools.partial(track.push, self),
                     on_done=functools.partial(track.close, self),

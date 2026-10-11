@@ -7,6 +7,8 @@ PoC(poc/translate_bench.py)で分かった手順に従う。
 - ノイズ低減は無効にする(near_field は小さい声を消した)。
 - 翻訳は、発話が終わったらすぐ session.close を送り、session.closed まで受信を続ける。
   出力は入力が届くのに合わせてしか進まないので、時間を置いてから close すると翻訳音声が捨てられる。
+  close の前に短い無音(tail_silence_s)を送れる。最後の文の翻訳が欠けるのを防ぐ案だが、効果を
+  確かめられず、無音も課金されるので、既定では送らない(設計メモの「Agent の見直し」)。
 - whisper は turn_detection を null にして、発話の終わりに input_audio_buffer.commit を送る。
   gpt-realtime-whisper は自動区切りに対応していない(公式の決まり)。長い発話は、Agent が
   区切り(segmenter.py)を決めて、発話の途中でも commit を送る。
@@ -31,6 +33,9 @@ OUTPUT_SAMPLE_RATE = 48000
 TRANSLATE_URL = "wss://api.openai.com/v1/realtime/translations?model={model}"
 # whisper の接続先は公式に明記がない。PoC で動作を確かめた URL
 WHISPER_URL = "wss://api.openai.com/v1/realtime?intent=transcription"
+
+# 末尾の無音を送る単位(100ms)
+TAIL_SILENCE_CHUNK = b"\x00\x00" * (INPUT_SAMPLE_RATE // 10)
 
 # session.updated を待つ上限
 READY_TIMEOUT_S = 10.0
@@ -176,6 +181,7 @@ class TranslateSession(RealtimeSession):
         model: str,
         language: str,
         close_timeout_s: float,
+        tail_silence_s: float,
         on_audio: Callable[[bytes], None],
         on_done: Callable[[], None],
     ) -> None:
@@ -184,6 +190,9 @@ class TranslateSession(RealtimeSession):
         self._model = model
         self._language = language
         self._close_timeout_s = close_timeout_s
+        self._tail_silence_s = tail_silence_s
+        # 音声を1つでも送ったか(送っていなければ、末尾の無音も送らない)
+        self._appended = False
         self._on_audio = on_audio
         self._on_done_cb = on_done
         self._transcript: list[str] = []
@@ -202,7 +211,16 @@ class TranslateSession(RealtimeSession):
     def _append_type(self) -> str:
         return "session.input_audio_buffer.append"
 
+    def _on_append(self) -> None:
+        self._appended = True
+
     async def _send_end(self, ws: aiohttp.ClientWebSocketResponse) -> None:
+        if self._appended:
+            # 待たずにまとめて送る。PTT を離してから close までを延ばさない
+            chunks = round(self._tail_silence_s * 10)
+            audio = base64.b64encode(TAIL_SILENCE_CHUNK).decode()
+            for _ in range(chunks):
+                await ws.send_json({"type": self._append_type(), "audio": audio})
         await ws.send_json({"type": "session.close"})
 
     def _end_timeout_s(self) -> float:

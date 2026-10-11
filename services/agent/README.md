@@ -32,6 +32,7 @@ PoC で分かったことに従う(`realtime.py` の先頭にまとめてある)
 - セッションは発話ごとに作り直す。使い回すと、前の発話の切れ端が次の発話の頭に混ざる。
 - ミュートの間は OpenAI に音声を送らない(無音も課金される)。
 - 発話が終わったら、すぐ translate に `session.close` を送り、`session.closed` まで受信を続ける(上限は `TRANSLATE_CLOSE_TIMEOUT_S`、既定40秒)。whisper には `input_audio_buffer.commit` を送る。
+- `TRANSLATE_TAIL_SILENCE_S` を 0 より大きくすると、`session.close` の前に、その秒数の無音を translate に待たずにまとめて送る(音声を1つも送っていない発話には送らない)。最後の文の翻訳が欠けるのを防ぐ案だが、96本の試行で欠けが再現せず効果を確かめられなかったので、既定は 0(送らない)。無音も課金され、0.5秒なら5秒の発話の translate の費用が約10%増える(設計メモの「Agent の見直し(2026-10-11)」)。
 - `session.update` を送ったら `session.updated` を待ってから音声を送る。待つ間の音声はためておく。
 - ノイズ低減は無効。入力は 24kHz、翻訳音声の出力は 48kHz。
 
@@ -45,6 +46,7 @@ PoC で分かったことに従う(`realtime.py` の先頭にまとめてある)
   - 書き起こしが文末で終わっていて、無音が `SEGMENT_PAUSE_S`(既定0.4秒)続いたら区切る
   - 文末でなくても、無音が `SEGMENT_LONG_PAUSE_S`(既定1秒)続いたら区切る。書き起こしは音声より1秒ほど遅れるので、息継ぎの時点で文末がまだ届いていないことがある
   - 区切りが `SEGMENT_MAX_S`(既定15秒)より長くなったら、文末でなくても `SEGMENT_PAUSE_S` の無音で区切る
+- 無音は、発話の中の音量からの相対値で決める(`SEGMENT_SILENCE_RATIO`、既定 0.25)。発話の始めからの 10ms ごとの音量のうち、上位 10% を声の大きさ、下位 5% を雑音の床とみなし、床から声までの 25% の位置より小さい音量を無音とみなす。小さい声(声が -50 dBFS より小さい)でも、雑音の多い場所(雑音が -50 dBFS より大きい)でも、息継ぎを見つけられる。発話の始めの1秒と、声と床の差が 6dB に満たないとき(雑音だけ)は、相対値を使わない(前者は固定の `SEGMENT_SILENCE_DBFS`、後者は何も無音とみなさない)。`SEGMENT_SILENCE_RATIO=0` で固定の閾値に戻る。
 - 字幕は区切りごとに別の `segment_id` にする。同じ `segment_id` で確定を何回も出すと、「確定は最後に1回だけ」という取り決めが崩れ、古いアプリでは字幕が壊れる。別の `segment_id` なら、古いアプリは区切りを別々の字幕として表示する。新しいアプリは、`utterance_id` が同じ字幕を `segment_index` の順に並べて、1つの発話として見せられる。
 - whisper の書き起こしのイベントは、commit ごとに作られる会話のアイテムの `item_id` で区切りに対応させる(アイテムは commit の順に作られる)。
 
@@ -145,13 +147,15 @@ PoC で分かったことに従う(`realtime.py` の先頭にまとめてある)
 | `TTS_PREWARM` | `1` | `0` にすると、読み上げのセッションを先に開かない(最初の読み上げで開く) |
 | `TEXT_MAX_CHARS` | `500` | テキスト入力の最大の文字数。超えたものは断る |
 | `TRANSLATE_CLOSE_TIMEOUT_S` | `40` | `session.close` から `session.closed` を待つ上限 |
+| `TRANSLATE_TAIL_SILENCE_S` | `0` | `session.close` の前に translate に送る無音(秒)。`0` なら送らない |
 | `WHISPER_COMMIT_TIMEOUT_S` | `10` | commit から確定を待つ上限 |
 | `SEGMENT_ENABLED` | `1` | `0` にすると字幕を区切らない(PTT を離すまで確定しない) |
 | `SEGMENT_MIN_S` | `4` | 区切りの最短の長さ(秒) |
 | `SEGMENT_PAUSE_S` | `0.4` | 文末の後に、区切るのに要る無音(秒) |
 | `SEGMENT_LONG_PAUSE_S` | `1` | 文末でなくても区切る無音(秒) |
 | `SEGMENT_MAX_S` | `15` | これより長い区切りは、文末でなくても `SEGMENT_PAUSE_S` の無音で区切る(秒) |
-| `SEGMENT_SILENCE_DBFS` | `-50` | これより小さい音量(10ms ごとの RMS)を無音とみなす |
+| `SEGMENT_SILENCE_RATIO` | `0.25` | 無音の相対の閾値。雑音の床から声の大きさまでの、この割合の位置より小さい音量を無音とみなす。`0` なら固定の閾値(`SEGMENT_SILENCE_DBFS`) |
+| `SEGMENT_SILENCE_DBFS` | `-50` | 固定の閾値。これより小さい音量(10ms ごとの RMS)を無音とみなす。相対の閾値では、発話の始めの1秒だけ使う |
 | `API_BASE_URL` | (なし) | 履歴の保存と話し始めの通知で呼ぶ API の URL(例: `https://xxxx.execute-api.ap-northeast-1.amazonaws.com`)。無ければどちらもしない |
 | `AGENT_CLIENT_ID`、`AGENT_CLIENT_SECRET` | (なし) | client credentials の Cognito のクライアント(Agent 用)。無ければ API を呼ばない。模擬 OIDC では何でもよい(`agent` にする) |
 | `OIDC_TOKEN_URL` | (なし) | トークンエンドポイント。無ければ `OIDC_ISSUER` の探索で得る |
@@ -177,7 +181,7 @@ LiveKit サーバーはホスト、Agent と確認用ツール(`devtools/`)は d
    mise run livekit
    ```
 
-   **devContainer の中で動かす場合**: 実機をつながず、Agent と確認用ツールだけで確かめるなら、LiveKit サーバーも devContainer で動かせる(`mise.toml` で入る。arm64 でも動く)。127.0.0.1 だけで待ち受けるので、Agent にも確認用ツールにも `--url ws://localhost:7880` を渡す(`.env` の `LIVEKIT_URL` はホストを指している)。環境変数で上書きするときは、`mise run` や `mise x` を通さない(mise が `.env` の値で上書きし直す)。
+   **devContainer の中で動かす場合**: 実機をつながず、Agent と確認用ツールだけで確かめるなら、LiveKit サーバーも devContainer で動かせる(`mise.toml` で入る。arm64 でも動く)。127.0.0.1 だけで待ち受けるので、Agent にも確認用ツールにも `--url ws://localhost:7880` を渡す(`.env` の `LIVEKIT_URL` はホストを指している)。環境変数で上書きするときは、`mise run` や `mise x` を通さない(mise が `.env` の値で上書きし直す)。同じ devContainer で別の Agent が `start` で動いていると、ヘルスチェックの HTTP のポート(8081)が重なり、後から起動したほうが `address already in use` で止まる。
 
    ```sh
    livekit-server --dev --bind 127.0.0.1 --node-ip 127.0.0.1
@@ -325,12 +329,17 @@ OpenAI の API を使うので課金される(1通で、翻訳が約 0.0001 USD�
    sh services/agent/poc/make_audio.sh
    ```
 
-   `say` は macOS 専用なので、devContainer では `devtools/concat_wav.py` で既にある WAV を無音を挟んでつなぐ(数字の引数が無音の秒数)。つないだ後の無音の区間(`SEGMENT_SILENCE_DBFS` と同じ -50 dBFS 未満)を表示する。FLEURS の英語の録音は多くが -50 dBFS より小さく、全体が無音とみなされるので、音量を表示で確かめて選ぶ。
+   `say` は macOS 専用なので、devContainer では `devtools/concat_wav.py` で既にある WAV を無音を挟んでつなぐ(数字の引数が無音の秒数)。つないだ後の、-50 dBFS 未満の区間(固定の閾値の既定)を表示する。FLEURS の英語の録音は多くが -50 dBFS より小さく、日本語の録音には雑音が -35 dBFS ほどのものがある。無音の閾値を確かめるときは `--room-tone` を付け、挟む無音を、前の WAV の雑音の床と同じ音量のノイズにする(デジタルの無音は、どの閾値でも無音になる)。
 
    ```sh
    a=services/agent/poc/audio
    uv run services/agent/devtools/concat_wav.py -o $a/long-ja-cat.wav \
      $a/ja-01.wav 1.2 $a/ja-03.wav 1.0 $a/ja-02.wav 1.5 $a/fleurs/ja/1544.wav 1.2 $a/ja-05.wav
+   # 小さい声の英語と、雑音の多い日本語(設計メモの「Agent の見直し」で使った音声)
+   uv run services/agent/devtools/concat_wav.py --room-tone -o $a/long-en-quiet-cat.wav \
+     $a/fleurs/en/1539.wav 1.2 $a/fleurs/en/1569.wav 1.0 $a/fleurs/en/1612.wav 1.5 $a/fleurs/en/1542.wav
+   uv run services/agent/devtools/concat_wav.py --room-tone -o $a/long-ja-noisy-cat.wav \
+     $a/fleurs/ja/1539.wav 1.2 $a/fleurs/ja/1567.wav 1.0 $a/fleurs/ja/1577.wav 1.5 $a/fleurs/ja/1636.wav
    ```
 
 2. 上の 1〜3 のとおり、LiveKit サーバー、Agent、聞き手(`--verbose` を付ける)を起動する。
@@ -348,7 +357,7 @@ OpenAI の API を使うので課金される(1通で、翻訳が約 0.0001 USD�
 - whisper の振る舞い: 発話の途中の commit の後も、同じセッションで続きの書き起こしが届くか。断片と確定の `item_id` が区切りと対応しているか(区切りの確定が入れ替わったり、空になったりしないか)。
 - 速さ: 区切りの終わりから、その区切りの訳の確定が出るまでの時間。区切らない場合(PTT を離してから約2秒で訳がそろう)と比べて、最初の訳がどれだけ早く出るか。
 - 訳の質: 区切った訳をつなげたものと、区切らない場合の訳を比べる。主語や目的語が前の区切りにあって、訳が不自然になっていないか。
-- 無音の閾値: 人の声や雑音のある場所で、`SEGMENT_SILENCE_DBFS` が合っているか(雑音で息継ぎが見つからない、小さい声を無音とみなす、など)。
+- 無音の閾値: 人の声や雑音のある場所で、息継ぎが見つかるか(雑音で見つからない、小さい声を無音とみなす、など)。比べるときは `SEGMENT_SILENCE_RATIO=0`(固定の閾値)で起動し直す。
 - 翻訳音声: 区切っても、翻訳音声が途切れず最後まで届くか(保存した WAV)。
 
 ## テスト
