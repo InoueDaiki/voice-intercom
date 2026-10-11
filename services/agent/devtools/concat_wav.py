@@ -8,6 +8,10 @@
       services/agent/poc/audio/ja-01.wav 1.2 services/agent/poc/audio/ja-03.wav 0.5 ...
 
 つないだ後、無音の区間(-50 dBFS 未満が 0.3秒以上)を表示する。区切りの位置の見当に使う。
+
+`--room-tone` を付けると、挟む無音をデジタルの無音(0)ではなく、前の WAV の雑音の床
+(フレームの音量の下位 10%)と同じ音量のホワイトノイズにする。実際の息継ぎには部屋の雑音が
+あるので、無音の閾値を確かめるときに使う。
 """
 
 import argparse
@@ -40,21 +44,36 @@ def silences(pcm: np.ndarray, threshold_dbfs: float, min_s: float) -> list[tuple
     return spans
 
 
+def noise_floor_rms(pcm: np.ndarray) -> float:
+    """フレームの RMS の下位 10%(雑音の床)。"""
+    n = len(pcm) // FRAME * FRAME
+    frames = pcm[:n].astype(np.float64).reshape(-1, FRAME)
+    return float(np.percentile(np.sqrt((frames**2).mean(axis=1)), 10))
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     p.add_argument("-o", "--output", type=Path, required=True)
     p.add_argument("parts", nargs="+", help="WAV のパスか、無音の秒数")
     p.add_argument("--silence-dbfs", type=float, default=-50.0, help="無音とみなす音量")
+    p.add_argument(
+        "--room-tone", action="store_true", help="挟む無音を、前の WAV の雑音の床のノイズにする"
+    )
     args = p.parse_args()
 
+    rng = np.random.default_rng(0)
     chunks: list[np.ndarray] = []
+    floor = 0.0
     for part in args.parts:
         try:
             seconds = float(part)
         except ValueError:
             chunks.append(load_pcm(Path(part), SAMPLE_RATE))
+            floor = noise_floor_rms(chunks[-1])
         else:
-            chunks.append(np.zeros(int(seconds * SAMPLE_RATE), dtype=np.int16))
+            n = int(seconds * SAMPLE_RATE)
+            gap = rng.normal(0, floor, n) if args.room_tone else np.zeros(n)
+            chunks.append(np.clip(gap, -32768, 32767).astype(np.int16))
     pcm = np.concatenate(chunks)
     with wave.open(str(args.output), "wb") as w:
         w.setnchannels(1)

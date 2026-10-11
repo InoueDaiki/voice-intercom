@@ -14,6 +14,13 @@ gpt-realtime-whisper はサーバー側の自動区切り(turn_detection)に対�
 
 書き起こしは音声より1秒ほど遅れて届くので、息継ぎの時点で文末がまだ届いていないことがある。
 そのときは長い無音で区切られる。音声の途中で切ることはない(必ず無音のところで区切る)。
+
+無音の決め方は2つある。固定の閾値(silence_dbfs)と、発話の中の音量からの相対値
+(silence_ratio)。相対値では、発話の始めからのフレームの音量の上位 10% を声の大きさ、下位 5% を
+雑音の床とみなし、床から声までの silence_ratio の位置より小さい音量を無音とみなす。端末や話し方で
+声の大きさが変わっても(小さい声、雑音の多い場所)、息継ぎを見つけられるようにする。
+声の大きさだけからの相対値(声より何 dB 小さいか)は、雑音の多い録音(声と床の差が 15dB ほど)で
+息継ぎを見つけられなかった(設計メモの「Agent の見直し」)。
 """
 
 import math
@@ -26,6 +33,16 @@ SAMPLE_RATE = 24000
 
 # 区切りの中に声がこれだけ無ければ区切らない(ずっと無音か、声が小さすぎて閾値を下回る場合)
 MIN_SPEECH_S = 1.0
+
+# 相対の閾値で、声の大きさと雑音の床とみなすフレームの音量の百分位(上位 10% と下位 5%)
+VOICE_PERCENTILE = 90.0
+FLOOR_PERCENTILE = 5.0
+# 声と床の差がこれより小さければ、声が無い(雑音だけ)とみなし、何も無音とみなさない
+MIN_VOICE_ABOVE_FLOOR_DB = 6.0
+# 相対の閾値を使い始めるのに要る、発話の始めからの長さ。それまでは固定の閾値を使う
+LEVEL_WARMUP_S = 1.0
+# これより小さい音量は、どちらの方式でも無音とみなし、音量の計算にも入れない(デジタルの無音など)
+FLOOR_DBFS = -100.0
 
 # 文末とみなす文字。日本語・中国語の句点、各言語の終止符と疑問符・感嘆符、ヒンディー語のダンダ
 SENTENCE_ENDS = frozenset("。．.?？!！।")
@@ -45,8 +62,10 @@ class SegmentRules:
     long_pause_s: float = 1.0
     # 区切りがこれより長くなったら、文末でなくても pause_s の無音で区切る
     max_s: float = 15.0
-    # これより小さい音量(10ms ほどのフレームの RMS)を無音とみなす
+    # これより小さい音量(10ms ほどのフレームの RMS)を無音とみなす。相対の閾値では使い始める前だけ
     silence_dbfs: float = -50.0
+    # None でなければ相対の閾値にする。雑音の床から声の大きさまでの、この割合の位置を閾値にする
+    silence_ratio: float | None = 0.25
 
 
 def ends_sentence(text: str) -> bool:
@@ -77,11 +96,41 @@ def should_split(
     return pause_s >= rules.pause_s and (ends_sentence(text) or elapsed_s >= rules.max_s)
 
 
+class LevelTracker:
+    """発話の始めからのフレームの音量を 1dB 刻みのヒストグラムにため、百分位を返す。"""
+
+    def __init__(self) -> None:
+        self._bins = np.zeros(int(-FLOOR_DBFS) + 1, dtype=np.int64)
+        self._count = 0
+        self._samples = 0
+
+    def add(self, dbfs: float, samples: int) -> None:
+        self._samples += samples
+        if dbfs < FLOOR_DBFS:
+            return
+        self._bins[min(int(dbfs - FLOOR_DBFS), len(self._bins) - 1)] += 1
+        self._count += 1
+
+    @property
+    def seconds(self) -> float:
+        return self._samples / SAMPLE_RATE
+
+    def percentile(self, q: float) -> float | None:
+        """フレームの音量の百分位(dBFS、1dB 刻み)。音のあるフレームが無ければ None。"""
+        if self._count == 0:
+            return None
+        rank = max(1, math.ceil(self._count * q / 100))
+        index = int(np.searchsorted(np.cumsum(self._bins), rank))
+        return FLOOR_DBFS + index
+
+
 class Segmenter:
     """1つの発話の中の区切りを決める。音声と、今の区切りの書き起こしの断片を順に渡す。"""
 
     def __init__(self, rules: SegmentRules) -> None:
         self._rules = rules
+        # 声の大きさは区切りをまたいで発話の始めから測る(区切りの直後の短い区間でも安定させる)
+        self._level = LevelTracker()
         self._reset()
 
     def _reset(self) -> None:
@@ -102,7 +151,9 @@ class Segmenter:
         """
         samples = len(pcm) // 2
         self._elapsed += samples
-        if frame_dbfs(pcm) < self._rules.silence_dbfs:
+        dbfs = frame_dbfs(pcm)
+        self._level.add(dbfs, samples)
+        if dbfs < self.silence_threshold():
             self._pause += samples
         else:
             self._speech += samples
@@ -117,3 +168,16 @@ class Segmenter:
         if split:
             self._reset()
         return split
+
+    def silence_threshold(self) -> float:
+        """今の無音の閾値(dBFS)。"""
+        ratio = self._rules.silence_ratio
+        if ratio is None or self._level.seconds < LEVEL_WARMUP_S:
+            return self._rules.silence_dbfs
+        voice = self._level.percentile(VOICE_PERCENTILE)
+        floor = self._level.percentile(FLOOR_PERCENTILE)
+        if voice is None or floor is None:
+            return self._rules.silence_dbfs
+        if voice - floor < MIN_VOICE_ABOVE_FLOOR_DB:
+            return FLOOR_DBFS
+        return floor + ratio * (voice - floor)
