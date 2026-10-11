@@ -127,6 +127,7 @@ class _StatusBar extends StatelessWidget {
       status = error ?? '接続中…';
     } else {
       status =
+          '${session.warning == null ? '' : '${session.warning}\n'}'
           '${session.participantCount}人 ・ 翻訳 ${session.agentPresent ? 'あり' : 'なし(Agent がいない)'} ・ '
           '${languageName(session.myLanguage)}で聞く';
     }

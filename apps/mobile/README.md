@@ -96,6 +96,27 @@ flutter analyze
 flutter test
 ```
 
+## 統合テスト
+
+`integration_test/room_flow_test.dart` は、ローカルの環境(API、模擬 OIDC、LiveKit、Agent)につないで、プロフィールの登録、入室、入室直後のテキスト、PTT、英語の話者の字幕、履歴までを、シミュレーター(またはエミュレーター)の上の本物のアプリで通す。ログインだけは、ブラウザを操作できないので、模擬 OIDC のフォームを直接送ってトークンを取る。OpenAI を使うので課金される(1回で数セント)。
+
+1. ルーム `mobile-test`(名前「モバイル確認」、メンバーに `alice`)を作っておく。
+2. devContainer で相手役を待たせる。アプリが入室するのを待ってから、英語の話者として WAV を流す(ルームはアプリのトークンで作らせるため、先には入らない)。
+
+   ```sh
+   mise x -- apps/mobile/integration_test/speak_when_joined.sh
+   ```
+
+3. ホストで実行する。
+
+   ```sh
+   flutter test integration_test/room_flow_test.dart -d <シミュレーターの ID> --dart-define=DEV_HOST=<DEV_HOST>
+   ```
+
+ユーザーとルームの名前は `--dart-define=TEST_USER=...`、`TEST_ROOM_NAME=...` で変えられる。
+
+iOS シミュレーターで、音声を開いた時点で `SetProperty: RPC timeout. Apparently deadlocked. Aborting now.`(CoreAudio)と出てアプリが落ちることがある。iOS の WebRTC は再生だけでもマイクと一緒に開くので、ホスト Mac の音声の環境の影響を受ける。仮想オーディオのドライバー(`/Library/Audio/Plug-Ins/HAL/` の Teams など)が原因になりうる。
+
 ## 実機で確かめること
 
 エミュレーター・シミュレーターでは確かめられないもの。

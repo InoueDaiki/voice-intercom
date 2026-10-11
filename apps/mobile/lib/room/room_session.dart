@@ -19,6 +19,9 @@ class RoomSession extends ChangeNotifier {
     textSender = TextSender(send: _sendText, onChanged: _changed);
   }
 
+  // WebRTC の初期化はアプリで1回だけ
+  static final Future<void> _webrtcReady = LiveKitClient.initialize();
+
   /// 自分の LiveKit identity(Cognito の sub。API がトークンに入れる)
   final String myIdentity;
 
@@ -41,6 +44,9 @@ class RoomSession extends ChangeNotifier {
   bool connected = false;
   String? error;
 
+  /// 入室はできたが、知らせておくこと
+  String? warning;
+
   /// PTT を押しているか(利用者の操作)
   bool pressing = false;
 
@@ -52,11 +58,8 @@ class RoomSession extends ChangeNotifier {
 
   Future<void> connect(String url, String token) async {
     try {
-      // ミュートの切り替えを速く、OS のミュート音を鳴らさずに行う(iOS だけ。設計メモの「PTT の方式」)。
-      // エンジン全体の設定なので、接続の前に1回だけ設定する
-      await AudioManager.instance.setMicrophoneMuteMode(
-        MicrophoneMuteMode.inputMixer,
-      );
+      await _webrtcReady;
+      var muteModeSet = await _setMuteMode();
       final listener = room.createListener();
       _listener = listener;
       listener
@@ -84,12 +87,34 @@ class RoomSession extends ChangeNotifier {
         }
       }
       await _publishMuted();
+      // 接続の前に設定できなかった(エンジンの準備がまだだった)ら、マイクを publish した後に
+      // もう一度試す。それでもだめなら既定のモードのまま使う(ミュート音が鳴るだけで、PTT は動く)
+      muteModeSet = muteModeSet || await _setMuteMode();
+      if (!muteModeSet) {
+        warning = 'ミュートのモードを設定できなかった(OS のミュート音が鳴ることがある)';
+      }
       connected = true;
       _changed();
     } catch (e) {
       error = '入室できなかった: $e';
       _changed();
       rethrow;
+    }
+  }
+
+  /// ミュートの切り替えを速く、OS のミュート音を鳴らさずに行う(iOS だけ。設計メモの「PTT の方式」)。
+  /// エンジン全体の設定なので、接続の前に設定する。WebRTC を初期化してオーディオデバイスの
+  /// モジュールを作ってからでないと「audio device module is unavailable」で失敗する。
+  /// シミュレーターでは接続の前だと、エンジンを作り直せず -1 で失敗することがある。
+  Future<bool> _setMuteMode() async {
+    try {
+      await AudioManager.instance.setMicrophoneMuteMode(
+        MicrophoneMuteMode.inputMixer,
+      );
+      return true;
+    } catch (e) {
+      debugPrint('ミュートのモードを設定できなかった: $e');
+      return false;
     }
   }
 
