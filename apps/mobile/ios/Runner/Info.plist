@@ -38,6 +38,10 @@
 	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>ボタンを押している間の声をルームに届けるために使います</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>ルームに送る写真や動画を選ぶために使います</string>
+	<key>NSCameraUsageDescription</key>
+	<string>ルームに送る写真や動画を撮るために使います</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>開発用のサーバー(同じネットワークの PC)に接続するために使います</string>
 	<!-- 入室中はバックグラウンドでも音声を保つ。オーディオセッションは livekit_client(AudioManager)が持つ -->
