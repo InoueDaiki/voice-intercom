@@ -244,6 +244,12 @@ class RoomSession extends ChangeNotifier {
     }
   }
 
+  /// 送信元が Agent の参加者か。kind は LiveKit サーバーが配る参加者の情報(ParticipantInfo)から
+  /// SDK が入れるもので、送信元の参加者もサーバーが付ける identity で引くので、参加者は偽れない
+  @visibleForTesting
+  static bool isFromAgent(RemoteParticipant? sender) =>
+      sender?.kind == ParticipantKind.AGENT;
+
   /// データチャネルで受け取ったもの(テストでは Room を通さずに渡す)
   @visibleForTesting
   void handleData(DataReceivedEvent e) => _onData(e);
@@ -261,6 +267,13 @@ class RoomSession extends ChangeNotifier {
       return;
     }
     if (e.topic != captionTopic) {
+      return;
+    }
+    // 字幕は Agent だけが送る。参加者は topic を偽れる(canPublishData は topic を限れない)ので、
+    // 送信元が Agent の参加者のものだけを読む。受け手が Agent を知る前(Agent が入ってから約3秒)に
+    // 届いたものは送信元が null で、これも捨てる(設計メモの「字幕の送信元」)
+    if (!isFromAgent(e.participant)) {
+      debugPrint('Agent 以外が送った topic caption を捨てた: ${e.participant?.identity}');
       return;
     }
     final Caption caption;
