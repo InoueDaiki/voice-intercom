@@ -2041,20 +2041,24 @@ name = "voice-intercom-api"
 version = "0.1.0"
 source = { editable = "services/api" }
 dependencies = [
+    { name = "aiohttp" },
     { name = "aws-lambda-powertools" },
     { name = "boto3" },
     { name = "livekit-api" },
     { name = "pydantic" },
     { name = "pyjwt", extra = ["crypto"] },
+    { name = "voice-intercom-schema" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.14.4" },
     { name = "aws-lambda-powertools", specifier = ">=3.35.0" },
     { name = "boto3", specifier = ">=1.43.110" },
     { name = "livekit-api", specifier = ">=1.2.1" },
     { name = "pydantic", specifier = ">=2.13.5" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.15.1" },
+    { name = "voice-intercom-schema", editable = "packages/schema/python" },
 ]
 
 [[package]]

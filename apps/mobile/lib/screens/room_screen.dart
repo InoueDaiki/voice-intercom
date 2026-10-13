@@ -3,12 +3,17 @@ import 'package:voice_intercom_api_client/api.dart';
 
 import '../app_state.dart';
 import '../languages.dart';
+import '../media/api_media_backend.dart';
+import '../media/media_picker.dart';
+import '../media/media_uploader.dart';
 import '../room/caption_board.dart';
+import '../room/media_feed.dart';
 import '../room/room_session.dart';
 import '../room/text_sender.dart';
+import 'media_widgets.dart';
 import 'timeline_screen.dart';
 
-/// ルームの画面。入室、PTT、字幕、テキスト入力。
+/// ルームの画面。入室、PTT、字幕、テキスト入力、画像・動画の送信と表示。
 class RoomScreen extends StatefulWidget {
   const RoomScreen({super.key, required this.state, required this.room});
 
@@ -26,6 +31,12 @@ class RoomScreenState extends State<RoomScreen> {
   @visibleForTesting
   RoomSession get session => _session;
   final _text = TextEditingController();
+  late final ApiMediaBackend _mediaBackend;
+  late final MediaUploader _uploader;
+
+  /// 統合テストで、image_picker を通さずにファイルを送る
+  @visibleForTesting
+  MediaUploader get uploader => _uploader;
 
   @override
   void initState() {
@@ -35,8 +46,82 @@ class RoomScreenState extends State<RoomScreen> {
       myIdentity: profile.userId,
       myLanguage: profile.language.toJson(),
       roomName: widget.room.name,
+      // topic `media` の知らせを、履歴の先頭のページで確かめる
+      fetchRecentTimeline: () async =>
+          (await widget.state.api.listTimeline(widget.room.roomId)).items,
+    )..onReconnected = _loadRecentMedia;
+    _mediaBackend = ApiMediaBackend(widget.state.api);
+    _uploader = MediaUploader(
+      roomId: widget.room.roomId,
+      backend: _mediaBackend,
+      onChanged: () {
+        if (mounted) {
+          setState(() {});
+        }
+      },
+      // complete の応答(履歴の行)ですぐ出す
+      onCompleted: (event) => _session.addMedia([event]),
     );
     _join();
+  }
+
+  /// 履歴の新しい分から画像・動画を読み、ルームの表示に足す(入室とつなぎ直しのとき)。
+  /// データチャネルはつながっている間しか届かないので、その抜けを埋める。
+  Future<void> _loadRecentMedia() async {
+    try {
+      final page = await widget.state.api.listTimeline(widget.room.roomId);
+      if (mounted) {
+        _session.addMedia(page.items);
+      }
+    } catch (e) {
+      // 出せなくても入室は続ける。履歴の画面で見られる
+      debugPrint('履歴の画像・動画を読めなかった: $e');
+    }
+  }
+
+  Future<void> _pickMedia() async {
+    final source = await showModalBottomSheet<MediaPickSource>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('写真・動画を選ぶ'),
+              onTap: () => Navigator.of(context).pop(MediaPickSource.library),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('写真を撮る'),
+              onTap: () => Navigator.of(context).pop(MediaPickSource.photo),
+            ),
+            ListTile(
+              leading: const Icon(Icons.videocam_outlined),
+              title: const Text('動画を撮る'),
+              onTap: () => Navigator.of(context).pop(MediaPickSource.video),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (source == null) {
+      return;
+    }
+    final String? path;
+    try {
+      path = await pickMediaFile(source);
+    } catch (e) {
+      // 権限を断られた、カメラが無いなど
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('選べなかった: $e')));
+      }
+      return;
+    }
+    if (path != null && mounted) {
+      _uploader.submit(path);
+    }
   }
 
   Future<void> _join() async {
@@ -60,11 +145,15 @@ class RoomScreenState extends State<RoomScreen> {
       await _session.connect(token.serverUrl, token.participantToken);
     } catch (_) {
       // エラーは画面に出す(_session.error)
+      return;
     }
+    await _loadRecentMedia();
   }
 
   @override
   void dispose() {
+    _uploader.dispose();
+    _mediaBackend.close();
     _session.dispose();
     _text.dispose();
     super.dispose();
@@ -103,12 +192,18 @@ class RoomScreenState extends State<RoomScreen> {
           child: Column(
             children: [
               _StatusBar(session: _session),
-              Expanded(child: _Captions(session: _session)),
+              Expanded(child: _Feed(session: _session)),
               _PendingTexts(session: _session),
+              OutgoingMediaList(
+                items: _uploader.items,
+                onRetry: _uploader.retry,
+                onDismiss: _uploader.dismiss,
+              ),
               _TextInput(
                 controller: _text,
                 enabled: _session.connected,
                 onSend: _send,
+                onAttach: _pickMedia,
               ),
               _PttButton(session: _session),
             ],
@@ -147,27 +242,40 @@ class _StatusBar extends StatelessWidget {
   }
 }
 
-/// 字幕。区切りごとに、原文と自分の言語の訳を並べる。新しいものが下。
-class _Captions extends StatelessWidget {
-  const _Captions({required this.session});
+/// 字幕と画像・動画を、時刻の順に並べる。新しいものが下。
+/// 字幕は区切りごとに、原文と自分の言語の訳を並べる。
+class _Feed extends StatelessWidget {
+  const _Feed({required this.session});
 
   final RoomSession session;
 
   @override
   Widget build(BuildContext context) {
-    final segments = session.captions.segments.reversed.toList();
-    if (segments.isEmpty) {
+    final entries = mergeRoomFeed(
+      session.captions.segments,
+      session.media.items,
+    ).reversed.toList();
+    if (entries.isEmpty) {
       return const Center(child: Text('字幕はまだない'));
     }
     return ListView.builder(
       reverse: true,
       padding: const EdgeInsets.all(8),
-      itemCount: segments.length,
-      itemBuilder: (context, i) => _CaptionTile(
-        segment: segments[i],
-        speaker: session.displayName(segments[i].speakerIdentity),
-        myLanguage: session.myLanguage,
-      ),
+      itemCount: entries.length,
+      itemBuilder: (context, i) => switch (entries[i]) {
+        CaptionEntry(:final segment) => _CaptionTile(
+          segment: segment,
+          speaker: session.displayName(segment.speakerIdentity),
+          myLanguage: session.myLanguage,
+        ),
+        MediaEntry(:final event) => Align(
+          alignment: Alignment.centerLeft,
+          child: MediaCard(
+            event: event,
+            sender: session.displayName(event.senderId),
+          ),
+        ),
+      },
     );
   }
 }
@@ -258,11 +366,13 @@ class _TextInput extends StatelessWidget {
     required this.controller,
     required this.enabled,
     required this.onSend,
+    required this.onAttach,
   });
 
   final TextEditingController controller;
   final bool enabled;
   final VoidCallback onSend;
+  final VoidCallback onAttach;
 
   @override
   Widget build(BuildContext context) {
@@ -270,6 +380,12 @@ class _TextInput extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Row(
         children: [
+          IconButton(
+            key: const Key('attachMedia'),
+            tooltip: '画像・動画を送る',
+            icon: const Icon(Icons.add_photo_alternate_outlined),
+            onPressed: enabled ? onAttach : null,
+          ),
           Expanded(
             child: TextField(
               key: const Key('textInput'),

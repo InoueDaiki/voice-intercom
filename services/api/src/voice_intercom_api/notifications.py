@@ -20,7 +20,6 @@ Agent が、ルームで誰かが話し始めたのを見つけたら呼ぶ。�
 
 import logging
 import os
-import threading
 import time
 from typing import Annotated
 
@@ -130,31 +129,10 @@ def notify_speaking(
 
 
 def _send_with_timeout(user_ids: list[str], *, title: str, body: str, data: dict[str, str]) -> bool:
-    """send_to_users を別のスレッドで動かし、SEND_TIMEOUT_S 秒まで待つ。
+    """SEND_TIMEOUT_S 秒まで待って送る(notify.send_to_users_within)。
 
-    例外で失敗したら False。待ちきれなかったときは、送信は続いているものとして True を返す
-    (時刻を戻すと、遅れて届いた人にもう一度送ってしまうため)。
+    待ちきれなかったときは True(時刻を戻すと、遅れて届いた人にもう一度送ってしまうため)。
     """
-    error: list[BaseException] = []
-
-    def run() -> None:
-        try:
-            result = notify.send_to_users(user_ids, title=title, body=body, data=data)
-            logger.info(
-                "話し始めの通知を送った: sent=%d failed=%d removed=%d",
-                result.sent,
-                result.failed,
-                result.removed,
-            )
-        except Exception as e:
-            logger.exception("話し始めの通知を送れなかった")
-            error.append(e)
-
-    # daemon にして、待ちきれなかったスレッドが応答を止めないようにする
-    thread = threading.Thread(target=run, daemon=True)
-    thread.start()
-    thread.join(SEND_TIMEOUT_S)
-    if thread.is_alive():
-        logger.warning("話し始めの通知の送信を待ちきれなかった(%s 秒)", SEND_TIMEOUT_S)
-        return True
-    return not error
+    return notify.send_to_users_within(
+        user_ids, title=title, body=body, data=data, timeout_s=SEND_TIMEOUT_S, label="話し始め"
+    )

@@ -91,7 +91,7 @@ export interface paths {
         put?: never;
         /**
          * アップロードした画像・動画を履歴に保存する(アップロードした本人)
-         * @description 本体(とサムネイル)が置かれていなければ 409。2回目からは、最初に保存した履歴を返す。
+         * @description 本体(とサムネイル)が置かれていなければ 409。2回目からは、最初に保存した履歴を返す。保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。
          */
         post: operations["completeMediaUpload"];
         delete?: never;

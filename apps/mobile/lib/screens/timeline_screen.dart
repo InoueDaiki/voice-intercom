@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:voice_intercom_api_client/api.dart';
 
 import '../app_state.dart';
+import 'media_widgets.dart';
 
 /// ルームの履歴(GET /rooms/{room_id}/timeline)。新しい順に出し、「もっと見る」で古いものを読む。
 class TimelineScreen extends StatefulWidget {
@@ -96,27 +97,31 @@ class _TimelineScreenState extends State<TimelineScreen> {
             TimelineEventKindEnum.text => 'テキスト',
             TimelineEventKindEnum.media => '画像・動画',
           };
+          final media = e.media;
+          if (e.kind == TimelineEventKindEnum.media && media != null) {
+            return ListTile(
+              leading: MediaThumbnail(event: e, width: 56, height: 56),
+              title: Text(
+                e.text.isEmpty ? (isVideoMedia(media) ? '動画' : '画像') : e.text,
+              ),
+              subtitle: Text(
+                '${e.senderId == myId ? '自分' : e.senderId} ・ $kind ・ ${formatTime(e.occurredAt)}',
+              ),
+              onTap: () => openMediaViewer(context, e),
+            );
+          }
           return ListTile(
             title: Text(e.text.isEmpty ? '(本文なし)' : e.text),
             subtitle: Text(
               [
                 if (translation != null && translation.isNotEmpty)
                   '[${widget.myLanguage}] $translation',
-                '${e.senderId == myId ? '自分' : e.senderId} ・ $kind ・ ${_time(e.occurredAt)}',
+                '${e.senderId == myId ? '自分' : e.senderId} ・ $kind ・ ${formatTime(e.occurredAt)}',
               ].join('\n'),
             ),
           );
         },
       ),
     );
-  }
-
-  String _time(String iso) {
-    final t = DateTime.tryParse(iso)?.toLocal();
-    if (t == null) {
-      return iso;
-    }
-    String two(int v) => v.toString().padLeft(2, '0');
-    return '${t.month}/${t.day} ${two(t.hour)}:${two(t.minute)}';
   }
 }

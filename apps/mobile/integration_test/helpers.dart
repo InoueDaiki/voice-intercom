@@ -20,6 +20,14 @@ const testRoomName = String.fromEnvironment(
 
 /// 模擬 OIDC のフォームを送ってトークンを取る(ブラウザを使わない)
 class MockOidcAuth extends AuthService {
+  MockOidcAuth({this.user = testUser, this.groups = const []});
+
+  /// ユーザー名(sub になる)
+  final String user;
+
+  /// Cognito のグループ(`admin` で管理者)
+  final List<String> groups;
+
   String? _token;
 
   @override
@@ -44,10 +52,11 @@ class MockOidcAuth extends AuthService {
           )
           ..followRedirects = false
           ..bodyFields = {
-            'username': testUser,
+            'username': user,
             'claims': jsonEncode({
               'token_use': 'access',
               'client_id': AppConfig.oidcClientId,
+              if (groups.isNotEmpty) 'cognito:groups': groups,
             }),
           };
     final res = await http.Client().send(authorize);

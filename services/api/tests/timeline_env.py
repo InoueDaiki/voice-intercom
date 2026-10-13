@@ -1,18 +1,20 @@
-"""履歴とメディアのテストで共通に使うもの(test_timeline.py、test_media.py)。
+"""履歴とメディアのテストで共通に使うもの(test_timeline.py、test_media.py など)。
 
 conftest の tables(moto の中)に、timeline テーブルとメディアのバケットを足す。
 """
 
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import urlencode
 
 import boto3
 import pytest
 from conftest import auth_headers, http_event
+from livekit import api as livekit
 
-from voice_intercom_api import config, media_store, store
+from voice_intercom_api import config, media_broadcast, media_store, store
 from voice_intercom_api.app import handler
 
 TIMELINE_TABLE = "voice-intercom-test-timeline"
@@ -55,6 +57,46 @@ def setup_timeline(monkeypatch: pytest.MonkeyPatch) -> None:
 def teardown_timeline() -> None:
     config.get_timeline_settings.cache_clear()
     media_store._s3.cache_clear()  # pyright: ignore[reportPrivateUsage]
+
+
+class FakeLiveKit:
+    """LiveKit の RoomService(ListParticipants と SendData)の代わり。
+
+    participants は (identity, kind) の並び。kind は ParticipantInfo.Kind の値。
+    """
+
+    def __init__(self) -> None:
+        self.participants: list[tuple[str, int]] = []
+        self.list_error: Exception | None = None
+        self.send_error: Exception | None = None
+        self.listed: list[str] = []
+        self.sent: list[livekit.SendDataRequest] = []
+
+    async def list_participants(
+        self, req: livekit.ListParticipantsRequest
+    ) -> livekit.ListParticipantsResponse:
+        self.listed.append(req.room)
+        if self.list_error is not None:
+            raise self.list_error
+        return livekit.ListParticipantsResponse(
+            participants=[
+                livekit.ParticipantInfo(identity=identity, kind=kind)  # pyright: ignore[reportArgumentType]
+                for identity, kind in self.participants
+            ]
+        )
+
+    async def send_data(self, req: livekit.SendDataRequest) -> livekit.SendDataResponse:
+        if self.send_error is not None:
+            raise self.send_error
+        self.sent.append(req)
+        return livekit.SendDataResponse()
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        @asynccontextmanager
+        async def room_service() -> AsyncIterator[FakeLiveKit]:
+            yield self
+
+        monkeypatch.setattr(media_broadcast, "_room_service", room_service)
 
 
 def call(
