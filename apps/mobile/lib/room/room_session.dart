@@ -29,7 +29,12 @@ class RoomSession extends ChangeNotifier {
     this.backgroundAudio = const BackgroundAudio(),
     Future<List<TimelineEvent>> Function()? fetchRecentTimeline,
   }) {
-    textSender = TextSender(send: _sendText, onChanged: _changed);
+    // Agent を知ってから送る。知る前に Agent が返した字幕は捨てるため(TextSender)
+    textSender = TextSender(
+      send: _sendText,
+      onChanged: _changed,
+      canSend: () => agentPresent,
+    );
     final fetch = fetchRecentTimeline;
     if (fetch != null) {
       mediaReceiver = MediaReceiver(
@@ -104,7 +109,12 @@ class RoomSession extends ChangeNotifier {
           (e) => _maybeSubscribe(e.participant, e.publication),
         )
         ..on<DataReceivedEvent>(_onData)
-        ..on<ParticipantConnectedEvent>((_) => _changed())
+        ..on<ParticipantConnectedEvent>((e) {
+          if (e.participant.kind == ParticipantKind.AGENT) {
+            textSender.resume();
+          }
+          _changed();
+        })
         ..on<ParticipantDisconnectedEvent>((_) => _changed())
         ..on<TrackSubscribedEvent>((_) => _changed())
         ..on<RoomReconnectedEvent>((_) => onReconnected?.call())
@@ -244,6 +254,12 @@ class RoomSession extends ChangeNotifier {
     }
   }
 
+  /// 送信元が Agent の参加者か。kind は LiveKit サーバーが配る参加者の情報(ParticipantInfo)から
+  /// SDK が入れるもので、送信元の参加者もサーバーが付ける identity で引くので、参加者は偽れない
+  @visibleForTesting
+  static bool isFromAgent(RemoteParticipant? sender) =>
+      sender?.kind == ParticipantKind.AGENT;
+
   /// データチャネルで受け取ったもの(テストでは Room を通さずに渡す)
   @visibleForTesting
   void handleData(DataReceivedEvent e) => _onData(e);
@@ -261,6 +277,13 @@ class RoomSession extends ChangeNotifier {
       return;
     }
     if (e.topic != captionTopic) {
+      return;
+    }
+    // 字幕は Agent だけが送る。参加者は topic を偽れる(canPublishData は topic を限れない)ので、
+    // 送信元が Agent の参加者のものだけを読む。受け手が Agent を知る前(Agent が入ってから約3秒)に
+    // 届いたものは送信元が null で、これも捨てる(設計メモの「字幕の送信元」)
+    if (!isFromAgent(e.participant)) {
+      debugPrint('Agent 以外が送った topic caption を捨てた: ${e.participant?.identity}');
       return;
     }
     final Caption caption;

@@ -23,6 +23,8 @@ class OutgoingText {
   OutgoingTextState state = OutgoingTextState.sending;
   int attempts = 0;
   Timer? _timer;
+  // 送る順番は来たが、[TextSender.canSend] が偽で送らずにいる
+  bool _waiting = false;
 }
 
 /// テキスト入力(topic "text" の TextMessage)を送り、届かなければ送り直す。
@@ -32,20 +34,30 @@ class OutgoingText {
 /// すぐに原文の字幕(message_id 付き)を配信するので、自分の message_id の字幕が [ackTimeout] の
 /// うちに届かなければ、同じ message_id で送り直す。Agent は同じ (identity, message_id) を1回だけ
 /// 処理する。
+///
+/// 受け手のアプリは、送信元が Agent の参加者の字幕しか読まない(RoomSession)。Agent が後から
+/// 入ったルームでは、アプリが Agent を知るまでの約3秒に届いた字幕は捨てられ、送り直しも Agent が
+/// 重複として捨てるので、字幕が返ってこない。そこで [canSend] が偽(Agent をまだ知らない)の間は
+/// 送らずに待ち、[resume] で送る。待つ間も送ったものとして数え、上限で諦める(Agent がいない)。
 class TextSender {
   TextSender({
     required this.send,
     required this.onChanged,
     this.ackTimeout = const Duration(seconds: 4),
     this.maxAttempts = 3,
+    bool Function()? canSend,
     String Function()? newMessageId,
-  }) : _newMessageId = newMessageId ?? randomMessageId;
+  }) : canSend = canSend ?? _always,
+       _newMessageId = newMessageId ?? randomMessageId;
 
   /// データチャネルに送る。失敗したら例外を投げる(送り直しの対象になる)
   final Future<void> Function(TextMessage message) send;
   final void Function() onChanged;
   final Duration ackTimeout;
   final int maxAttempts;
+
+  /// 今送ってよいか。偽なら送らずに待つ([resume] で送る)
+  final bool Function() canSend;
   final String Function() _newMessageId;
   final Map<String, OutgoingText> _items = {};
   bool _disposed = false;
@@ -78,6 +90,19 @@ class TextSender {
     onChanged();
   }
 
+  /// [canSend] が真になったら呼ぶ。待っていたものをすぐ送り、そこから [ackTimeout] を数え直す
+  void resume() {
+    if (_disposed || !canSend()) {
+      return;
+    }
+    for (final item in _items.values) {
+      if (item._waiting && item.state == OutgoingTextState.sending) {
+        item._timer?.cancel();
+        _send(item);
+      }
+    }
+  }
+
   void dispose() {
     _disposed = true;
     for (final item in _items.values) {
@@ -89,11 +114,25 @@ class TextSender {
     item.attempts++;
     item.state = OutgoingTextState.sending;
     onChanged();
+    if (canSend()) {
+      _send(item);
+    } else {
+      item._waiting = true;
+      _startTimer(item);
+    }
+  }
+
+  void _send(OutgoingText item) {
+    item._waiting = false;
     // 送信の失敗も、字幕が届かなかったのと同じく時間切れで送り直す
     unawaited(
       send(TextMessage(messageId: item.messageId, text: item.text))
           .catchError((Object _) {}),
     );
+    _startTimer(item);
+  }
+
+  void _startTimer(OutgoingText item) {
     item._timer = Timer(ackTimeout, () {
       if (_disposed || item.state != OutgoingTextState.sending) {
         return;
@@ -107,6 +146,8 @@ class TextSender {
     });
   }
 }
+
+bool _always() => true;
 
 final _random = Random.secure();
 

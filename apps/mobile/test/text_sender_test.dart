@@ -7,9 +7,10 @@ void main() {
   late List<TextMessage> sent;
   late TextSender sender;
 
-  TextSender make({bool failSend = false}) {
+  TextSender make({bool failSend = false, bool Function()? canSend}) {
     var n = 0;
     return TextSender(
+      canSend: canSend,
       send: (m) async {
         sent.add(m);
         if (failSend) {
@@ -71,6 +72,58 @@ void main() {
       sender.submit('はい');
       async.elapse(const Duration(seconds: 4));
       expect(sent, hasLength(2));
+    });
+  });
+
+  test('送ってよくなるまで待ち、resume ですぐ送る', () {
+    fakeAsync((async) {
+      var agentKnown = false;
+      sender = make(canSend: () => agentKnown);
+      final item = sender.submit('はい')!;
+      async.elapse(const Duration(seconds: 3));
+      expect(sent, isEmpty);
+      expect(item.state, OutgoingTextState.sending);
+
+      // まだ送れないうちの resume は何もしない
+      sender.resume();
+      async.flushMicrotasks();
+      expect(sent, isEmpty);
+
+      agentKnown = true;
+      sender.resume();
+      async.flushMicrotasks();
+      expect(sent.single.messageId, 'm1');
+
+      // 待ちの時間切れ(4秒)ではなく、送ったときから数え直す
+      async.elapse(const Duration(seconds: 3));
+      expect(sent, hasLength(1));
+      sender.acknowledge('m1');
+      async.elapse(const Duration(seconds: 20));
+      expect(sent, hasLength(1));
+      expect(item.state, OutgoingTextState.delivered);
+    });
+  });
+
+  test('送ってよくならないまま上限まで待てば諦める', () {
+    fakeAsync((async) {
+      sender = make(canSend: () => false);
+      final item = sender.submit('はい')!;
+      async.elapse(const Duration(seconds: 12));
+      expect(sent, isEmpty);
+      expect(item.state, OutgoingTextState.failed);
+    });
+  });
+
+  test('待っている間の時間切れの後に送れるようになれば、次の回で送る', () {
+    fakeAsync((async) {
+      var agentKnown = false;
+      sender = make(canSend: () => agentKnown);
+      sender.submit('はい');
+      async.elapse(const Duration(seconds: 2));
+      agentKnown = true;
+      // resume を呼ばなくても、時間切れの送り直しで送る
+      async.elapse(const Duration(seconds: 2));
+      expect(sent.single.messageId, 'm1');
     });
   });
 

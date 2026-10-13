@@ -77,8 +77,8 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
 
 - **PTT**: 入室したらマイクのトラックを publish する。publish の前にミュートしておくので、ミュートのまま publish され、音は漏れない。押している間だけミュートを外す。ミュートの操作は1つずつ順に、必ず await する(設計メモの「PTT の方式」)。iOS では接続の前に `AudioManager.instance.setMicrophoneMuteMode(MicrophoneMuteMode.inputMixer)` にし(OS のミュート音が鳴らない)、トラックは `stopAudioCaptureOnMute: false` で作る(ミュートでマイクを止めず、外すのが速い)。Android では `setMicrophoneMuteMode` は何もしない。
 - **聞く**: `autoSubscribe` を切り、Agent 以外の参加者のマイクのトラックと、Agent の `translation-<自分の言語>` だけを購読する。
-- **字幕**: topic `caption` の `Caption` を `(segment_id, language, translated)` ごとに連結し、確定で置き換える(空の確定は消す)。区切り(`segment_id`)ごとに、原文と自分の言語の訳を並べる。話者と同じ言語なら訳は出ない(Agent が作らない)。
-- **テキスト入力**: topic `text` で `TextMessage` を送る。入室の直後(約3秒以内)に送ると、Agent が送信元を知らずに捨てることがある(設計メモの「Agent の結合確認」)。Agent は受け付けるとすぐ原文の字幕を `message_id` 付きで配信するので、自分の `message_id` の字幕が4秒のうちに届かなければ、同じ `message_id` で送り直す(3回まで。だめなら「届かなかった」と出す)。Agent は同じ `(identity, message_id)` を1回だけ処理する。
+- **字幕**: topic `caption` は、送信元が Agent の参加者(`DataReceivedEvent.participant` の `kind` が `AGENT`)のものだけを読み、送信元が無いもの・Agent 以外の参加者のものは捨てる。参加者は topic を偽れるため(トークンの `canPublishData` は topic を限れない。設計メモの「字幕の送信元」)。`Caption` を `(segment_id, language, translated)` ごとに連結し、確定で置き換える(空の確定は消す)。区切り(`segment_id`)ごとに、原文と自分の言語の訳を並べる。話者と同じ言語なら訳は出ない(Agent が作らない)。
+- **テキスト入力**: topic `text` で `TextMessage` を送る。Agent をまだ知らない間は送らずに待ち、Agent が入ったらすぐ送る。Agent が後から入るルームでは、アプリが Agent を知るまでの約3秒に返ってきた字幕を捨ててしまい、送り直しは Agent が重複として捨てるため。入室の直後(約3秒以内)に送ると、Agent が送信元を知らずに捨てることがある(設計メモの「Agent の結合確認」)。Agent は受け付けるとすぐ原文の字幕を `message_id` 付きで配信するので、自分の `message_id` の字幕が4秒のうちに届かなければ、同じ `message_id` で送り直す(3回まで。だめなら「届かなかった」と出す)。Agent は同じ `(identity, message_id)` を1回だけ処理する。
 - **履歴**: `GET /rooms/{room_id}/timeline` を50件ずつ、`next_before` で古いほうへ読む。画像・動画の行はサムネイルを出し、タップで開く。
 - **画像・動画**: 下の「画像・動画」。
 
