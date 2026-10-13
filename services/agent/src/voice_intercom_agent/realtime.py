@@ -27,8 +27,11 @@ logger = logging.getLogger(__name__)
 
 # 入力は 24kHz・PCM16・モノラル
 INPUT_SAMPLE_RATE = 24000
-# 翻訳音声の出力は 48kHz・PCM16・モノラル(公式に記載がなく、PoC の実測で判断)
-OUTPUT_SAMPLE_RATE = 48000
+# 翻訳音声の出力は 24kHz・PCM16・モノラル。公式に記載がなく、セッションの設定でも
+# 指定できない(session.audio.output.format は unknown_parameter になる)。1チャンク
+# 9600 サンプルが、話している間は約0.4秒ごとに届く。48kHz とみなすと2倍速で声が高くなる
+# (設計メモの「翻訳音声のサンプルレート」)
+OUTPUT_SAMPLE_RATE = 24000
 
 TRANSLATE_URL = "wss://api.openai.com/v1/realtime/translations?model={model}"
 # whisper の接続先は公式に明記がない。PoC で動作を確かめた URL

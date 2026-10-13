@@ -4,7 +4,6 @@
 """
 
 import asyncio
-import functools
 import logging
 from collections.abc import Coroutine
 from dataclasses import dataclass
@@ -19,7 +18,7 @@ from .history import HistoryRecorder, create_api_access, create_history, utc_now
 from .languages import participant_language, target_languages
 from .notify import SpeakingNotifier, create_speaking_notifier, present_ids
 from .output import CaptionPublisher, TranslationTracks
-from .realtime import INPUT_SAMPLE_RATE, TranslateSession, WhisperSession
+from .realtime import INPUT_SAMPLE_RATE, OUTPUT_SAMPLE_RATE, TranslateSession, WhisperSession
 from .recording import Recorder, create_recorder
 from .segmenter import Segmenter
 from .speech_realtime import RealtimeSpeech
@@ -91,7 +90,8 @@ class Utterance:
         )
         self._sessions: list[WhisperSession | TranslateSession] = [self._whisper]
         for lang in targets:
-            track = deps.tracks.get(lang)
+            # 混ぜる入力の key は、この発話そのもの。翻訳音声(24kHz)はトラックの 48kHz に直して流す
+            audio = deps.tracks.audio_input(lang, self, OUTPUT_SAMPLE_RATE)
             self._sessions.append(
                 TranslateSession(
                     deps.http,
@@ -100,9 +100,8 @@ class Utterance:
                     language=lang,
                     close_timeout_s=settings.translate_close_timeout_s,
                     tail_silence_s=settings.translate_tail_silence_s,
-                    # 混ぜる入力の key は、この発話そのもの
-                    on_audio=functools.partial(track.push, self),
-                    on_done=functools.partial(track.close, self),
+                    on_audio=audio.push,
+                    on_done=audio.close,
                 )
             )
 
