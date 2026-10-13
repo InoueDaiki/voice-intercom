@@ -3,7 +3,9 @@
 1. アプリ(か管理コンソール)が uploads で署名付き URL をもらい、S3 に本体(とサムネイル)を
    直接 PUT する。
 2. complete を呼ぶと、置かれたことを確かめてから、履歴(kind media)に保存する。
-3. 受け取った側は、履歴の media.url(CloudFront)で表示・再生する。
+3. 保存した後に、今ルームにいる人へデータチャネル(topic "media")で知らせ、いない人には
+   push 通知を送る(media_broadcast.py)。2回目からは、知らせ直すだけで push 通知は送らない。
+4. 受け取った側は、履歴の media.url(CloudFront)で表示・再生する。
 
 complete を呼べるのはアップロードした本人だけ。uploads のときに、アップロードした人を DynamoDB の
 仮の行に書いておき、complete で照らし合わせる(timeline_store.py)。
@@ -30,8 +32,9 @@ from aws_lambda_powertools.event_handler.exceptions import (
 )
 from aws_lambda_powertools.event_handler.openapi.params import Body, Path
 
-from voice_intercom_api import media_store, store, timeline_store
+from voice_intercom_api import media_broadcast, media_store, store, timeline_store
 from voice_intercom_api.auth import CurrentUser
+from voice_intercom_api.models import Room
 from voice_intercom_api.routing import AUTH, ROOM_NOT_FOUND, RoomIdPath, responses, visible_room
 from voice_intercom_api.timeline_models import (
     MAX_MEDIA_BYTES,
@@ -96,7 +99,10 @@ def _conflict(message: str) -> ServiceError:
     "/rooms/<room_id>/media/<media_id>/complete",
     summary="アップロードした画像・動画を履歴に保存する(アップロードした本人)",
     description="本体(とサムネイル)が置かれていなければ 409。"
-    "2回目からは、最初に保存した履歴を返す。",
+    "2回目からは、最初に保存した履歴を返す。"
+    "保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、"
+    "最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。"
+    "配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。",
     operation_id="completeMediaUpload",
     tags=["media"],
     security=AUTH,
@@ -116,14 +122,14 @@ def complete_media_upload(
     body: Annotated[CompleteMediaUploadRequest, Body()],
     user: CurrentUser,
 ) -> TimelineEvent:
-    visible_room(room_id, user)
+    room = visible_room(room_id, user)
     pending = timeline_store.get_pending_upload(room_id, media_id)
     if pending is None:
         raise NotFoundError("アップロードがない")
     if pending.uploader_id != user.sub:
         raise ForbiddenError("アップロードした本人ではない")
     if pending.completed_event_id is not None:
-        return _completed_event(room_id, pending.completed_event_id)
+        return _announce_again(room, _completed_event(room_id, pending.completed_event_id))
 
     original = media_store.head(media_store.media_key(room_id, media_id))
     if original is None:
@@ -142,7 +148,7 @@ def complete_media_upload(
     # 画像に添えた文の言語は、送った人のプロフィールの言語とみなす(翻訳はしない)
     profile = store.get_user(user.sub)
     try:
-        return timeline_store.complete_upload(
+        event = timeline_store.complete_upload(
             pending,
             sender_id=user.sub,
             occurred_at=format_timestamp(datetime.now(UTC)),
@@ -150,7 +156,16 @@ def complete_media_upload(
             text=body.text,
         )
     except timeline_store.AlreadyCompletedError as e:
-        return _completed_event(room_id, e.event_id)
+        # 同時に呼ばれた別の complete が先に保存した。push 通知はそちらが送る
+        return _announce_again(room, _completed_event(room_id, e.event_id))
+    media_broadcast.announce(room, event, profile, first=True)
+    return event
+
+
+def _announce_again(room: Room, event: TimelineEvent) -> TimelineEvent:
+    """2回目からの complete。配信だけをやり直す(push 通知は送らない)。"""
+    media_broadcast.announce(room, event, None, first=False)
+    return event
 
 
 def _completed_event(room_id: str, event_id: str) -> TimelineEvent:

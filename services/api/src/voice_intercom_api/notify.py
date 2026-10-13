@@ -290,3 +290,44 @@ def send_to_users(
         logger.info("FCM が設定されていないので、通知を送らない")
         return SendResult()
     return send_to_devices(device_store.list_devices(user_ids), title=title, body=body, data=data)
+
+
+def send_to_users_within(
+    user_ids: list[str],
+    *,
+    title: str,
+    body: str,
+    data: Mapping[str, str],
+    timeout_s: float,
+    label: str,
+) -> bool:
+    """send_to_users を別のスレッドで動かし、timeout_s 秒まで待つ。
+
+    API の Lambda の timeout(15秒)に収めるために使う。label はログに出す通知の名前。
+    例外で失敗したら False。待ちきれなかったときは、送信は続いているものとして True を返す
+    (呼び出し側が「送れなかった」として扱い直すと、遅れて届いた人にもう一度送ってしまうため)。
+    """
+    error: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            result = send_to_users(user_ids, title=title, body=body, data=data)
+            logger.info(
+                "%sの通知を送った: sent=%d failed=%d removed=%d",
+                label,
+                result.sent,
+                result.failed,
+                result.removed,
+            )
+        except Exception as e:
+            logger.exception("%sの通知を送れなかった", label)
+            error.append(e)
+
+    # daemon にして、待ちきれなかったスレッドが応答を止めないようにする
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(timeout_s)
+    if thread.is_alive():
+        logger.warning("%sの通知の送信を待ちきれなかった(%s 秒)", label, timeout_s)
+        return True
+    return not error

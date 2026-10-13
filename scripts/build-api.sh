@@ -20,6 +20,8 @@ uv pip install --quiet \
   --only-binary :all:
 
 cp -R "$root/services/api/src/voice_intercom_api" "$out/"
+# ワークスペースのパッケージ(proto から生成した型)は export に出ないので、ソースを置く
+cp -R "$root/packages/schema/python/src/voiceintercom" "$out/"
 # 開発用のローカルサーバー(mise run api)は Lambda に要らない
 rm -f "$out/voice_intercom_api/local_server.py"
 find "$out" -name __pycache__ -type d -prune -exec rm -rf {} +

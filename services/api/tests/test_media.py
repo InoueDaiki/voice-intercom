@@ -8,6 +8,7 @@ from timeline_env import (
     AGENT_SCOPE,
     MEDIA_BASE_URL,
     MEDIA_BUCKET,
+    FakeLiveKit,
     Token,
     call,
     setup_timeline,
@@ -20,6 +21,8 @@ from voice_intercom_api import media_store, store, timeline_store
 @pytest.fixture(autouse=True)
 def timeline(tables: None, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     setup_timeline(monkeypatch)
+    # ルームへの配信は test_media_broadcast.py で確かめる。ここでは LiveKit に向かないようにする
+    FakeLiveKit().install(monkeypatch)
     yield
     teardown_timeline()
 
