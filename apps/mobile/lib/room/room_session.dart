@@ -2,17 +2,22 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:livekit_client/livekit_client.dart';
+import 'package:voice_intercom_api_client/api.dart' show TimelineEvent;
 import 'package:voice_intercom_schema/gen/voiceintercom/v1/caption.pb.dart';
 import 'package:voice_intercom_schema/gen/voiceintercom/v1/text.pb.dart';
 
 import 'background_audio.dart';
 import 'caption_board.dart';
+import 'media_feed.dart';
 import 'subscription.dart';
 import 'text_sender.dart';
 
 /// データチャネルの topic(proto/voiceintercom/v1 のコメント)
 const captionTopic = 'caption';
 const textTopic = 'text';
+
+/// 画像・動画の配信(設計メモの「データチャネルの取り決め」)。まだ受けていない
+const mediaTopic = 'media';
 
 /// 1つのルームへの接続。PTT、購読、字幕、テキスト入力を受け持つ。
 class RoomSession extends ChangeNotifier {
@@ -48,6 +53,12 @@ class RoomSession extends ChangeNotifier {
     ),
   );
   final CaptionBoard captions = CaptionBoard();
+
+  /// ルームの画面に出す画像・動画
+  final MediaFeed media = MediaFeed();
+
+  /// つなぎ直したときに呼ぶ(履歴を読み直して、切れていた間の画像・動画を埋める)
+  void Function()? onReconnected;
   late final TextSender textSender;
   EventsListener<RoomEvent>? _listener;
   LocalAudioTrack? _mic;
@@ -82,6 +93,7 @@ class RoomSession extends ChangeNotifier {
         ..on<ParticipantConnectedEvent>((_) => _changed())
         ..on<ParticipantDisconnectedEvent>((_) => _changed())
         ..on<TrackSubscribedEvent>((_) => _changed())
+        ..on<RoomReconnectedEvent>((_) => onReconnected?.call())
         ..on<RoomDisconnectedEvent>((e) {
           connected = false;
           talking = false;
@@ -219,6 +231,9 @@ class RoomSession extends ChangeNotifier {
   }
 
   void _onData(DataReceivedEvent e) {
+    // topic `media`(MediaMessage)はまだ受けない。受けるときは、e.participant が null のもの
+    // (API が Server API から送ったもの)だけを TimelineEvent にして addMedia に渡す
+    // (README の「画像・動画」)
     if (e.topic != captionTopic) {
       return;
     }
@@ -245,6 +260,13 @@ class RoomSession extends ChangeNotifier {
       reliable: true,
       topic: textTopic,
     );
+  }
+
+  /// 画像・動画を足す(complete の応答、履歴)。event_id で重ねない
+  void addMedia(Iterable<TimelineEvent> events) {
+    if (media.addAll(events)) {
+      _changed();
+    }
   }
 
   /// identity から表示名を引く。自分なら「自分」
