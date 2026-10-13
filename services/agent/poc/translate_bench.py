@@ -23,8 +23,10 @@ import numpy as np
 from livekit import rtc
 
 SAMPLE_RATE = 24000
-# 翻訳音声のサンプルレート。公式に記載がなく、実測(200ms ごとに 19200 バイト)で 48kHz と判断した
-OUTPUT_SAMPLE_RATE = 48000
+# 翻訳音声のサンプルレート。公式に記載がない。19200 バイトのチャンクが話している間は
+# 約0.4秒ごとに届き、声の高さと話す速さも入力に合うので 24kHz(2026-10-13 に見直した。
+# 当初は 48kHz と誤って判断していた)
+OUTPUT_SAMPLE_RATE = 24000
 CHUNK_MS = 100
 CHUNK_SAMPLES = SAMPLE_RATE * CHUNK_MS // 1000
 
@@ -406,7 +408,7 @@ async def main() -> None:
     print("初回の字・初回の声は発話の開始から、最後の声・終了は発話の終了からの経過\n")
     print(f"{'セッション':<14}{'初回の字':>8}{'初回の声':>8}{'最後の声':>8}{'終了':>10}{'有声':>8}")
     for s in sessions:
-        voiced_s = sum(1 for e in s.events if e.get("voiced")) * 0.2  # 1チャンク = 200ms(実測)
+        voiced_s = sum(e["bytes"] for e in s.events if e.get("voiced")) / 2 / OUTPUT_SAMPLE_RATE
         row = {
             "first_text_s": rel(s.first_text_ms, speech_start),
             "first_voice_s": rel(s.first_voice_ms, speech_start),
