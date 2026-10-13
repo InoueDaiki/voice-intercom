@@ -307,6 +307,7 @@ class IntercomAgent:
             model=settings.tts_model,
             voice=settings.tts_voice,
             timeout_s=settings.tts_timeout_s,
+            idle_close_s=settings.tts_idle_close_s,
         )
         self._text = TextInput(
             translator,
@@ -319,17 +320,22 @@ class IntercomAgent:
         # アプリの送り直し(入室の直後に捨てられたとき)を1回だけ処理する
         self._recent_texts = RecentMessages()
         room.on("data_received", self._on_data_received)
-        room.on("participant_connected", self._prepare_speech)
-        room.on("participant_attributes_changed", self._prepare_speech)
+        # participant_disconnected は、ルームの参加者から外した後に呼ばれる
+        room.on("participant_connected", self._update_speech)
+        room.on("participant_disconnected", self._update_speech)
+        room.on("participant_attributes_changed", self._update_speech)
 
     def connected(self) -> None:
         """ルームに入った後に呼ぶ。"""
-        self._prepare_speech()
+        self._update_speech()
 
-    def _prepare_speech(self, *_: object) -> None:
-        """ルームにある言語の読み上げのセッションを、先に開いておく。"""
+    def _update_speech(self, *_: object) -> None:
+        """ルームにある言語を読み上げに知らせる。ある言語のセッションは先に開いておき、
+        人がいなくなった言語のセッションは、猶予(TTS_IDLE_CLOSE_S)の後に閉じる。"""
+        languages = {lang for lang in listener_languages(self._room) if lang}
+        self._tts.keep_only(languages)
         if self._deps.settings.tts_prewarm:
-            self._tts.prepare({lang for lang in listener_languages(self._room) if lang})
+            self._tts.prepare(languages)
 
     def _on_data_received(self, packet: rtc.DataPacket) -> None:
         sender = packet.participant
