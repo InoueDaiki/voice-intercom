@@ -9,6 +9,7 @@ import 'package:voice_intercom_schema/gen/voiceintercom/v1/text.pb.dart';
 import 'background_audio.dart';
 import 'caption_board.dart';
 import 'media_feed.dart';
+import 'media_receiver.dart';
 import 'subscription.dart';
 import 'text_sender.dart';
 
@@ -16,7 +17,7 @@ import 'text_sender.dart';
 const captionTopic = 'caption';
 const textTopic = 'text';
 
-/// 画像・動画の配信(設計メモの「データチャネルの取り決め」)。まだ受けていない
+/// 画像・動画の配信(設計メモの「データチャネルの取り決め」)。API が Server API から送る
 const mediaTopic = 'media';
 
 /// 1つのルームへの接続。PTT、購読、字幕、テキスト入力を受け持つ。
@@ -26,8 +27,17 @@ class RoomSession extends ChangeNotifier {
     required this.myLanguage,
     required this.roomName,
     this.backgroundAudio = const BackgroundAudio(),
+    Future<List<TimelineEvent>> Function()? fetchRecentTimeline,
   }) {
     textSender = TextSender(send: _sendText, onChanged: _changed);
+    final fetch = fetchRecentTimeline;
+    if (fetch != null) {
+      mediaReceiver = MediaReceiver(
+        fetchRecent: fetch,
+        onConfirmed: addMedia,
+        isKnown: media.contains,
+      );
+    }
   }
 
   // WebRTC の初期化はアプリで1回だけ
@@ -56,6 +66,10 @@ class RoomSession extends ChangeNotifier {
 
   /// ルームの画面に出す画像・動画
   final MediaFeed media = MediaFeed();
+
+  /// topic `media` の受け手。履歴を読めないとき(fetchRecentTimeline を渡さないとき)は null で、
+  /// topic `media` を捨てる
+  MediaReceiver? mediaReceiver;
 
   /// つなぎ直したときに呼ぶ(履歴を読み直して、切れていた間の画像・動画を埋める)
   void Function()? onReconnected;
@@ -230,10 +244,22 @@ class RoomSession extends ChangeNotifier {
     }
   }
 
+  /// データチャネルで受け取ったもの(テストでは Room を通さずに渡す)
+  @visibleForTesting
+  void handleData(DataReceivedEvent e) => _onData(e);
+
   void _onData(DataReceivedEvent e) {
-    // topic `media`(MediaMessage)はまだ受けない。受けるときは、e.participant が null のもの
-    // (API が Server API から送ったもの)だけを TimelineEvent にして addMedia に渡す
-    // (README の「画像・動画」)
+    if (e.topic == mediaTopic) {
+      // 送信元の参加者があるものは捨て、無いものも履歴で確かめてから出す(MediaReceiver)
+      final result = mediaReceiver?.receive(
+        e.data,
+        fromParticipant: e.participant != null,
+      );
+      if (result == MediaReceiveResult.fromParticipant) {
+        debugPrint('参加者が送った topic media を捨てた: ${e.participant?.identity}');
+      }
+      return;
+    }
     if (e.topic != captionTopic) {
       return;
     }
@@ -302,6 +328,7 @@ class RoomSession extends ChangeNotifier {
     _disposed = true;
     _stopBackground();
     textSender.dispose();
+    mediaReceiver?.dispose();
     unawaited(_listener?.dispose());
     unawaited(room.disconnect().then((_) => room.dispose()));
     super.dispose();

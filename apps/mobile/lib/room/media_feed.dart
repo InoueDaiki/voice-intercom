@@ -8,9 +8,8 @@ import 'caption_board.dart';
 /// 入れ口は3つ(設計メモの「アプリの表示と再生」):
 /// - 自分の送信: complete の応答(履歴の行)
 /// - 抜けを埋める: 入室とつなぎ直しのときに読む `GET /rooms/{room_id}/timeline`
-/// - ルームへの配信: データチャネル(topic `media`)の `MediaMessage`。まだ受けていない。
-///   受けるときは、送信元の参加者があるものを捨て、`MediaMessage` を同じ形の
-///   [TimelineEvent] にして [add] に渡す(README の「画像・動画」)。
+/// - ルームへの配信: データチャネル(topic `media`)の `MediaMessage`。`MediaReceiver` が
+///   履歴で確かめ、履歴の行を渡す(README の「画像・動画」)。
 class MediaFeed {
   MediaFeed({this.maxItems = 200});
 

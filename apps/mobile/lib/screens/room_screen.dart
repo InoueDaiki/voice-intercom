@@ -46,6 +46,9 @@ class RoomScreenState extends State<RoomScreen> {
       myIdentity: profile.userId,
       myLanguage: profile.language.toJson(),
       roomName: widget.room.name,
+      // topic `media` の知らせを、履歴の先頭のページで確かめる
+      fetchRecentTimeline: () async =>
+          (await widget.state.api.listTimeline(widget.room.roomId)).items,
     )..onReconnected = _loadRecentMedia;
     _mediaBackend = ApiMediaBackend(widget.state.api);
     _uploader = MediaUploader(
