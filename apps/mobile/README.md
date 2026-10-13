@@ -2,7 +2,7 @@
 
 Flutter のアプリ(iOS / Android)。ホストで開発する(devContainer には Flutter を入れない)。版は `mise.toml` で固定している。
 
-今あるのは動く最小の骨組み。push 通知、iOS の PushToTalk フレームワークは、まだ入れていない。入室中は、バックグラウンドでも音声を保つ(下の「バックグラウンドでの音声」)。ルームで画像・動画を送れ、ルームの表示と履歴で見られる(下の「画像・動画」)。ルームにいる人へのリアルタイムの配信(topic `media`)は、まだ受けていない。
+今あるのは動く最小の骨組み。push 通知、iOS の PushToTalk フレームワークは、まだ入れていない。入室中は、バックグラウンドでも音声を保つ(下の「バックグラウンドでの音声」)。ルームで画像・動画を送れ、ルームの表示と履歴で見られる。ほかの人が送ったものも、入室中ならデータチャネル(topic `media`)の配信ですぐ出る(下の「画像・動画」)。
 
 ## 動かす
 
@@ -58,6 +58,7 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
 | `lib/room/caption_board.dart` | 字幕の組み立て |
 | `lib/room/text_sender.dart` | テキスト入力の送信と送り直し |
 | `lib/room/media_feed.dart` | ルームの表示に出す画像・動画(`event_id` で重ねない)と、字幕との時刻の順の並べ方 |
+| `lib/room/media_receiver.dart` | topic `media` の `MediaMessage` を受け、履歴で確かめてから表示に渡す |
 | `lib/media/media_picker.dart` | 画像・動画を選ぶ・撮る(`image_picker`) |
 | `lib/media/media_preparer.dart` | 送る形に整える(画像の形式、動画の圧縮、サムネイル) |
 | `lib/media/media_type.dart` | ファイルの形式を先頭のバイトで見分ける |
@@ -109,24 +110,33 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
 
 ルームの表示では、字幕と画像・動画を時刻の順に並べる(字幕は届いた時刻、画像・動画は `occurred_at`)。送信者・時刻・サムネイル(無ければ画像は本体、動画は枠だけ)・添えた文を出し、タップで画像を全画面(つまんで拡大)に、動画を再生(`video_player` に URL をそのまま渡す)にする。一覧ではサムネイルだけを読み、本体はタップしてから読む。
 
-画像・動画は、次の2つから入る(`MediaFeed`。`event_id` で重ねない)。
+画像・動画は、次の3つから入る(`MediaFeed`。`event_id` で重ねない)。
 
 - 自分の送信: complete の応答。
-- 抜けを埋める: 入室したときと、つなぎ直したとき(`RoomReconnectedEvent`)に、`GET /rooms/{room_id}/timeline` の最新の50件を読む。
+- ルームへの配信: API が complete の後に、データチャネルの topic `media` で送る `MediaMessage`(下の「受ける」)。
+- 抜けを埋める: 入室したときと、つなぎ直したとき(`RoomReconnectedEvent`)に、`GET /rooms/{room_id}/timeline` の最新の50件を読む。データチャネルは、つながっている間しか届かないため。
 
-### 残していること(ルームへの配信の受信)
+### 受ける(ルームへの配信)
 
-ルームにいる人へのリアルタイムの配信(API が complete の後に、データチャネルの topic `media` で `MediaMessage` を送る)は、別にサーバー側と proto(`proto/voiceintercom/v1/media.proto`)を作っている。アプリでは、まだ受けていない(今は topic `caption` 以外を捨てる)。今は、ほかの人の画像・動画は、入室し直すか、つなぎ直すか、履歴を開くと見られる。
+`RoomSession._onData` で topic `media` を受け、`MediaReceiver`(`lib/room/media_receiver.dart`)に渡す。
 
-受けるときは、次を足す。
+1. **送信元の参加者がある(`DataReceivedEvent.participant` が null でない)ものは捨てる。** 参加者は topic を偽れるため(設計メモの「B の受け手の決まり」)。
+2. 読めないもの、`event_id` が空のもの、もう表示している・確かめている途中の `event_id` は捨てる。自分の送信(complete の応答で出したもの)と、complete のやり直しで2回目に届いたものは、ここで消える。履歴も読まない。
+3. **残りは「履歴に新しい行がある」という知らせとして扱う。** `GET /rooms/{room_id}/timeline` の先頭のページ(新しい順の50件)を読み、`event_id` の行があれば、その行(`MediaMessage` の中身ではなく)を `addMedia` に渡す。無ければ1秒後と3秒後に読み直し、それでも無ければ捨てる。
+   - 履歴を読むのは同時に1回だけ。読んでいる間に届いたものは、読み終えてから次の1回でまとめて確かめる。確かめ待ちは50件まで。
+   - 読み直すのは、履歴の読み込みが DynamoDB の結果整合の読み取り(`ConsistentRead` を付けていない)で、保存の直後は行がまだ見えないことがあるため。ローカルの DynamoDB Local では、すぐ見える。
+   - 表示は履歴の行なので、`text_truncated` が true でも全文が出る。
 
-1. `mise run gen` の後、`RoomSession._onData`(`lib/room/room_session.dart`)で topic `media`(`mediaTopic`)を受ける。
-2. **送信元の参加者がある(`DataReceivedEvent.participant` が null でない)ものは捨てる。** API が Server API から送ったものだけを受ける(参加者は topic を偽れるため。設計メモの「B の受け手の決まり」)。
-3. `MediaMessage` を、同じ形の `TimelineEvent`(`kind: media`、`media` に `media_id`、`content_type`、`url`、`thumbnail_url`(空なら null)、`size_bytes`)にして `addMedia` に渡す。`event_id` で重ねないので、自分の送信(complete の応答で出したもの)と、complete のやり直しで2回届いたものは消える。
-4. `text_truncated` が true なら、添えた文の続きは履歴で読む(全画面の表示で履歴を引くか、「続きは履歴で」と出す)。
-5. 単体テストは `test/media_feed_test.dart` の重ねない試験に、`MediaMessage` からの変換と、送信元のあるものを捨てる試験を足す。
+**送信元の確かめに履歴を使う理由**(SDK の送信元の identity を使わない理由)。送信元の参加者が null というだけでは、API から来たとは言えない。受け手が新しい参加者を知るまでの約3秒は、参加者が送ったものも null で届く(設計メモの「サーバー側の確認」)。
 
-ほかに残していること:
+- `livekit_client`(2.13.1)では、送信元の identity は内部のイベント(`EngineDataPacketReceivedEvent.identity`)にしか無い。このイベントは `@internal` で、パッケージの公開の API(`livekit_client.dart`)から export されていない。使うには `package:livekit_client/src/...` を直接 import して `room.engine` のイベントを聞くことになり、SDK の版を上げると黙って壊れうる(内部の名前や流れは予告なく変わる)。
+- 履歴で確かめれば、送信元だけでなく中身(URL、送信者、添えた文)も API が保存したものになる。偽った `MediaMessage` は、本物の `event_id` を書いても、表示されるのは履歴の行なので害が無い。偽った `event_id` は履歴に無いので出ない。
+- 費用は、1件につき受け手ごとに1回の GET(100人のルームなら100回)。ルームの表示で待つのは、配信から1回の API 呼び出しの分(ローカルで数ミリ秒〜数十ミリ秒)。
+
+`MediaReceiver` を作るのは、履歴を読む関数を渡したとき(`RoomSession` の `fetchRecentTimeline`。ルームの画面が渡す)だけ。渡さなければ topic `media` を捨てる。
+
+### 残していること
+
 
 - 添えた文の入力。API の `text` は渡せる(`MediaUploader.submit` の `text`)が、画面には入力欄がない。
 - 送信中の取り消し(圧縮・アップロードの途中で止める)。
@@ -164,7 +174,7 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
 
 ## テスト
 
-字幕の組み立て、送り直し、購読の決め方、画像・動画(形式の見分け、サムネイル、PUT、段階ごとのやり直し、重ねない表示、送信中の表示)を単体テストと widget テストにしている。
+字幕の組み立て、送り直し、購読の決め方、画像・動画(形式の見分け、サムネイル、PUT、段階ごとのやり直し、重ねない表示、送信中の表示、配信の受信と履歴での確かめ)を単体テストと widget テストにしている。
 
 ```sh
 flutter analyze
@@ -202,6 +212,12 @@ flutter test
 
 ```sh
 flutter test integration_test/media_upload_test.dart -d <シミュレーターの ID> --dart-define=DEV_HOST=<DEV_HOST>
+```
+
+`integration_test/media_receive_test.dart` は、入室した後に、別の参加者(相手役。`--dart-define=TEST_PEER=...`、既定は `bob`)として API を直接呼んで画像を送り(uploads・PUT・complete。相手役のトークンで `MediaUploader` を使う)、配信で届いた画像が、入り直しも履歴の読み直しもせずにルームの表示に出ること、送信者が相手役であること、complete をやり直しても重ならないこと、タップで全画面に開くことを確かめる。相手役は LiveKit のルームに入らない。相手役がルームのメンバーにいなければ、テストが管理者のトークン(模擬 OIDC の `cognito:groups: ["admin"]`)で足す。Agent は要らない。
+
+```sh
+flutter test integration_test/media_receive_test.dart -d <シミュレーターの ID> --dart-define=DEV_HOST=<DEV_HOST>
 ```
 
 ### バックグラウンドでの音声(Android)
@@ -252,4 +268,5 @@ iOS シミュレーターで、音声を開いた時点で `SetProperty: RPC tim
 6. **失敗とやり直し**: 送信中に機内モードにして「送れなかった」が出るか、戻して「やり直す」で続きから送れるか(圧縮をやり直さない)。
 7. **裏に回したとき**: 圧縮・アップロードの途中でホームに戻ると止まるか(今は裏での続きを考えていない)。
 8. 管理コンソールで、アプリから送った画像・動画が表示・再生できるか。
+9. **配信の受信**: 2台で同じルームに入り、片方が送った画像・動画が、もう片方にすぐ出るか。AWS の dev 環境では履歴の読み込みが結果整合なので、読み直し(1秒後・3秒後)で足りるか(ログに「履歴に無い画像・動画の知らせを捨てた」が出ないか)。管理コンソールから上げたものも出るか。
 
