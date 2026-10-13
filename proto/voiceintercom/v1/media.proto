@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package voiceintercom.v1;
+
+// 画像・動画。API が complete(POST /rooms/{room_id}/media/{media_id}/complete)で履歴に
+// 保存した後に、LiveKit の Server API(RoomService.SendData)からデータチャネル
+// (topic は "media"、reliable)でルームの全員に配信する。
+//
+// 中身は保存した履歴(GET /rooms/{room_id}/timeline の kind が media の行)と同じ。
+// 送信者はメッセージの sender_identity で表す。LiveKit の送信元の参加者は無い(サーバーから送るため)。
+// 受け手は、送信元の参加者があるもの(参加者が送ったもの)を捨てる。参加者は topic を偽れるため。
+// 同じ event_id が2回以上届くことがある(complete のやり直し)。受け手は event_id で重複を捨てる。
+//
+// 項目を足すときは番号を足すだけにする。名前の変更と番号の使い回しはしない(消すときは reserved)。
+message MediaMessage {
+  // 履歴の event_id(`<occurred_at>#<source_id>`)。重複の排除と、履歴との突き合わせに使う
+  string event_id = 1;
+  // 送信者の LiveKit identity(履歴の sender_id。Cognito の sub)
+  string sender_identity = 2;
+  // 保存した時刻。ISO 8601(UTC、ミリ秒まで。例 2026-10-10T00:00:00.000Z)
+  string occurred_at = 3;
+  // uploads が返した media_id
+  string media_id = 4;
+  // MIME タイプ(image/jpeg、image/png、image/webp、image/heic、video/mp4)
+  string content_type = 5;
+  // 表示・再生の URL(CloudFront)
+  string url = 6;
+  // サムネイル(image/jpeg)の URL。なければ空
+  string thumbnail_url = 7;
+  // 本体のバイト数(実際に置かれた大きさ)
+  uint64 size_bytes = 8;
+  // 添えた文。UTF-8 で 4096 バイトを超えるときは先頭だけを入れ(文字の途中では切らない)、
+  // text_truncated を true にする
+  string text = 9;
+  // text が切り詰められていれば true。全文は履歴で読む
+  bool text_truncated = 10;
+  // 添えた文の言語(送信者のプロフィールの言語。BCP 47)。分からなければ空
+  string language = 11;
+}
