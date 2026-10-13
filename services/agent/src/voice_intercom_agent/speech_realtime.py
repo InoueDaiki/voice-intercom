@@ -7,11 +7,14 @@ PoC(poc/text_bench.py の RealtimeTts)で分かった使い方に従う。
 - 言語ごとにセッションを1本持ち、読み上げのたびに会話に残さない応答(response.create に
   conversation: "none" と、文を入れた input)を作る。1本の中では1文ずつ順に読む。
 - 接続と設定に約0.9秒かかるので、prepare() で先に開いておく。切れていたら、次の読み上げで開き直す。
+- ルームにその言語の人がいなくなったら(keep_only() で知らされる)、猶予(idle_close_s)の後に
+  閉じる。猶予の間に戻ってきたら閉じない。読み上げ中なら、終わってから閉じる。
 - 出力は 24kHz・PCM16・モノラル。音声は実時間より速く届く(5秒の音声を約1.2秒で受け取り終える)。
 """
 
 import asyncio
 import base64
+import functools
 import itertools
 import json
 import logging
@@ -137,9 +140,20 @@ class _Session:
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._ids = itertools.count()
 
+    @property
+    def is_open(self) -> bool:
+        return self._ws is not None and not self._ws.closed
+
     async def connect(self) -> None:
         async with self._lock:
             await self._ensure()
+
+    async def close_if(self, unused: Callable[[], bool]) -> None:
+        """読み上げ中・待ちの読み上げが終わるのを待ち、まだ使わないなら閉じる。次の読み上げで開き直す。"""
+        async with self._lock:
+            if self.is_open and unused():
+                await self._drop()
+                logger.info("読み上げのセッションを閉じた(ルームに %s の人がいない)", self.language)
 
     async def speak(self, text: str, on_audio: Callable[[bytes], None]) -> SpeechResult:
         async with self._lock:
@@ -220,7 +234,11 @@ async def _wait_updated(ws: aiohttp.ClientWebSocketResponse) -> None:
 
 
 class RealtimeSpeech:
-    """gpt-realtime-2.1-mini の読み上げ。言語ごとにセッションを1本持つ。"""
+    """gpt-realtime-2.1-mini の読み上げ。言語ごとにセッションを1本持つ。
+
+    idle_close_s は、ルームにその言語の人がいなくなってから閉じるまでの猶予(秒)。出入りが続くと
+    開き直し(約0.9秒)が増えるので、少し待つ。
+    """
 
     sample_rate = SAMPLE_RATE
 
@@ -232,21 +250,28 @@ class RealtimeSpeech:
         model: str,
         voice: str,
         timeout_s: float,
+        idle_close_s: float,
     ) -> None:
         self._http = http
         self._headers = {"Authorization": f"Bearer {api_key}"}
         self._model = model
         self._voice = voice
         self._timeout_s = timeout_s
+        self._idle_close_s = idle_close_s
         self._sessions: dict[str, _Session] = {}
-        self._background: set[asyncio.Task[None]] = set()
+        # ルームにある言語。keep_only() が呼ばれるまでは分からないので、どれも閉じない
+        self._present: set[str] | None = None
+        self._preparing: dict[str, asyncio.Task[None]] = {}
+        self._closing: dict[str, asyncio.Task[None]] = {}
 
     def prepare(self, languages: Iterable[str]) -> None:
         for lang in languages:
-            if lang not in self._sessions:
-                task = asyncio.create_task(self._prepare(self._session(lang)))
-                self._background.add(task)
-                task.add_done_callback(self._background.discard)
+            session = self._session(lang)
+            if session.is_open or lang in self._preparing:
+                continue
+            task = asyncio.create_task(self._prepare(session))
+            self._preparing[lang] = task
+            task.add_done_callback(functools.partial(_forget, self._preparing, lang))
 
     async def _prepare(self, session: _Session) -> None:
         try:
@@ -255,10 +280,42 @@ class RealtimeSpeech:
             # 次の読み上げで開き直す
             logger.exception("読み上げのセッション(%s)を先に開けなかった", session.language)
 
+    def keep_only(self, languages: Iterable[str]) -> None:
+        self._present = set(languages)
+        for lang in self._present:
+            if task := self._closing.pop(lang, None):
+                task.cancel()
+        for lang in self._sessions:
+            if lang not in self._present:
+                self._schedule_close(lang)
+
+    def _unused(self, language: str) -> bool:
+        return self._present is not None and language not in self._present
+
+    def _schedule_close(self, language: str) -> None:
+        task = self._closing.get(language)
+        if task is not None and not task.done():
+            return
+        task = asyncio.create_task(self._close_later(self._sessions[language]))
+        self._closing[language] = task
+        task.add_done_callback(functools.partial(_forget, self._closing, language))
+
+    async def _close_later(self, session: _Session) -> None:
+        await asyncio.sleep(self._idle_close_s)
+        try:
+            await session.close_if(lambda: self._unused(session.language))
+        except Exception:
+            logger.exception("読み上げのセッション(%s)を閉じられなかった", session.language)
+
     async def speak(
         self, text: str, language: str, on_audio: Callable[[bytes], None]
     ) -> SpeechResult:
-        return await self._session(language).speak(text, on_audio)
+        try:
+            return await self._session(language).speak(text, on_audio)
+        finally:
+            # いなくなった言語の読み上げ(受け取った時点ではいた人の分)で開き直したら、また閉じる
+            if self._unused(language):
+                self._schedule_close(language)
 
     def _session(self, language: str) -> _Session:
         session = self._sessions.get(language)
@@ -274,7 +331,14 @@ class RealtimeSpeech:
         return session
 
     async def aclose(self) -> None:
-        for task in list(self._background):
+        tasks = [*self._preparing.values(), *self._closing.values()]
+        for task in tasks:
             task.cancel()
-        await asyncio.gather(*self._background, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
         await asyncio.gather(*(s.aclose() for s in self._sessions.values()))
+
+
+def _forget(tasks: dict[str, asyncio.Task[None]], key: str, task: asyncio.Task[None]) -> None:
+    """終わったタスクを外す。同じ言語の新しいタスクに入れ替わっていたら、そのままにする。"""
+    if tasks.get(key) is task:
+        del tasks[key]

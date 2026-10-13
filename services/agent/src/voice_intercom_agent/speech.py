@@ -34,6 +34,11 @@ class TextToSpeech(Protocol):
         """これらの言語の読み上げを、先に準備しておく(接続を開くなど)。待たずに戻る。"""
         ...
 
+    def keep_only(self, languages: Iterable[str]) -> None:
+        """ルームにある言語を知らせる。ほかの言語の準備は片付けてよい(猶予や読み上げ中の扱いは
+        実装が決める)。片付けた言語も、speak() が呼ばれれば読み上げる。待たずに戻る。"""
+        ...
+
     async def speak(
         self, text: str, language: str, on_audio: Callable[[bytes], None]
     ) -> SpeechResult:

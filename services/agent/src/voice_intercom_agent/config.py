@@ -29,6 +29,8 @@ class Settings:
     tts_timeout_s: float
     # ルームにある言語の読み上げのセッションを、先に開いておくか(接続と設定に約0.9秒かかる)
     tts_prewarm: bool
+    # ルームにその言語の人がいなくなってから、読み上げのセッションを閉じるまでの猶予(秒)
+    tts_idle_close_s: float
     # テキスト入力の最大の文字数。超えたものは断る
     text_max_chars: int
 
@@ -50,6 +52,7 @@ class Settings:
             tts_voice=os.environ.get("TTS_VOICE", "marin"),
             tts_timeout_s=float(os.environ.get("TTS_TIMEOUT_S", "30")),
             tts_prewarm=os.environ.get("TTS_PREWARM", "1") != "0",
+            tts_idle_close_s=float(os.environ.get("TTS_IDLE_CLOSE_S", "60")),
             text_max_chars=int(os.environ.get("TEXT_MAX_CHARS", "500")),
         )
 

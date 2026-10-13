@@ -127,6 +127,9 @@ class FakeTts:
     def prepare(self, languages: Iterable[str]) -> None:
         pass
 
+    def keep_only(self, languages: Iterable[str]) -> None:
+        pass
+
     async def speak(
         self, text: str, language: str, on_audio: Callable[[bytes], None]
     ) -> SpeechResult:
