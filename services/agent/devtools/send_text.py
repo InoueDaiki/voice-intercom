@@ -1,7 +1,8 @@
 """送信者としてルームに入り、テキスト入力(TextMessage)を送る。
 
 アプリと同じく、データチャネル(topic "text"、reliable)で送る。送信者と言語は、この参加者の
-identity と属性 language から Agent が取る。Agent が配信する字幕(Caption)も表示する。
+identity と属性 language から Agent が取る。Agent が配信する字幕(Caption)と、送信者だけに届く
+受け付け・結果(TextStatus)も表示する。
 
 使い方は services/agent/README.md を参照する。
 """
@@ -14,9 +15,10 @@ from common import add_connection_args, make_token
 from livekit import rtc
 
 from voice_intercom_agent.captions import CAPTION_TOPIC
-from voice_intercom_agent.text_input import TEXT_TOPIC
+from voice_intercom_agent.text_input import TEXT_STATUS_TOPIC, TEXT_TOPIC
 from voiceintercom.v1.caption_pb2 import Caption
 from voiceintercom.v1.text_pb2 import TextMessage
+from voiceintercom.v1.text_status_pb2 import TextStatus
 
 
 async def main() -> None:
@@ -31,6 +33,18 @@ async def main() -> None:
 
     @room.on("data_received")
     def _(packet: rtc.DataPacket) -> None:
+        if packet.topic == TEXT_STATUS_TOPIC:
+            status = TextStatus.FromString(packet.data)
+            state = TextStatus.State.Name(status.state).removeprefix("STATE_")
+            detail: list[str] = []
+            if status.reason:
+                detail.append(TextStatus.Reason.Name(status.reason).removeprefix("REASON_"))
+            if status.untranslated_languages:
+                detail.append("訳せなかった " + ",".join(status.untranslated_languages))
+            if status.unspoken_languages:
+                detail.append("読み上げられなかった " + ",".join(status.unspoken_languages))
+            print(f"  状態 {state} {' '.join(detail)}  [{status.message_id[:8]}]")
+            return
         if packet.topic != CAPTION_TOPIC:
             return
         caption = Caption.FromString(packet.data)

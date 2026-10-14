@@ -2,16 +2,23 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:voice_intercom_schema/gen/voiceintercom/v1/text.pb.dart';
+import 'package:voice_intercom_schema/gen/voiceintercom/v1/text_status.pb.dart';
 
 /// 送ったテキストの状態。
 enum OutgoingTextState {
   /// 自分の message_id の字幕を待っている
   sending,
 
-  /// 自分の message_id の字幕が届いた(Agent が受け付けた)
+  /// Agent が受け付けた(TextStatus の ACCEPTED か COMPLETED、または自分の message_id の字幕が届いた)
   delivered,
 
-  /// 送り直しても字幕が届かなかった
+  /// Agent が断った(長すぎる、など。TextStatus の REJECTED)
+  rejected,
+
+  /// 受け付けたが、翻訳か読み上げの一部に失敗した(TextStatus の FAILED)
+  processingFailed,
+
+  /// 送り直しても字幕も TextStatus も届かなかった
   failed,
 }
 
@@ -22,6 +29,14 @@ class OutgoingText {
   final String text;
   OutgoingTextState state = OutgoingTextState.sending;
   int attempts = 0;
+
+  /// 最後に届いた TextStatus(TextStatus を送らない古い Agent なら null のまま)
+  TextStatus? status;
+
+  /// Agent が受け付けて(ACCEPTED)、まだ結果(COMPLETED か FAILED)が届いていない
+  bool get processing =>
+      state == OutgoingTextState.delivered &&
+      status?.state == TextStatus_State.STATE_ACCEPTED;
   Timer? _timer;
   // 送る順番は来たが、[TextSender.canSend] が偽で送らずにいる
   bool _waiting = false;
@@ -39,6 +54,11 @@ class OutgoingText {
 /// 入ったルームでは、アプリが Agent を知るまでの約3秒に届いた字幕は捨てられ、送り直しも Agent が
 /// 重複として捨てるので、字幕が返ってこない。そこで [canSend] が偽(Agent をまだ知らない)の間は
 /// 送らずに待ち、[resume] で送る。待つ間も送ったものとして数え、上限で諦める(Agent がいない)。
+///
+/// Agent は受け付け・断り・結果を TextStatus(topic "text_status")で送信者だけに送る([applyStatus])。
+/// 字幕と TextStatus のどちらが届いても送り直しを止める(TextStatus を送らない古い Agent でも止まる)。
+/// 送り直しが Agent に届けば、Agent は処理をやり直さずに字幕と TextStatus を送り直すので、最初の
+/// 字幕を捨てていても止まる。
 class TextSender {
   TextSender({
     required this.send,
@@ -82,11 +102,58 @@ class TextSender {
   /// 自分の送ったテキストの字幕が届いたら呼ぶ
   void acknowledge(String messageId) {
     final item = _items[messageId];
-    if (item == null || item.state == OutgoingTextState.delivered) {
+    if (item == null) {
+      return;
+    }
+    _settle(item, OutgoingTextState.delivered);
+  }
+
+  /// Agent から自分の送ったテキストの TextStatus が届いたら呼ぶ
+  void applyStatus(TextStatus status) {
+    final item = _items[status.messageId];
+    if (item == null) {
+      return;
+    }
+    final next = switch (status.state) {
+      TextStatus_State.STATE_ACCEPTED ||
+      TextStatus_State.STATE_COMPLETED => OutgoingTextState.delivered,
+      TextStatus_State.STATE_REJECTED => OutgoingTextState.rejected,
+      TextStatus_State.STATE_FAILED => OutgoingTextState.processingFailed,
+      _ => null,
+    };
+    if (next == null) {
+      return;
+    }
+    // 結果が出た後に、送り直しへの ACCEPTED が遅れて届いても戻さない
+    final settled =
+        item.state == OutgoingTextState.rejected ||
+        item.state == OutgoingTextState.processingFailed ||
+        _isFinal(item.status);
+    if (settled && !_isFinal(status)) {
+      return;
+    }
+    item.status = status;
+    _settle(item, next, force: true);
+  }
+
+  static bool _isFinal(TextStatus? s) =>
+      s != null && s.state != TextStatus_State.STATE_ACCEPTED;
+
+  void _settle(
+    OutgoingText item,
+    OutgoingTextState next, {
+    bool force = false,
+  }) {
+    // 断られた・失敗したものは、字幕が届いても「届いた」に戻さない
+    final keep =
+        item.state == OutgoingTextState.rejected ||
+        item.state == OutgoingTextState.processingFailed;
+    if (!force && (keep || item.state == next)) {
       return;
     }
     item._timer?.cancel();
-    item.state = OutgoingTextState.delivered;
+    item._waiting = false;
+    item.state = next;
     onChanged();
   }
 
@@ -158,4 +225,43 @@ String randomMessageId() {
     buffer.write(_random.nextInt(256).toRadixString(16).padLeft(2, '0'));
   }
   return buffer.toString();
+}
+
+/// 送ったテキストの状態の表示。表示しないもの(届いて処理を終えた)は null
+String? outgoingTextLabel(OutgoingText t) {
+  switch (t.state) {
+    case OutgoingTextState.sending:
+      return '送信中(${t.attempts}回目)';
+    case OutgoingTextState.delivered:
+      // 結果を待っている間だけ出す。結果を送らない古い Agent では、字幕が届いたら消す
+      return t.processing ? '届いた' : null;
+    case OutgoingTextState.rejected:
+      return '断られた(${_rejectReason(t.status)})';
+    case OutgoingTextState.processingFailed:
+      return '失敗した(${_failure(t.status)})';
+    case OutgoingTextState.failed:
+      return '届かなかった';
+  }
+}
+
+String _rejectReason(TextStatus? s) {
+  switch (s?.reason) {
+    case TextStatus_Reason.REASON_EMPTY:
+      return '空のテキスト';
+    case TextStatus_Reason.REASON_TOO_LONG:
+      final max = s?.maxChars ?? 0;
+      return max > 0 ? '長すぎる。$max文字まで' : '長すぎる';
+    default:
+      return '理由不明';
+  }
+}
+
+String _failure(TextStatus? s) {
+  final parts = [
+    if (s != null && s.untranslatedLanguages.isNotEmpty)
+      '訳せなかった: ${s.untranslatedLanguages.join(', ')}',
+    if (s != null && s.unspokenLanguages.isNotEmpty)
+      '読み上げられなかった: ${s.unspokenLanguages.join(', ')}',
+  ];
+  return parts.isEmpty ? '理由不明' : parts.join('、');
 }

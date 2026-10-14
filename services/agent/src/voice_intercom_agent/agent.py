@@ -23,7 +23,7 @@ from .recording import Recorder, create_recorder
 from .segmenter import Segmenter
 from .speech_realtime import RealtimeSpeech
 from .talk_gate import Action, TalkGate
-from .text_input import TEXT_TOPIC, RecentMessages, TextInput, parse_text_message
+from .text_input import TEXT_TOPIC, TextInput, parse_text_message
 from .text_translation import TextTranslator
 
 logger = logging.getLogger(__name__)
@@ -100,6 +100,7 @@ class Utterance:
                     language=lang,
                     close_timeout_s=settings.translate_close_timeout_s,
                     tail_silence_s=settings.translate_tail_silence_s,
+                    trim_tail=settings.translate_trim_tail,
                     on_audio=audio.push,
                     on_done=audio.close,
                 )
@@ -315,9 +316,9 @@ class IntercomAgent:
             self._deps.tracks.speech_input,
             max_chars=settings.text_max_chars,
             history=self._deps.history,
+            # 受け付け・結果と、送り直しへの字幕は、送信者だけに送る
+            replies=self._deps.captions,
         )
-        # アプリの送り直し(入室の直後に捨てられたとき)を1回だけ処理する
-        self._recent_texts = RecentMessages()
         room.on("data_received", self._on_data_received)
         # participant_disconnected は、ルームの参加者から外した後に呼ばれる
         room.on("participant_connected", self._update_speech)
@@ -350,9 +351,8 @@ class IntercomAgent:
         if message is None:
             logger.warning("テキストを読めなかった: %s", sender.identity)
             return
-        if self._recent_texts.is_duplicate(sender.identity, message.message_id):
-            logger.info("送り直されたテキストを捨てた: %s %s", sender.identity, message.message_id)
-            return
+        # 同じ (identity, message_id) の送り直しには、TextInput が処理をやり直さずに
+        # 字幕と状態を送り直す
         # 送信者と言語は、メッセージではなく送信元の参加者から取る(なりすましを防ぐ)
         listeners = [
             participant_language(p.attributes)

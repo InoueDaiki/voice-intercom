@@ -18,6 +18,7 @@ from voice_intercom_agent.text_input import (
 from voice_intercom_agent.text_translation import message_input, translations_schema
 from voiceintercom.v1.caption_pb2 import Caption
 from voiceintercom.v1.text_pb2 import TextMessage
+from voiceintercom.v1.text_status_pb2 import TextStatus
 
 # --- 判断のロジック ---
 
@@ -52,28 +53,29 @@ def test_parse_text_message() -> None:
     assert parse_text_message(b"\xff\xff\xff") is None
 
 
-def test_recent_messages_drops_resent_message() -> None:
+def test_recent_messages_remembers_processed_messages() -> None:
     now = [0.0]
-    recent = RecentMessages(ttl_s=10, max_size=3, clock=lambda: now[0])
+    recent: RecentMessages[str] = RecentMessages(ttl_s=10, max_size=3, clock=lambda: now[0])
 
-    assert not recent.is_duplicate("a", "m1")
-    assert recent.is_duplicate("a", "m1")
+    assert recent.get("a", "m1") is None
+    recent.add("a", "m1", "記録")
+    assert recent.get("a", "m1") == "記録"
     # 送信者が違えば別のメッセージ(message_id はアプリが振るので重なりうる)
-    assert not recent.is_duplicate("b", "m1")
-    # message_id が空なら見分けられない
-    assert not recent.is_duplicate("a", "")
-    assert not recent.is_duplicate("a", "")
+    assert recent.get("b", "m1") is None
+    # message_id が空なら見分けられないので覚えない
+    recent.add("a", "", "空")
+    assert recent.get("a", "") is None
     # ttl を過ぎたら忘れる
     now[0] = 10.0
-    assert not recent.is_duplicate("a", "m1")
+    assert recent.get("a", "m1") is None
 
 
 def test_recent_messages_forgets_oldest_over_max_size() -> None:
-    recent = RecentMessages(ttl_s=100, max_size=2, clock=lambda: 0.0)
-    for m in ["m1", "m2", "m3"]:
-        assert not recent.is_duplicate("a", m)
-    assert recent.is_duplicate("a", "m3")
-    assert not recent.is_duplicate("a", "m1")
+    recent: RecentMessages[int] = RecentMessages(ttl_s=100, max_size=2, clock=lambda: 0.0)
+    for i, m in enumerate(["m1", "m2", "m3"]):
+        recent.add("a", m, i)
+    assert recent.get("a", "m3") == 2
+    assert recent.get("a", "m1") is None
 
 
 def test_translation_schema_and_input() -> None:
@@ -96,6 +98,27 @@ class FakeCaptions:
     def send(self, caption: Caption | None) -> None:
         if caption is not None:
             self.sent.append(caption)
+
+
+class FakeReplies:
+    """送信者だけに宛てて送ったもの。"""
+
+    def __init__(self) -> None:
+        self.captions: list[tuple[str, Caption]] = []
+        self.statuses: list[tuple[str, TextStatus]] = []
+        # 字幕と状態を送った順
+        self.order: list[str] = []
+
+    def send_to(self, identity: str, caption: Caption) -> None:
+        self.captions.append((identity, caption))
+        self.order.append("caption")
+
+    def send_status(self, identity: str, status: TextStatus) -> None:
+        self.statuses.append((identity, status))
+        self.order.append(TextStatus.State.Name(status.state))
+
+    def states(self) -> list[str]:
+        return [TextStatus.State.Name(s.state) for _, s in self.statuses]
 
 
 class FakeSink:
@@ -197,6 +220,7 @@ class Harness:
         self.tts = tts or FakeTts()
         self.captions = FakeCaptions()
         self.history = FakeHistory()
+        self.replies = FakeReplies()
         self.audio: list[tuple[str, str, bytes | None]] = []
         self.opened: list[tuple[str, int]] = []
         self.text = TextInput(
@@ -206,6 +230,7 @@ class Harness:
             self._open,
             max_chars=100,
             history=self.history,
+            replies=self.replies,
             now=lambda: NOW,
         )
 
@@ -369,3 +394,109 @@ def test_history_is_not_called_for_dropped_text() -> None:
     h.handle("ja", ["en"], "   ")
     assert h.history.originals == []
     assert h.history.translations == []
+
+
+# --- 送信者への受け付け・結果の通知と、送り直し ---
+
+
+def test_status_accepted_then_completed_to_the_sender_only() -> None:
+    h = Harness(FakeTranslator({"en": "Yes."}))
+    h.handle("ja", ["ja", "en"], "はい")
+    assert [(i, s.message_id) for i, s in h.replies.statuses] == [("alice", "m1"), ("alice", "m1")]
+    assert h.replies.states() == ["STATE_ACCEPTED", "STATE_COMPLETED"]
+    # 最初の処理では、字幕はルームに配信するだけで、送信者には別に送らない
+    assert h.replies.captions == []
+
+
+def test_rejected_text_reports_reason() -> None:
+    h = Harness(FakeTranslator({"en": "x"}))
+    h.handle("ja", ["en"], "   ", mid="empty")
+    h.handle("ja", ["en"], "あ" * 101, mid="long")
+    (_, empty), (_, long) = h.replies.statuses
+    assert (empty.state, empty.reason, empty.max_chars) == (
+        TextStatus.STATE_REJECTED,
+        TextStatus.REASON_EMPTY,
+        0,
+    )
+    assert (long.state, long.reason, long.max_chars) == (
+        TextStatus.STATE_REJECTED,
+        TextStatus.REASON_TOO_LONG,
+        100,
+    )
+
+
+def test_failed_translation_and_speech_are_reported() -> None:
+    tts = FakeTts()
+    tts.fail.add("ja")
+    h = Harness(FakeTranslator({"en": "Yes.", "ko": "네."}, fail_after=1), tts)
+    h.handle("ja", ["ja", "en", "ko"], "はい")
+    assert h.replies.states() == ["STATE_ACCEPTED", "STATE_FAILED"]
+    final = h.replies.statuses[-1][1]
+    assert list(final.untranslated_languages) == ["ko"]
+    assert list(final.unspoken_languages) == ["ja"]
+
+
+def test_no_status_without_message_id() -> None:
+    h = Harness(FakeTranslator({"en": "Yes."}))
+    h.handle("ja", ["en"], "はい", mid="")
+    assert h.replies.statuses == []
+    # message_id が空のものは見分けられないので、2回目も処理する
+    h.handle("ja", ["en"], "はい", mid="")
+    assert h.translator.calls == [("はい", "ja", ["en"])] * 2
+
+
+def test_resent_message_gets_captions_and_status_again_without_reprocessing() -> None:
+    h = Harness(FakeTranslator({"en": "Yes.", "ko": "네."}))
+    h.handle("ja", ["ja", "en", "ko"], "はい")
+    broadcast = list(h.captions.sent)
+    h.handle("ja", ["ja", "en", "ko"], "はい")
+
+    # 翻訳と読み上げはやり直さず、ルームにも配信し直さない
+    assert len(h.translator.calls) == 1
+    assert len(h.tts.calls) == 3
+    assert h.captions.sent == broadcast
+    assert len(h.history.originals) == 1
+    # 配信した字幕(原文と訳)を、同じ segment_id のまま送信者にだけ送り直し、最後に状態を送る
+    assert [(i, c) for i, c in h.replies.captions] == [("alice", c) for c in broadcast]
+    assert h.replies.order[-4:] == ["caption", "caption", "caption", "STATE_COMPLETED"]
+
+
+def test_resent_rejected_message_gets_rejected_again() -> None:
+    h = Harness(FakeTranslator({}))
+    h.handle("ja", ["en"], "あ" * 101)
+    h.handle("ja", ["en"], "あ" * 101)
+    assert h.replies.states() == ["STATE_REJECTED", "STATE_REJECTED"]
+    assert h.replies.captions == []
+
+
+def test_resent_while_processing_gets_what_is_ready() -> None:
+    async def run() -> None:
+        gate = asyncio.Event()
+        h = Harness(FakeTranslator({"en": "Yes."}, wait_for=gate))
+        first = asyncio.create_task(
+            h.text.handle("alice", "ja", ["en"], TextMessage(message_id="m", text="はい"))
+        )
+        await asyncio.sleep(0)
+        # 訳を待っている間に送り直された: 原文の字幕と ACCEPTED を送り直す
+        await h.text.handle("alice", "ja", ["en"], TextMessage(message_id="m", text="はい"))
+        assert [c.translated for _, c in h.replies.captions] == [False]
+        assert h.replies.states() == ["STATE_ACCEPTED", "STATE_ACCEPTED"]
+        gate.set()
+        await first
+        # 残りの訳はルームに配信し、結果も送る
+        assert [c.translated for c in h.captions.sent] == [False, True]
+        assert h.replies.states()[-1] == "STATE_COMPLETED"
+        assert len(h.translator.calls) == 1
+
+    asyncio.run(run())
+
+
+def test_resend_from_another_sender_is_a_new_message() -> None:
+    async def run() -> None:
+        h = Harness(FakeTranslator({"en": "Yes."}))
+        await h.text.handle("alice", "ja", ["en"], TextMessage(message_id="m", text="はい"))
+        await h.text.handle("bob", "ja", ["en"], TextMessage(message_id="m", text="はい"))
+        assert len(h.translator.calls) == 2
+        assert {i for i, _ in h.replies.statuses} == {"alice", "bob"}
+
+    asyncio.run(run())

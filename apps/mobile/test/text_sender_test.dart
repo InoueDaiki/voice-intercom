@@ -2,6 +2,7 @@ import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:voice_intercom/room/text_sender.dart';
 import 'package:voice_intercom_schema/gen/voiceintercom/v1/text.pb.dart';
+import 'package:voice_intercom_schema/gen/voiceintercom/v1/text_status.pb.dart';
 
 void main() {
   late List<TextMessage> sent;
@@ -141,6 +142,114 @@ void main() {
       sender = make();
       sender.acknowledge('other');
       expect(sender.items, isEmpty);
+    });
+  });
+
+  TextStatus status(
+    TextStatus_State state, {
+    String id = 'm1',
+    TextStatus_Reason? reason,
+    int maxChars = 0,
+    List<String> untranslated = const [],
+    List<String> unspoken = const [],
+  }) => TextStatus(
+    messageId: id,
+    state: state,
+    reason: reason,
+    maxChars: maxChars,
+    untranslatedLanguages: untranslated,
+    unspokenLanguages: unspoken,
+  );
+
+  test('ACCEPTED で送り直しを止め、結果が届くまで「届いた」と出す', () {
+    fakeAsync((async) {
+      sender = make();
+      final item = sender.submit('はい')!;
+      expect(outgoingTextLabel(item), '送信中(1回目)');
+      sender.applyStatus(status(TextStatus_State.STATE_ACCEPTED));
+      async.elapse(const Duration(seconds: 20));
+      expect(sent, hasLength(1));
+      expect(item.state, OutgoingTextState.delivered);
+      expect(outgoingTextLabel(item), '届いた');
+      // 字幕が届いても、結果が届くまでは出したまま
+      sender.acknowledge('m1');
+      expect(outgoingTextLabel(item), '届いた');
+
+      sender.applyStatus(status(TextStatus_State.STATE_COMPLETED));
+      expect(item.state, OutgoingTextState.delivered);
+      expect(outgoingTextLabel(item), isNull);
+    });
+  });
+
+  test('TextStatus を送らない Agent では、字幕が届いたら表示から消す', () {
+    fakeAsync((async) {
+      sender = make();
+      final item = sender.submit('はい')!;
+      sender.acknowledge('m1');
+      expect(outgoingTextLabel(item), isNull);
+    });
+  });
+
+  test('断られたら送り直さず、理由を出す', () {
+    fakeAsync((async) {
+      sender = make();
+      final item = sender.submit('長い')!;
+      sender.applyStatus(
+        status(
+          TextStatus_State.STATE_REJECTED,
+          reason: TextStatus_Reason.REASON_TOO_LONG,
+          maxChars: 500,
+        ),
+      );
+      async.elapse(const Duration(seconds: 20));
+      expect(sent, hasLength(1));
+      expect(item.state, OutgoingTextState.rejected);
+      expect(outgoingTextLabel(item), '断られた(長すぎる。500文字まで)');
+      // 送り直しへの応答が遅れて届いても戻さない
+      sender.acknowledge('m1');
+      sender.applyStatus(status(TextStatus_State.STATE_ACCEPTED));
+      expect(item.state, OutgoingTextState.rejected);
+    });
+  });
+
+  test('翻訳や読み上げに失敗したら「失敗した」と言語を出す', () {
+    fakeAsync((async) {
+      sender = make();
+      final item = sender.submit('はい')!;
+      sender.applyStatus(status(TextStatus_State.STATE_ACCEPTED));
+      sender.applyStatus(
+        status(
+          TextStatus_State.STATE_FAILED,
+          untranslated: ['ko'],
+          unspoken: ['en', 'ja'],
+        ),
+      );
+      expect(item.state, OutgoingTextState.processingFailed);
+      expect(outgoingTextLabel(item), '失敗した(訳せなかった: ko、読み上げられなかった: en, ja)');
+      // 送り直しへの ACCEPTED が後から届いても戻さない
+      sender.applyStatus(status(TextStatus_State.STATE_ACCEPTED));
+      expect(item.state, OutgoingTextState.processingFailed);
+    });
+  });
+
+  test('「届かなかった」の後に結果が届けば、それに直す', () {
+    fakeAsync((async) {
+      sender = make();
+      final item = sender.submit('はい')!;
+      async.elapse(const Duration(seconds: 12));
+      expect(outgoingTextLabel(item), '届かなかった');
+      sender.applyStatus(status(TextStatus_State.STATE_COMPLETED));
+      expect(item.state, OutgoingTextState.delivered);
+      expect(outgoingTextLabel(item), isNull);
+    });
+  });
+
+  test('知らない message_id の TextStatus は無視する', () {
+    fakeAsync((async) {
+      sender = make();
+      final item = sender.submit('はい')!;
+      sender.applyStatus(status(TextStatus_State.STATE_REJECTED, id: 'other'));
+      expect(item.state, OutgoingTextState.sending);
     });
   });
 
