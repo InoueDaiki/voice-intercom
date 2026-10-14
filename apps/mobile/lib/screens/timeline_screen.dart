@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:voice_intercom_api_client/api.dart';
 
 import '../app_state.dart';
+import 'deletion_widgets.dart';
 import 'media_widgets.dart';
 
 /// ルームの履歴(GET /rooms/{room_id}/timeline)。新しい順に出し、「もっと見る」で古いものを読む。
+/// 消した行は「削除された…」と出す。自分の送ったテキストと画像・動画は、長押しで消せる。
 class TimelineScreen extends StatefulWidget {
   const TimelineScreen({
     super.key,
@@ -61,6 +63,34 @@ class _TimelineScreenState extends State<TimelineScreen> {
     }
   }
 
+  /// 自分の送ったテキストか画像・動画を消し、行を墓石に置き換える
+  Future<void> _delete(int index) async {
+    final event = _items[index];
+    if (!await confirmDeletion(context, deletionWhat(event))) {
+      return;
+    }
+    try {
+      final tombstone = await widget.state.api.deleteTimelineEvent(
+        widget.room.roomId,
+        event.eventId,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        final i = _items.indexWhere((e) => e.eventId == tombstone.eventId);
+        if (i >= 0) {
+          _items[i] = tombstone;
+        }
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('消せなかった: $e')));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final myId = widget.state.profile?.userId;
@@ -98,6 +128,17 @@ class _TimelineScreenState extends State<TimelineScreen> {
             TimelineEventKindEnum.media => '画像・動画',
           };
           final media = e.media;
+          final who = e.senderId == myId ? '自分' : e.senderId;
+          if (e.deleted != null) {
+            return ListTile(
+              key: Key('event-${e.eventId}'),
+              title: DeletedText(deletedLabel(e)),
+              subtitle: Text('$who ・ $kind ・ ${formatTime(e.occurredAt)}'),
+            );
+          }
+          final deletable =
+              e.senderId == myId && e.kind != TimelineEventKindEnum.utterance;
+          final onLongPress = deletable ? () => _delete(i) : null;
           if (e.kind == TimelineEventKindEnum.media && media != null) {
             return ListTile(
               leading: MediaThumbnail(event: e, width: 56, height: 56),
@@ -108,9 +149,12 @@ class _TimelineScreenState extends State<TimelineScreen> {
                 '${e.senderId == myId ? '自分' : e.senderId} ・ $kind ・ ${formatTime(e.occurredAt)}',
               ),
               onTap: () => openMediaViewer(context, e),
+              onLongPress: onLongPress,
             );
           }
           return ListTile(
+            key: Key('event-${e.eventId}'),
+            onLongPress: onLongPress,
             title: Text(e.text.isEmpty ? '(本文なし)' : e.text),
             subtitle: Text(
               [

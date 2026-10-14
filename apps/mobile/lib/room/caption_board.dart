@@ -37,9 +37,19 @@ class CaptionSegment {
 
   bool get isText => messageId.isNotEmpty;
 
+  /// 送った本人が消したテキスト。本文と訳は捨て、「削除されたテキスト」と出す
+  bool deleted = false;
+
   bool get isEmpty =>
+      !deleted &&
       (original?.text.isEmpty ?? true) &&
       translations.values.every((t) => t.text.isEmpty);
+
+  void _delete() {
+    deleted = true;
+    original = null;
+    translations.clear();
+  }
 }
 
 /// データチャネル(topic "caption")で届く Caption を、表示する字幕にまとめる。
@@ -56,16 +66,34 @@ class CaptionBoard {
   final DateTime Function() _now;
   final Map<String, CaptionSegment> _segments = {};
 
+  // 消したテキスト(送信者の identity と message_id)。後から届いた字幕(訳の途中など)で
+  // 消したものを戻さないために持つ
+  final Set<(String, String)> _deleted = {};
+
   /// 届いた順の区切り。空になったもの(確定が空)は除く
   List<CaptionSegment> get segments =>
       _segments.values.where((s) => !s.isEmpty).toList(growable: false);
+
+  /// テキスト入力を消したことにする(履歴で確かめた墓石から呼ぶ)。表示している字幕は
+  /// 「削除されたテキスト」になり、この後に届く字幕も本文を出さない。音声の字幕には使わない
+  void markTextDeleted(String senderIdentity, String messageId) {
+    if (messageId.isEmpty) {
+      return;
+    }
+    _deleted.add((senderIdentity, messageId));
+    for (final s in _segments.values) {
+      if (s.speakerIdentity == senderIdentity && s.messageId == messageId) {
+        s._delete();
+      }
+    }
+  }
 
   void apply(Caption caption) {
     if (caption.segmentId.isEmpty) {
       return;
     }
     final segment = _segments.putIfAbsent(caption.segmentId, () {
-      return CaptionSegment(
+      final created = CaptionSegment(
         segmentId: caption.segmentId,
         speakerIdentity: caption.speakerIdentity,
         utteranceId: caption.utteranceId,
@@ -73,7 +101,15 @@ class CaptionBoard {
         messageId: caption.messageId,
         receivedAt: _now(),
       );
+      if (caption.messageId.isNotEmpty &&
+          _deleted.contains((caption.speakerIdentity, caption.messageId))) {
+        created._delete();
+      }
+      return created;
     });
+    if (segment.deleted) {
+      return;
+    }
     final CaptionText? current;
     if (caption.translated) {
       current = segment.translations[caption.language];

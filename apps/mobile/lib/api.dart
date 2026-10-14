@@ -66,6 +66,30 @@ class Api {
     return res ?? TimelinePage(items: [], nextBefore: null);
   });
 
+  /// 履歴の1件(強い整合の読み取り)。無ければ null。消した行は deleted が付く
+  Future<TimelineEvent?> getTimelineEvent(String roomId, String eventId) =>
+      _call((c) async {
+        try {
+          return await TimelineApi(c).getTimelineEvent(roomId, eventId);
+        } on ApiException catch (e) {
+          if (e.code == 404) {
+            return null;
+          }
+          rethrow;
+        }
+      });
+
+  /// 自分の送ったテキスト入力か画像・動画を消す。墓石(deleted の付いた行)を返す。
+  /// 2回目も同じ墓石を返す。他人のものや音声の発話は 403 の [ApiException]
+  Future<TimelineEvent> deleteTimelineEvent(String roomId, String eventId) =>
+      _call((c) async {
+        final res = await TimelineApi(c).deleteTimelineEvent(roomId, eventId);
+        if (res == null) {
+          throw ApiException(500, '削除の応答が空');
+        }
+        return res;
+      });
+
   /// 画像・動画を PUT する署名付き URL
   Future<MediaUpload> createMediaUpload(
     String roomId,

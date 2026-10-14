@@ -10,6 +10,7 @@ import '../room/caption_board.dart';
 import '../room/media_feed.dart';
 import '../room/room_session.dart';
 import '../room/text_sender.dart';
+import 'deletion_widgets.dart';
 import 'media_widgets.dart';
 import 'timeline_screen.dart';
 
@@ -49,6 +50,11 @@ class RoomScreenState extends State<RoomScreen> {
       // topic `media` の知らせを、履歴の先頭のページで確かめる
       fetchRecentTimeline: () async =>
           (await widget.state.api.listTimeline(widget.room.roomId)).items,
+      // topic `deletion` の知らせを、1件の取得で確かめる
+      fetchTimelineEvent: (eventId) =>
+          widget.state.api.getTimelineEvent(widget.room.roomId, eventId),
+      deleteTimelineEvent: (eventId) =>
+          widget.state.api.deleteTimelineEvent(widget.room.roomId, eventId),
     )..onReconnected = _loadRecentMedia;
     _mediaBackend = ApiMediaBackend(widget.state.api);
     _uploader = MediaUploader(
@@ -67,11 +73,12 @@ class RoomScreenState extends State<RoomScreen> {
 
   /// 履歴の新しい分から画像・動画を読み、ルームの表示に足す(入室とつなぎ直しのとき)。
   /// データチャネルはつながっている間しか届かないので、その抜けを埋める。
+  /// 消された行(墓石)も反映する(切れていた間に消されたテキスト・画像・動画)。
   Future<void> _loadRecentMedia() async {
     try {
       final page = await widget.state.api.listTimeline(widget.room.roomId);
       if (mounted) {
-        _session.addMedia(page.items);
+        _session.applyTimeline(page.items);
       }
     } catch (e) {
       // 出せなくても入室は続ける。履歴の画面で見られる
@@ -159,6 +166,39 @@ class RoomScreenState extends State<RoomScreen> {
     super.dispose();
   }
 
+  void _showError(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
+    }
+  }
+
+  /// 自分の送ったテキストを消す(長押しのメニューと確認の後)
+  Future<void> _deleteCaption(CaptionSegment segment) async {
+    if (!await confirmDeletion(context, 'テキスト')) {
+      return;
+    }
+    try {
+      await _session.deleteOwnText(segment);
+    } on NotSavedYetException {
+      _showError('まだ履歴に保存されていないので消せなかった。少し待ってからやり直す');
+    } catch (e) {
+      _showError('消せなかった: $e');
+    }
+  }
+
+  /// 自分の送った画像・動画を消す
+  Future<void> _deleteMedia(TimelineEvent event) async {
+    if (!await confirmDeletion(context, deletionWhat(event))) {
+      return;
+    }
+    try {
+      await _session.deleteOwnMedia(event);
+    } catch (e) {
+      _showError('消せなかった: $e');
+    }
+  }
+
   void _send() {
     if (_session.textSender.submit(_text.text) != null) {
       _text.clear();
@@ -192,7 +232,13 @@ class RoomScreenState extends State<RoomScreen> {
           child: Column(
             children: [
               _StatusBar(session: _session),
-              Expanded(child: _Feed(session: _session)),
+              Expanded(
+                child: _Feed(
+                  session: _session,
+                  onDeleteCaption: _deleteCaption,
+                  onDeleteMedia: _deleteMedia,
+                ),
+              ),
               _PendingTexts(session: _session),
               OutgoingMediaList(
                 items: _uploader.items,
@@ -245,9 +291,15 @@ class _StatusBar extends StatelessWidget {
 /// 字幕と画像・動画を、時刻の順に並べる。新しいものが下。
 /// 字幕は区切りごとに、原文と自分の言語の訳を並べる。
 class _Feed extends StatelessWidget {
-  const _Feed({required this.session});
+  const _Feed({
+    required this.session,
+    required this.onDeleteCaption,
+    required this.onDeleteMedia,
+  });
 
   final RoomSession session;
+  final void Function(CaptionSegment segment) onDeleteCaption;
+  final void Function(TimelineEvent event) onDeleteMedia;
 
   @override
   Widget build(BuildContext context) {
@@ -263,16 +315,43 @@ class _Feed extends StatelessWidget {
       padding: const EdgeInsets.all(8),
       itemCount: entries.length,
       itemBuilder: (context, i) => switch (entries[i]) {
-        CaptionEntry(:final segment) => _CaptionTile(
-          segment: segment,
-          speaker: session.displayName(segment.speakerIdentity),
-          myLanguage: session.myLanguage,
+        CaptionEntry(:final segment) when segment.deleted => Align(
+          alignment: Alignment.centerLeft,
+          child: DeletedCard(
+            header: '${session.displayName(segment.speakerIdentity)}(テキスト)',
+            label: deletedTextLabel,
+          ),
+        ),
+        CaptionEntry(:final segment) => GestureDetector(
+          key: Key('caption-${segment.segmentId}'),
+          // 長押しで消す(自分の送ったテキストだけ)
+          onLongPress: session.canDeleteCaption(segment)
+              ? () => onDeleteCaption(segment)
+              : null,
+          child: _CaptionTile(
+            segment: segment,
+            speaker: session.displayName(segment.speakerIdentity),
+            myLanguage: session.myLanguage,
+          ),
+        ),
+        MediaEntry(:final event) when event.deleted != null => Align(
+          alignment: Alignment.centerLeft,
+          child: DeletedCard(
+            header:
+                '${session.displayName(event.senderId)} ・ ${formatTime(event.occurredAt)}',
+            label: deletedLabel(event),
+          ),
         ),
         MediaEntry(:final event) => Align(
           alignment: Alignment.centerLeft,
-          child: MediaCard(
-            event: event,
-            sender: session.displayName(event.senderId),
+          child: GestureDetector(
+            onLongPress: session.canDeleteMedia(event)
+                ? () => onDeleteMedia(event)
+                : null,
+            child: MediaCard(
+              event: event,
+              sender: session.displayName(event.senderId),
+            ),
           ),
         ),
       },
