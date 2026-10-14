@@ -677,7 +677,7 @@
           "notifications"
         ],
         "summary": "誰かが話し始めたことを、ルームにいないメンバーに push 通知する(Agent)",
-        "description": "ルームのメンバーから、話者と present_ids を除いた人に送る。同じルーム × 同じ受け手には、間隔(既定 600 秒)に1回まで。送信に失敗しても 500 にはせず、sent を 0 にして返す。",
+        "description": "ルームのメンバーから、話者と present_ids を除いた人に送る。同じルーム × 同じ受け手には、間隔(既定 300 秒。テキスト・画像・動画の通知と共通)に1回まで。送信に失敗しても 500 にはせず、sent を 0 にして返す。",
         "operationId": "notifySpeaking",
         "parameters": [
           {
@@ -719,7 +719,98 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SpeakingNotificationResult"
+                  "$ref": "#/components/schemas/NotificationResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ルームがない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/rooms/{room_id}/notifications/text": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "テキスト入力が届いたことを、ルームにいないメンバーに push 通知する(Agent)",
+        "description": "ルームのメンバーから、送信者と present_ids を除いた人に送る。本文は「<表示名>さん: <テキストの先頭>」。同じルーム × 同じ受け手には、間隔(既定 300 秒。話し始め・画像・動画の通知と共通)に1回まで。送信に失敗しても 500 にはせず、sent を 0 にして返す。",
+        "operationId": "notifyText",
+        "parameters": [
+          {
+            "description": "ルームの ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Room Id",
+              "description": "ルームの ID"
+            },
+            "name": "room_id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TextNotificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationResult"
                 }
               }
             }
@@ -1513,6 +1604,26 @@
         ],
         "title": "MediaUpload"
       },
+      "NotificationResult": {
+        "properties": {
+          "sent": {
+            "type": "integer",
+            "title": "Sent",
+            "description": "送った人数"
+          },
+          "skipped": {
+            "type": "integer",
+            "title": "Skipped",
+            "description": "前回の通知から間隔がたっていないので、送らなかった人数"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sent",
+          "skipped"
+        ],
+        "title": "NotificationResult"
+      },
       "PutTimelineEventRequest": {
         "properties": {
           "kind": {
@@ -1764,25 +1875,39 @@
         ],
         "title": "SpeakingNotificationRequest"
       },
-      "SpeakingNotificationResult": {
+      "TextNotificationRequest": {
         "properties": {
-          "sent": {
-            "type": "integer",
-            "title": "Sent",
-            "description": "送った人数"
+          "sender_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Sender Id",
+            "description": "送信者の user_id(sub)"
           },
-          "skipped": {
-            "type": "integer",
-            "title": "Skipped",
-            "description": "前回の通知から間隔がたっていないので、送らなかった人数"
+          "present_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "title": "Present Ids",
+            "description": "今ルームに入っている人の user_id(sub)。この人たちには送らない",
+            "default": []
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Text",
+            "description": "送られたテキスト(本文には先頭だけを入れる)"
           }
         },
         "type": "object",
         "required": [
-          "sent",
-          "skipped"
+          "sender_id",
+          "text"
         ],
-        "title": "SpeakingNotificationResult"
+        "title": "TextNotificationRequest"
       },
       "TimelineEvent": {
         "properties": {

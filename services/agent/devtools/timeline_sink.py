@@ -1,7 +1,7 @@
 """Agent が呼ぶ API の代わりに、受けた内容を表示する。
 
 - 履歴の保存(PUT /rooms/{room_id}/timeline/{source_id})
-- 話し始めの通知(POST /rooms/{room_id}/notifications/speaking)
+- 話し始めとテキストの通知(POST /rooms/{room_id}/notifications/speaking、…/text)
 
 API がなくても、Agent が履歴を保存する流れ(トークン、そろったら1回、再送)と、話し始めの
 通知の流れ(間引き、やり直し)を確かめるのに使う。
@@ -62,11 +62,12 @@ def main() -> None:
         event_id = f"{body.get('occurred_at')}#{source_id}"
         return web.json_response({"room_id": room_id, "event_id": event_id, **body})
 
-    async def speaking(request: web.Request) -> web.Response:
+    async def notification(request: web.Request) -> web.Response:
         room_id = request.match_info["room_id"]
+        kind = request.match_info["kind"]
         body = await request.json()
         claims = token_claims(request.headers.get("Authorization", ""))
-        print(f"POST {room_id} / notifications/speaking")
+        print(f"POST {room_id} / notifications/{kind}")
         print(f"  token: client_id={claims.get('client_id')} scope={claims.get('scope')}")
         print("  " + json.dumps(body, ensure_ascii=False, indent=2).replace("\n", "\n  "))
         if status := fail_status():
@@ -77,7 +78,7 @@ def main() -> None:
 
     app = web.Application()
     app.router.add_put("/rooms/{room_id}/timeline/{source_id}", put)
-    app.router.add_post("/rooms/{room_id}/notifications/speaking", speaking)
+    app.router.add_post("/rooms/{room_id}/notifications/{kind}", notification)
     web.run_app(app, port=args.port)
 
 

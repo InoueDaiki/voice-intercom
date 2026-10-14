@@ -199,6 +199,7 @@ class Harness:
         self.history = FakeHistory()
         self.audio: list[tuple[str, str, bytes | None]] = []
         self.opened: list[tuple[str, int]] = []
+        self.accepted: list[tuple[str, str]] = []
         self.text = TextInput(
             translator,
             self.tts,
@@ -206,6 +207,7 @@ class Harness:
             self._open,
             max_chars=100,
             history=self.history,
+            on_accepted=lambda sender, text: self.accepted.append((sender, text)),
             now=lambda: NOW,
         )
 
@@ -288,6 +290,14 @@ def test_empty_or_too_long_text_is_dropped() -> None:
     h.handle("ja", ["en"], "あ" * 101)
     assert h.captions.sent == []
     assert h.tts.calls == []
+    # 断ったテキストは push 通知も頼まない
+    assert h.accepted == []
+
+
+def test_accepted_text_is_reported_for_push() -> None:
+    h = Harness(FakeTranslator({"en": "Yes."}))
+    h.handle("ja", ["en"], " はい。 ")
+    assert h.accepted == [("alice", "はい。")]
 
 
 def test_translation_failure_keeps_languages_already_done(

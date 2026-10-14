@@ -201,6 +201,8 @@ class ApiClient {
           return LiveKitTokenResponse.fromJson(value);
         case 'MediaUpload':
           return MediaUpload.fromJson(value);
+        case 'NotificationResult':
+          return NotificationResult.fromJson(value);
         case 'PutTimelineEventRequest':
           return PutTimelineEventRequest.fromJson(value);
         case 'PutUserRequest':
@@ -215,8 +217,8 @@ class ApiClient {
           return RoomList.fromJson(value);
         case 'SpeakingNotificationRequest':
           return SpeakingNotificationRequest.fromJson(value);
-        case 'SpeakingNotificationResult':
-          return SpeakingNotificationResult.fromJson(value);
+        case 'TextNotificationRequest':
+          return TextNotificationRequest.fromJson(value);
         case 'TimelineEvent':
           return TimelineEvent.fromJson(value);
         case 'TimelineMedia':
