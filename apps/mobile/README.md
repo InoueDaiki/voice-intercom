@@ -42,7 +42,7 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
 
 ### 注意
 
-- iOS は Swift Package Manager と CocoaPods を併用している。`video_compress` が Swift Package Manager に対応していないため(`ios/Podfile`)。ホストに CocoaPods(`pod`)が要る。`flutter run` / `flutter build` が `pod install` を行う。
+- iOS は Swift Package Manager だけを使う(CocoaPods は使わない)。前は `video_compress` のために CocoaPods を併用していたが、動画の変換を自前にして外した(下の「パッケージを選んだ理由」)。
 - LiveKit サーバーは macOS 向けのバイナリが配布されていないので、ホストの `mise run livekit` は公式のイメージ(`livekit/livekit-server`)を Docker で動かす(ルートの `mise.toml`)。Docker Desktop を起動しておく。
 - ローカルは http / ws なので、Android は debug ビルドだけ平文の通信を許している(`android/app/src/debug/AndroidManifest.xml`)。OIDC も http のときだけ平文を許す(`lib/auth.dart`)。
 
@@ -61,6 +61,8 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
 | `lib/room/media_receiver.dart` | topic `media` の `MediaMessage` を受け、履歴で確かめてから表示に渡す |
 | `lib/media/media_picker.dart` | 画像・動画を選ぶ・撮る(`image_picker`) |
 | `lib/media/media_preparer.dart` | 送る形に整える(画像の形式、動画の圧縮、サムネイル) |
+| `lib/media/video_plan.dart` | 動画の目標のビットレートと、符号化し直すか・入れ直すか・そのまま送るかの決め方、MP4 の箱の並び(`moov` の位置) |
+| `lib/media/video_transcoder.dart` | 動画の測定・H.264 への符号化・フレームの取り出し(MethodChannel `voiceintercom/video`)。ネイティブは `ios/Runner/VideoTranscoderPlugin.swift`(AVFoundation)と `android/app/src/main/kotlin/.../VideoTranscoder.kt`(Media3 Transformer) |
 | `lib/media/media_type.dart` | ファイルの形式を先頭のバイトで見分ける |
 | `lib/media/media_uploader.dart` | 整える → uploads → PUT → complete と、段階ごとのやり直し |
 | `lib/media/http_put.dart`、`api_media_backend.dart` | 署名付き URL への PUT、API との受け渡し |
@@ -105,7 +107,7 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
 
 1. **整える**(`DeviceMediaPreparer`)。形式は拡張子や mimeType ではなく、ファイルの先頭のバイトで見分ける。
    - 画像: `image_picker` に `imageQuality: 85` と `maxWidth` / `maxHeight: 2048` を渡して選ぶ(iOS の HEIC も JPEG になる見込み)。届いた形式が JPEG、PNG、WebP、HEIC ならそのまま送る。GIF など API が受け付けない形式は JPEG にする(動きは失う)。1MB を超えたらサムネイル(JPEG、長い辺 480px)を作る。HEIC のまま届いたら、アプリでは読めない(`image` が HEIC を読めない)ので、サムネイルなしで `image/heic` として送る。
-   - 動画: `video_compress` で H.264 の MP4(1280x720 まで、音声つき)にし、サムネイルを作る(動画は必ず作る)。長さは3分まで(案。カメラは `maxDuration` で、ライブラリから選んだものは圧縮の前に確かめる)。圧縮しても 100MB を超えれば送らない。
+   - 動画: 元の解像度とフレームレートのまま、それに見合ったビットレートの H.264 の MP4(音声は AAC、`moov` は先頭)にし、サムネイルを作る(動画は必ず作る)。下の「動画の符号化」。長さの上限は無い。10GB を超えれば送らない(符号化する前に見積もりでも確かめる)。
 2. **uploads**(`POST .../media/uploads`)で署名付き URL をもらう。`size_bytes` は整えた後の大きさ。`width`・`height`・`duration_ms` も、整えた後の本体で測って送る(下の「幅・高さ・長さ」)。
 3. **PUT**。本体を `content_type` と同じ Content-Type で、サムネイルを `image/jpeg` で PUT する。Content-Length を付け、charset などは付けない(署名が合わず 403 になる)。
 4. **complete**(`POST .../media/{media_id}/complete`、本文なし)。応答(履歴の行)で、すぐルームの表示に足す。画像・動画には文を添えられない(`MediaUploader.submit` はファイルだけを受ける)。
@@ -114,7 +116,15 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
 
 - 幅・高さは、向きを反映した後の表示の大きさ(縦向きなら高さが大きい)。API の範囲(1〜65535)の外や、測れないときは送らない。
 - 画像: 画素をデコードせずにヘッダーから読み、JPEG は EXIF の向き(5〜8 は幅と高さを入れ替える)を反映する。GIF などを JPEG にしたものは、変換した後の大きさ。HEIC は読めないので送らない。
-- 動画: 長い辺と短い辺は `video_compress` の圧縮後の `MediaInfo` から、縦か横かはサムネイル用に取り出したフレーム(向きを反映して取り出される)で決める。`video_compress` 3.1.4 の Android は、回転が 0・180 のときに幅と高さを入れ替え、90・270 では入れ替えない(逆に見える)ため。実機で確かめる。長さは圧縮後の `MediaInfo.duration`(無ければ元の動画の長さ)をミリ秒に丸める。
+- 動画: 整えた後の本体を測り(iOS は `AVAssetTrack` の `naturalSize` と `preferredTransform`、Android は `MediaMetadataRetriever` の幅・高さ・回転)、回転が 90・270 なら幅と高さを入れ替える。長さは整えた後の本体の長さ(無ければ元の動画の長さ)をミリ秒に丸める。
+
+動画の符号化(`lib/media/video_plan.dart`。設計メモの「動画の解像度とビットレート」):
+
+- 目標の映像のビットレート = 幅 × 高さ × 実効のフレームレート × 0.1。実効のフレームレートは 30fps までをそのまま、30〜60fps を半分に数え、60fps を超える分は数えない。下限は 1Mbps。元の映像のビットレートは超えない。例: 1080p30 で 6.2Mbps、4K60 で 37.3Mbps。
+- 元が H.264 で、音声が AAC か無く、ビットレートが目標の 1.25 倍以下なら符号化し直さない。`moov` が先頭の MP4 ならそのまま送り、MOV や `moov` が末尾の MP4 は符号化せずに MP4 に入れ直す。
+- それ以外(HEVC、ビットレートが高い H.264 など)は、目標のビットレートで H.264 に符号化し直す。解像度・フレームレート・回転のメタデータは元のまま。HDR は BT.709 の SDR にする。音声は AAC(2チャンネルまで、1チャンネルあたり 96kbps)。
+- iOS は `AVAssetReader` → `AVAssetWriter`(`shouldOptimizeForNetworkUse` で `moov` を先頭に)、入れ直すだけなら `AVAssetExportSession` のパススルー。Android は Media3 Transformer(`InAppMp4Muxer` で `moov` を先頭に)。Android の HDR は、OpenGL のトーンマップ、MediaCodec のトーンマップ(Android 12 以降)、HDR を SDR とみなす、の順に試す。
+- 符号化は同時に1つだけ(`MediaUploader` が順に呼ぶ)。
 
 送信中は、送信者の画面にだけ段階(圧縮中・送信中・保存中)と進み具合を出す。ほかの人には何も送らない。
 
@@ -164,8 +174,8 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
 - 送信中の取り消し(圧縮・アップロードの途中で止める)。
 - 端末でのキャッシュ。今は `Image.network` のメモリのキャッシュだけ。URL の中身は変わらないので、ディスクに長く持ってよい(設計メモの「URL」)。
 - 全画面の表示・再生で、読む前に縦横比の枠を取ること(今はカードと履歴の一覧だけ)。
-- 動画の幅・高さの向き(上の「幅・高さ・長さ」)を、Android と iOS の実機で確かめること。
-- 100MB 以上のマルチパート。
+- 動画の幅・高さの向き(上の「幅・高さ・長さ」)と符号化(下の「画像・動画(実機)」)を、Android と iOS の実機で確かめること。
+- 100MB を超える本体のマルチパートのアップロード(アプリの上限は 10GB にした。アップロードは別に作っている)。
 - 消したものの、端末のメモリに残った画像(`Image.network` のキャッシュ)は追い出していない。表示はしない。
 
 ## バックグラウンドでの音声
@@ -190,7 +200,7 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
 | `protobuf` | `packages/schema/dart` の実行時ライブラリ |
 | フォアグラウンドサービスのパッケージは使わない | 要るのは「入室で始め、退室・切断・終了で止め、通知を1つ出す」だけで、Kotlin で200行足らず(`InRoomService.kt` と `MainActivity.kt`)で足りる。音声は LiveKit が同じプロセスで扱うので、汎用のパッケージが持つ別の isolate での処理などは要らない。種類の選び方(マイクの権限の有無)、Android 14 の制限への対処、タスクを消したときの止め方を、手元のコードで確かめられるほうを選んだ。livekit_client の README の例(`flutter_background`)は画面共有(mediaProjection)向け |
 | `image_picker` | 公式(flutter.dev)のパッケージで、写真ライブラリ(iOS は PHPicker、Android は Photo Picker。どちらも権限が要らない)とカメラから選ぶ。`imageQuality` / `maxWidth` で画像を縮め、JPEG にできる(設計メモの「端末での圧縮」) |
-| `video_compress` | 動画を端末で H.264 の MP4 にし、進み具合とサムネイルを出す(設計メモの「画像・動画の処理」)。iOS は `AVAssetExportSession`(`shouldOptimizeForNetworkUse` で `moov` を先頭に置く)、Android は Transcoder(MediaCodec)で、どちらも OS の符号化器を使い、GPL の x264 を含まない。FFmpegKit はアーカイブされ、後継の GPL 版はアプリを GPL にする。Swift Package Manager に対応していないので、iOS は CocoaPods を併用する。Kotlin Gradle Plugin を使うプラグインとして Flutter の警告が出る(livekit_client と同じ) |
+| 動画の変換のパッケージは使わない(Media3 Transformer だけ) | 元の解像度のまま、ビットレートを決めて H.264 の MP4(`moov` は先頭)にしたい。パッケージは、iOS でビットレートを指定できるもの(`light_compressor_v2`)は `moov` を末尾に置き、`moov` を先頭に置くもの(`video_compress`、`v_video_compressor`)は iOS で `AVAssetExportSession` のプリセットしか使わずビットレートを指定できなかった(比較は設計メモの「動画の解像度とビットレート」)。そこで iOS は AVFoundation(`AVAssetReader` / `AVAssetWriter`)、Android は Google の Media3 Transformer(`androidx.media3:media3-transformer`。`video_player_android` の ExoPlayer と同じ 1.9.2)を、アプリの MethodChannel から直接使う。どちらも OS の符号化器を使い、GPL の x264 を含まない(FFmpegKit はアーカイブされ、後継の GPL 版はアプリを GPL にする)。前に使っていた `video_compress` を外したので、iOS の CocoaPods も要らなくなった |
 | `video_player` | 公式のパッケージで、iOS は AVPlayer、Android は ExoPlayer で、URL を読みながら再生する(設計メモの「画像・動画の処理」) |
 | `image` | サムネイル(JPEG)を作る、API が受け付けない形式(GIF など)を JPEG にする。Dart だけで書かれていて、ネイティブのコードが無く、`flutter test` でそのまま試せる。別の isolate で動かす。HEIC は読めない |
 | `http` | 署名付き URL への PUT(進み具合を出すため、ストリームで送る)。生成したクライアントも使っている。以前は統合テストのためだけに dev_dependencies に入れていた |
@@ -206,6 +216,34 @@ flutter test
 ```
 
 ## 統合テスト
+
+### 動画の整え方(入室しない)
+
+`integration_test/video_prepare_test.dart` は、`DeviceMediaPreparer` に元の動画を渡し、端末の符号化器で整えて、決め方(そのまま・入れ直す・符号化し直す)、解像度・回転・fps・ビットレート・大きさ・長さ・`moov` の位置・進み具合・時間を `VIDEO_PREPARE:` の行に出す。入室しないので、ローカルの環境は要らず、iOS シミュレーターの音声の問題(下の「iOS シミュレーター」)にも当たらない。`VIDEO_INPUTS` に端末から読めるパスをカンマで区切って渡し、`VIDEO_OUT_DIR` を渡すと整えた本体とサムネイルを写す。
+
+- iOS シミュレーター: アプリからホストのパスをそのまま読める。
+
+  ```sh
+  flutter test integration_test/video_prepare_test.dart -d <シミュレーターの ID> \
+    --dart-define=VIDEO_INPUTS=/path/to/a.mov,/path/to/b.mp4 --dart-define=VIDEO_OUT_DIR=/path/to/out
+  ```
+
+- Android エミュレーター: アプリから読める場所に置く。`flutter test` は終わるとアプリを消すので、先にアプリを入れて動画を置き、`--no-uninstall` で流す(内部の領域に置くと、入れ直しでも消えない)。共有の領域(`/sdcard/Android/data/...`)に adb で置いたものは、アプリから見えなかった。
+
+  ```sh
+  flutter build apk --debug && adb -s <ID> install -r build/app/outputs/flutter-apk/app-debug.apk
+  adb -s <ID> push a.mov /data/local/tmp/
+  adb -s <ID> shell run-as jp.voiceintercom.voice_intercom mkdir -p files/in files/out
+  adb -s <ID> shell run-as jp.voiceintercom.voice_intercom cp /data/local/tmp/a.mov files/in/
+  flutter test integration_test/video_prepare_test.dart -d <ID> --no-uninstall \
+    --dart-define=VIDEO_INPUTS=/data/user/0/jp.voiceintercom.voice_intercom/files/in/a.mov \
+    --dart-define=VIDEO_OUT_DIR=/data/user/0/jp.voiceintercom.voice_intercom/files/out
+  adb -s <ID> exec-out run-as jp.voiceintercom.voice_intercom cat files/out/a.mov.out.mp4 > a.out.mp4
+  ```
+
+確かめた結果は設計メモの「動画の解像度とビットレート」。iOS シミュレーターでは、HEVC の 4K60(縦向き)が H.264 の 4K60(縦向き、31.3Mbps、`moov` が先頭)に、HLG の HEVC が BT.709 の H.264 になった。Android エミュレーターは、ソフトウェアの符号化器の上限で 4K が 1080p に縮められ、1080p30 で fps が落ち(12.8fps)、10 ビットの HEVC を復号できなかった。どれもエミュレーターの符号化器・復号器によるものとみて、実機で確かめる。
+
+### 入室するもの
 
 `integration_test/room_flow_test.dart` は、ローカルの環境(API、模擬 OIDC、LiveKit、Agent)につないで、プロフィールの登録、入室、入室直後のテキスト、PTT、英語の話者の字幕、履歴までを、シミュレーター(またはエミュレーター)の上の本物のアプリで通す。ログインだけは、ブラウザを操作できないので、模擬 OIDC のフォームを直接送ってトークンを取る。OpenAI を使うので課金される(1回で数セント)。
 
@@ -286,7 +324,7 @@ flutter test integration_test/media_receive_test.dart -d <シミュレーター�
 **画像・動画の整え方**(入室しないので音声に当たらない)。
 
 - **HEIC → JPEG**: picker の画面はテストから操作できないので、`image_picker_ios` のソース(`FLTPHPickerSaveImageToPathOperation` の `processImage`)を読み、同じ処理(`FLTImagePickerImageUtil.m`、`FLTImagePickerMetaDataUtil.m`、`FLTImagePickerPhotoAssetUtil.m` をそのまま使う小さな確認用のコード)を iOS シミュレーター向けにビルドして `xcrun simctl spawn` で動かした。4032x3024、EXIF の向き 6 の HEIC(76KB)が、`maxWidth` / `maxHeight: 2048`、`imageQuality: 85` で JPEG(2048x1536、向き 6 のまま、156KB。品質 100 なら 241KB)になった。プラグインは先頭のバイトが JPEG・PNG・GIF でなければ JPEG にする(`imageQuality` を渡さなくても JPEG になる。HEIC のときに出る `compressing is not supported for type (null)` のログは誤りで、品質は効いている)。PHPicker が渡すのが HEIC のままか互換の JPEG かは実機で見るが、どちらでも JPEG になる。アプリの `DeviceMediaPreparer` は、その JPEG を `image/jpeg` でそのまま送り(1MB 以下なのでサムネイルなし)、HEIC のままのファイルは `image/heic` でサムネイルなしにした。
-- **動画の圧縮**: AVFoundation で作った HEVC の MOV(3840x2160、60fps、20秒、AAC の音声、縦向き(`preferredTransform` で 90 度)、78.3MB)を、シミュレーターの上で `DeviceMediaPreparer` に渡した。H.264 の MP4(720x1280、縦向きの画素で `preferredTransform` は回転なし、60fps、20秒)、26.9MB(10.7Mbps)、AAC の音声(48kHz、2ch)が残り、`moov` が `mdat` の前(先頭から 28 バイト目)にあった(読みながら再生できる)。圧縮は7.2秒、進み具合は70回届いた(0.09〜0.96)。サムネイルは 270x480 の縦。圧縮は Mac の符号化器を使うので、時間は実機で測る。60fps のまま 10.7Mbps なので、この調子だと 100MB は約75秒で、3分の動画は送れない(素材は動きと細かい模様が多いので、実際の動画ではもっと小さくなりうる。実機で確かめる)。
+- **動画の圧縮**(`video_compress` を使っていたころ。今の結果は上の「動画の整え方」): AVFoundation で作った HEVC の MOV(3840x2160、60fps、20秒、AAC の音声、縦向き(`preferredTransform` で 90 度)、78.3MB)を、シミュレーターの上で `DeviceMediaPreparer` に渡した。H.264 の MP4(720x1280、縦向きの画素で `preferredTransform` は回転なし、60fps、20秒)、26.9MB(10.7Mbps)、AAC の音声(48kHz、2ch)が残り、`moov` が `mdat` の前(先頭から 28 バイト目)にあった(読みながら再生できる)。圧縮は7.2秒、進み具合は70回届いた(0.09〜0.96)。サムネイルは 270x480 の縦。圧縮は Mac の符号化器を使うので、時間は実機で測る。60fps のまま 10.7Mbps なので、この調子だと 100MB は約75秒で、3分の動画は送れない(素材は動きと細かい模様が多いので、実際の動画ではもっと小さくなりうる。実機で確かめる)。
 
 **シミュレーターでは確かめられないもの**。バックグラウンドでの音声(入室で落ちるので、ホームに戻すところまで行けない。行けても、シミュレーターでは audio mode の停止や再開の振る舞いが実機と同じとは限らない)、実機のマイク・`inputMixer`・ミュート音、PushToTalk、電話の割り込み、Bluetooth とイヤホン、ロック画面、カメラ(シミュレーターにはカメラが無い)、圧縮の時間と発熱、機内モード。下の「実機で確かめること」に残す。
 
@@ -315,8 +353,8 @@ flutter test integration_test/media_receive_test.dart -d <シミュレーター�
 
 1. **HEIC**(iOS。プラグインの変換はシミュレーターで確かめた。上の「iOS シミュレーター」): iPhone で撮った HEIC の写真をライブラリから選ぶ。`imageQuality` を渡しているので JPEG になって届くか(管理コンソールの Chrome で表示できるか、履歴の `content_type` が `image/jpeg` か)。HEIC のまま届いたら、`image/heic` でサムネイルなしになる。そのとき、アプリ(iOS と Android)で表示できるか。
 2. **大きな画像**: 4000px 級の写真が、長い辺 2048px の JPEG に縮むか。1MB を超えたらサムネイルが付くか。向き(EXIF)がサムネイルと全画面で合っているか。PNG のスクリーンショットも。
-3. **動画の圧縮**(iOS の出力の形式・向き・音声はシミュレーターで確かめた。時間と大きさは実機で): iPhone の HEVC の MOV(4K、60fps)と Android の動画を選び、H.264 の MP4(1280x720 まで)になるか。圧縮の時間、進み具合、圧縮後の大きさ、音声が残るか。縦の動画の向き。3分を超える動画が「3分まで」で止まるか。
-4. **読みながらの再生**: 送った動画を、もう1台で開き、全部を読む前に再生が始まるか。iOS は `shouldOptimizeForNetworkUse` で `moov` が先頭に来る(シミュレーターで確かめた)。Android の出力(Transcoder、MediaMuxer)は `moov` が末尾になる見込み(未確認)で、そうなら全部を読むまで始まらない。`ffprobe -v trace` か `AtomicParsley -T` で確かめる。
+3. **動画の符号化**(出力の形式・向き・音声・`moov` の位置はシミュレーターとエミュレーターで確かめた。時間・発熱・端末の符号化器の制限は実機で): iPhone の HEVC の MOV(4K60、HDR(Dolby Vision)の既定のまま、と「互換性優先」の H.264)と、Android のカメラの動画(H.264 の 1080p・4K、HEVC、10 ビットの HDR)を選ぶ。元の解像度と fps のまま H.264 の MP4 になるか、ビットレートが目標(設計メモ)どおりか、fps が落ちていないか(エミュレーターでは落ちた)、4K60 の H.264 に対応しない Android の符号化器で何に縮められるか。HDR の色が SDR で自然に見えるか(Android は OpenGL のトーンマップが使えるか、logcat の `VideoTranscoder` を見る)。符号化の時間(数分の動画で)、進み具合、発熱、大きさ、音声。縦の動画の向き。LINE や他のアプリで送られた低いビットレートの H.264 の MP4 が、符号化されずにそのまま送られるか。iPhone の 120・240fps(スローモーション)、空間オーディオの動画。
+4. **読みながらの再生**: 送った動画を、もう1台で開き、全部を読む前に再生が始まるか。出力の `moov` は iOS(`AVAssetWriter` の `shouldOptimizeForNetworkUse`)も Android(Media3 の `InAppMp4Muxer`)も先頭にある(シミュレーターとエミュレーターで確かめた)。実機の出力も `ffprobe -v trace` か `AtomicParsley -T` で見る。
 5. **カメラ**: 写真と動画を撮って送れるか。権限のダイアログ(iOS のカメラとマイク)。
 6. **失敗とやり直し**: 送信中に機内モードにして「送れなかった」が出るか、戻して「やり直す」で続きから送れるか(圧縮をやり直さない)。
 7. **裏に回したとき**: 圧縮・アップロードの途中でホームに戻ると止まるか(今は裏での続きを考えていない)。

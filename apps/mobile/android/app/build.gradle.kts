@@ -49,3 +49,12 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // 動画を H.264 の MP4 にする(VideoTranscoder.kt)。版は video_player_android の ExoPlayer と揃える
+    // (Media3 のモジュールは同じ版でそろえる)
+    val media3Version = "1.9.2"
+    implementation("androidx.media3:media3-transformer:$media3Version")
+    implementation("androidx.media3:media3-effect:$media3Version")
+    implementation("androidx.media3:media3-common:$media3Version")
+}
