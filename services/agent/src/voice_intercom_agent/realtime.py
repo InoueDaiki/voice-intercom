@@ -9,6 +9,8 @@ PoC(poc/translate_bench.py)で分かった手順に従う。
   出力は入力が届くのに合わせてしか進まないので、時間を置いてから close すると翻訳音声が捨てられる。
   close の前に短い無音(tail_silence_s)を送れる。最後の文の翻訳が欠けるのを防ぐ案だが、効果を
   確かめられず、無音も課金されるので、既定では送らない(設計メモの「Agent の見直し」)。
+- translate は close の後に、残りの翻訳音声と長い無音(1発話で約9〜30秒分)をまとめて返す。
+  close の後に届いた分の、末尾の続いた無音だけを捨てる(silence_trim.py)。
 - whisper は turn_detection を null にして、発話の終わりに input_audio_buffer.commit を送る。
   gpt-realtime-whisper は自動区切りに対応していない(公式の決まり)。長い発話は、Agent が
   区切り(segmenter.py)を決めて、発話の途中でも commit を送る。
@@ -22,6 +24,8 @@ from collections.abc import Callable
 from typing import Any
 
 import aiohttp
+
+from .silence_trim import TrailingSilenceTrimmer
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +191,7 @@ class TranslateSession(RealtimeSession):
         tail_silence_s: float,
         on_audio: Callable[[bytes], None],
         on_done: Callable[[], None],
+        trim_tail: bool = True,
     ) -> None:
         super().__init__(http, api_key)
         self.name = f"translate-{language}"
@@ -196,7 +201,9 @@ class TranslateSession(RealtimeSession):
         self._tail_silence_s = tail_silence_s
         # 音声を1つでも送ったか(送っていなければ、末尾の無音も送らない)
         self._appended = False
-        self._on_audio = on_audio
+        # close の後にまとめて届く末尾の無音を捨てる(trim_tail が偽なら、すべて流す)
+        self._trimmer = TrailingSilenceTrimmer(on_audio, OUTPUT_SAMPLE_RATE) if trim_tail else None
+        self._on_audio = self._trimmer.push if self._trimmer is not None else on_audio
         self._on_done_cb = on_done
         self._transcript: list[str] = []
 
@@ -225,6 +232,8 @@ class TranslateSession(RealtimeSession):
             for _ in range(chunks):
                 await ws.send_json({"type": self._append_type(), "audio": audio})
         await ws.send_json({"type": "session.close"})
+        if self._trimmer is not None:
+            self._trimmer.closed()
 
     def _end_timeout_s(self) -> float:
         return self._close_timeout_s
@@ -242,6 +251,10 @@ class TranslateSession(RealtimeSession):
         return False
 
     def _on_done(self) -> None:
+        if self._trimmer is not None:
+            dropped = self._trimmer.finish()
+            if dropped > 0:
+                logger.info("%s: close の後の末尾の無音 %.1f秒を捨てた", self.name, dropped)
         self._on_done_cb()
 
 
