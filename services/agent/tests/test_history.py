@@ -443,6 +443,7 @@ def test_body_is_json_serializable() -> None:
             occurred_at=T0,
             targets=[],
             kind="text",
+            message_id="m1",
         )
         await recorder.aclose()
 
@@ -455,4 +456,26 @@ def test_body_is_json_serializable() -> None:
         "language": None,
         "text": "hello",
         "translations": {},
+        "message_id": "m1",
     }
+
+
+@pytest.mark.parametrize("message_id", ["", "x" * 129])
+def test_text_without_usable_message_id(message_id: str) -> None:
+    # 空か API の上限を超える message_id は入れない(保存は続ける)
+    async def test(fake: FakeServer, settings: HistorySettings, http: aiohttp.ClientSession):
+        recorder = make_recorder(settings, http)
+        recorder.original(
+            "seg1",
+            "hello",
+            sender_id="u",
+            language=None,
+            occurred_at=T0,
+            targets=[],
+            kind="text",
+            message_id=message_id,
+        )
+        await recorder.aclose()
+
+    fake = run(test)
+    assert "message_id" not in fake.puts[0][3]

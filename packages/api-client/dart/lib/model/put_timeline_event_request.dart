@@ -21,6 +21,7 @@ class PutTimelineEventRequest {
     this.translations = const {},
     this.utteranceId,
     this.segmentIndex,
+    this.messageId,
   });
 
   PutTimelineEventRequestKindEnum kind;
@@ -48,6 +49,9 @@ class PutTimelineEventRequest {
   /// Minimum value: 0
   int? segmentIndex;
 
+  /// テキスト入力のときだけ。送信者のアプリが振った TextMessage の message_id(字幕の Caption の message_id と同じ)。アプリが自分の送ったテキストの行を見つけるのに使う
+  String? messageId;
+
   @override
   bool operator ==(Object other) => identical(this, other) || other is PutTimelineEventRequest &&
     other.kind == kind &&
@@ -57,7 +61,8 @@ class PutTimelineEventRequest {
     other.text == text &&
     _deepEquality.equals(other.translations, translations) &&
     other.utteranceId == utteranceId &&
-    other.segmentIndex == segmentIndex;
+    other.segmentIndex == segmentIndex &&
+    other.messageId == messageId;
 
   @override
   int get hashCode =>
@@ -69,10 +74,11 @@ class PutTimelineEventRequest {
     (text.hashCode) +
     (translations.hashCode) +
     (utteranceId == null ? 0 : utteranceId!.hashCode) +
-    (segmentIndex == null ? 0 : segmentIndex!.hashCode);
+    (segmentIndex == null ? 0 : segmentIndex!.hashCode) +
+    (messageId == null ? 0 : messageId!.hashCode);
 
   @override
-  String toString() => 'PutTimelineEventRequest[kind=$kind, senderId=$senderId, occurredAt=$occurredAt, language=$language, text=$text, translations=$translations, utteranceId=$utteranceId, segmentIndex=$segmentIndex]';
+  String toString() => 'PutTimelineEventRequest[kind=$kind, senderId=$senderId, occurredAt=$occurredAt, language=$language, text=$text, translations=$translations, utteranceId=$utteranceId, segmentIndex=$segmentIndex, messageId=$messageId]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
@@ -95,6 +101,11 @@ class PutTimelineEventRequest {
       json[r'segment_index'] = this.segmentIndex;
     } else {
       json[r'segment_index'] = null;
+    }
+    if (this.messageId != null) {
+      json[r'message_id'] = this.messageId;
+    } else {
+      json[r'message_id'] = null;
     }
     return json;
   }
@@ -133,6 +144,7 @@ class PutTimelineEventRequest {
         translations: mapCastOfType<String, String>(json, r'translations')!,
         utteranceId: mapValueOfType<String>(json, r'utterance_id'),
         segmentIndex: mapValueOfType<int>(json, r'segment_index'),
+        messageId: mapValueOfType<String>(json, r'message_id'),
       );
     }
     return null;

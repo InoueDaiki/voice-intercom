@@ -79,6 +79,7 @@ class HistorySink(Protocol):
         occurred_at: datetime,
         targets: list[str],
         kind: str = ...,
+        message_id: str | None = ...,
     ) -> None: ...
 
     def translation(self, segment_id: str, language: str, text: str | None) -> None: ...
@@ -279,6 +280,7 @@ class TextInput:
                 occurred_at=received_at,
                 targets=list(plan.targets),
                 kind="text",
+                message_id=message.message_id,
             )
         logger.info(
             "テキストを受け取った: %s(%s → %s)%s: %s",

@@ -364,13 +364,199 @@
         ]
       }
     },
+    "/rooms/{room_id}/timeline/event": {
+      "get": {
+        "tags": [
+          "timeline"
+        ],
+        "summary": "履歴の1件を取る(管理者かメンバー)。消した行は墓石(deleted)で返す",
+        "description": "強い整合の読み取りなので、保存や削除の直後でも反映されている。アプリは、データチャネル(topic deletion)で届いた知らせを、これで確かめる。",
+        "operationId": "getTimelineEvent",
+        "parameters": [
+          {
+            "description": "ルームの ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Room Id",
+              "description": "ルームの ID"
+            },
+            "name": "room_id",
+            "in": "path"
+          },
+          {
+            "description": "履歴の行の event_id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Event Id",
+              "description": "履歴の行の event_id"
+            },
+            "name": "event_id",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimelineEvent"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ルームか、event_id の行がない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "timeline"
+        ],
+        "summary": "送ったテキスト入力か画像・動画を消す(送った本人)",
+        "description": "行は消さずに墓石(deleted)にし、本文・訳・URL を消す。2回目からは同じ墓石を返す(後始末はやり直す)。音声の発話と、他人の行は 403。消した後に、今ルームにいる人へデータチャネル(topic deletion、DeletionMessage)で知らせ、画像・動画なら S3 の本体とサムネイルを消して CloudFront のキャッシュを無効にする。これらが失敗しても墓石を 200 で返す。push 通知は取り消さない。",
+        "operationId": "deleteTimelineEvent",
+        "parameters": [
+          {
+            "description": "ルームの ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Room Id",
+              "description": "ルームの ID"
+            },
+            "name": "room_id",
+            "in": "path"
+          },
+          {
+            "description": "履歴の行の event_id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Event Id",
+              "description": "履歴の行の event_id"
+            },
+            "name": "event_id",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "消した(墓石)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimelineEvent"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ルームか、event_id の行がない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/rooms/{room_id}/timeline/{source_id}": {
       "put": {
         "tags": [
           "timeline"
         ],
         "summary": "発話かテキスト入力を履歴に保存する(Agent)。同じ内容なら何度呼んでも同じ結果になる",
-        "description": "event_id は `<occurred_at>#<source_id>` で作る。同じ event_id があれば置き換える。",
+        "description": "event_id は `<occurred_at>#<source_id>` で作る。同じ event_id があれば置き換える。ただし送った本人が消した行(墓石)は置き換えず、墓石を返す。",
         "operationId": "putTimelineEvent",
         "parameters": [
           {
@@ -1731,6 +1917,19 @@
             ],
             "title": "Segment Index",
             "description": "発話の中の区切りの番号(utterance のときだけ。字幕の proto と同じ)"
+          },
+          "message_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Id",
+            "description": "テキスト入力のときだけ。送信者のアプリが振った TextMessage の message_id(字幕の Caption の message_id と同じ)。アプリが自分の送ったテキストの行を見つけるのに使う"
           }
         },
         "type": "object",
@@ -1928,6 +2127,38 @@
         ],
         "title": "TextNotificationRequest"
       },
+      "TimelineDeletion": {
+        "properties": {
+          "deleted_at": {
+            "type": "string",
+            "title": "Deleted At",
+            "description": "消した時刻。ISO 8601(UTC、ミリ秒まで)"
+          },
+          "media_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "image",
+                  "video"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Media Type",
+            "description": "media のときだけ、画像か動画か(「削除された画像」「削除された動画」と出す)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "deleted_at",
+          "media_type"
+        ],
+        "title": "TimelineDeletion",
+        "description": "消した行の印(墓石)。消した行は本文・訳・URL を返さず、これだけを持つ。"
+      },
       "TimelineEvent": {
         "properties": {
           "room_id": {
@@ -2036,7 +2267,31 @@
                 "type": "null"
               }
             ],
-            "description": "media のときだけ"
+            "description": "media のときだけ。消した行では null"
+          },
+          "message_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Id",
+            "description": "テキスト入力のときだけ。送信者のアプリが振った TextMessage の message_id(字幕の Caption の message_id と同じ)。アプリが自分の送ったテキストの行を見つけるのに使う"
+          },
+          "deleted": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TimelineDeletion"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "送った本人が消した行なら、その印。text、translations、media は空になる"
           }
         },
         "type": "object",

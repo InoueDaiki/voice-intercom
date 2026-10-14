@@ -233,7 +233,9 @@ SSM の値を変えたときは、新しいタスクでないと読み直さな�
 | `GET /users` | プロフィールを登録したユーザーの一覧(`{items}`) | 管理者 |
 | `POST /livekit/token` | LiveKit の参加用トークン。プロフィールの表示名を name に、言語を参加者の属性 `language` に入れる。Agent のディスパッチ(`AGENT_NAME`、既定 `voice-intercom`)も入れ、ルームが作られたときに Agent が入る。ルームがなければ 404、プロフィールが未登録なら 409 | 管理者、メンバー |
 | `GET /rooms/{room_id}/timeline` | ルームの履歴(`{items, next_before}`)を新しい順に。`limit`(1〜100、既定 50)と `before`(前の応答の `next_before`)でページングする | 管理者、メンバー |
-| `PUT /rooms/{room_id}/timeline/{source_id}` | 発話(`utterance`、字幕の区切りごと)かテキスト入力(`text`)を履歴に保存する。`event_id` は `<occurred_at>#<source_id>` で、同じなら置き換える(再送しても1件) | Agent |
+| `GET /rooms/{room_id}/timeline/event?event_id=...` | 履歴の1件(強い整合の読み取り)。消した行は墓石(`deleted` 付き)で返す。無ければ 404 | 管理者、メンバー |
+| `DELETE /rooms/{room_id}/timeline/event?event_id=...` | 送ったテキスト入力か画像・動画を消す。行は残して墓石にし(`deleted` を付け、`text`・`translations`・`media` は空)、2回目からは同じ墓石を返す。今ルームにいる人へデータチャネル(topic `deletion`)で知らせ、画像・動画なら S3 の本体とサムネイルを消して CloudFront のキャッシュを無効にする。他人の行と音声の発話は 403 | 送った本人 |
+| `PUT /rooms/{room_id}/timeline/{source_id}` | 発話(`utterance`、字幕の区切りごと)かテキスト入力(`text`。アプリが振った `message_id` も持つ)を履歴に保存する。`event_id` は `<occurred_at>#<source_id>` で、同じなら置き換える(再送しても1件)。消した行(墓石)は置き換えず、墓石を返す | Agent |
 | `POST /rooms/{room_id}/media/uploads` | 画像・動画を S3 に PUT する署名付き URL(本体と、`has_thumbnail` ならサムネイル)。期限は1時間。送信者が測った `width`・`height`(1〜65535、両方か無し)と、動画なら `duration_ms`(1〜86,400,000)を任意で送り、履歴に入れる | 管理者、メンバー |
 | `POST /rooms/{room_id}/media/{media_id}/complete` | 本文なし。アップロードした画像・動画を履歴(`media`)に保存し、今ルームにいる人へデータチャネル(topic `media`)で配信する。最初の complete では、ルームにいないメンバーに push 通知も送る。本体かサムネイルがまだ置かれていなければ 409。2回目からは同じ履歴を返し、配信だけをやり直す | アップロードした本人 |
 | `POST /rooms/{room_id}/notifications/speaking` | 誰かが話し始めたことを push 通知する(`{speaker_id, present_ids}`)。ルームのメンバーから話者と `present_ids` を除いた人に送り、`{sent, skipped}` を返す。同じルーム × 同じ受け手には `NOTIFY_INTERVAL_S`(既定 300 秒。テキスト・画像・動画の通知と共通)に1回まで。ルームがなければ 404。送信に失敗しても 500 にせず `sent: 0` | Agent |
@@ -273,6 +275,15 @@ complete で履歴に保存した後に、API が LiveKit の Server API でル�
 
 - topic `media` のデータを `MediaMessage` として読む。同じ `event_id` が2回以上届くことがある(complete のやり直し)ので、`event_id` で重複を捨てる。自分の送ったものも届く。
 - 送信元の参加者があるデータは捨てる(参加者は topic を偽れる)。送信元の参加者が無いだけではサーバーから来たとは言えない(入った直後の参加者のデータも無しで届く)ので、表示の前に履歴(`GET /rooms/{room_id}/timeline`)で `event_id` の行を確かめ、表示には履歴の行を使う(設計メモの「誰がルームに知らせるか」)。モバイルアプリはこの形で受けている(`apps/mobile` の README の「受ける(ルームへの配信)」)。
+
+### 送ったものの削除
+
+送った本人は、テキスト入力と画像・動画を `DELETE .../timeline/event` で消せる(音声の発話は消せない。決めた理由は設計メモの「送ったものの削除」)。`services/api` の `timeline.py` と `deletion.py`。
+
+- 履歴の行は消さずに墓石にする。一覧(`GET .../timeline`)でも、その場所に `deleted`(`deleted_at`、media なら `media_type`: `image` / `video`)の付いた行が出る。本文・訳・URL は返さない。
+- 消した後に、画像・動画の配信と同じく `ListParticipants` と `SendData` で topic `deletion`、reliable に `DeletionMessage`(`proto/voiceintercom/v1/deletion.proto`)を送る。受け手は送信元の参加者があるものを捨て、無いものも `GET .../timeline/event` で行が消されていることを確かめてから表示を変える(なりすましで他人のものを消したように見せられない)。
+- 画像・動画は、S3 の本体とサムネイルを消し、CloudFront を `/rooms/<room_id>/<media_id>/*` の1パスで無効にする(`MEDIA_DISTRIBUTION_ID`。ローカルでは空で、無効化を飛ばす)。Lambda には `s3:DeleteObject` と `cloudfront:CreateInvalidation` を許してある。
+- 知らせや後始末が失敗しても DELETE は 200 で墓石を返す。もう一度呼べばやり直す。push 通知は取り消さない。
 
 ### push 通知
 

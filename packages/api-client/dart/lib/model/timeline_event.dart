@@ -24,6 +24,8 @@ class TimelineEvent {
     required this.utteranceId,
     required this.segmentIndex,
     required this.media,
+    this.messageId,
+    this.deleted,
   });
 
   String roomId;
@@ -57,8 +59,14 @@ class TimelineEvent {
   /// Minimum value: 0
   int? segmentIndex;
 
-  /// media のときだけ
+  /// media のときだけ。消した行では null
   TimelineMedia? media;
+
+  /// テキスト入力のときだけ。送信者のアプリが振った TextMessage の message_id(字幕の Caption の message_id と同じ)。アプリが自分の送ったテキストの行を見つけるのに使う
+  String? messageId;
+
+  /// 送った本人が消した行なら、その印。text、translations、media は空になる
+  TimelineDeletion? deleted;
 
   @override
   bool operator ==(Object other) => identical(this, other) || other is TimelineEvent &&
@@ -72,7 +80,9 @@ class TimelineEvent {
     _deepEquality.equals(other.translations, translations) &&
     other.utteranceId == utteranceId &&
     other.segmentIndex == segmentIndex &&
-    other.media == media;
+    other.media == media &&
+    other.messageId == messageId &&
+    other.deleted == deleted;
 
   @override
   int get hashCode =>
@@ -87,10 +97,12 @@ class TimelineEvent {
     (translations.hashCode) +
     (utteranceId == null ? 0 : utteranceId!.hashCode) +
     (segmentIndex == null ? 0 : segmentIndex!.hashCode) +
-    (media == null ? 0 : media!.hashCode);
+    (media == null ? 0 : media!.hashCode) +
+    (messageId == null ? 0 : messageId!.hashCode) +
+    (deleted == null ? 0 : deleted!.hashCode);
 
   @override
-  String toString() => 'TimelineEvent[roomId=$roomId, eventId=$eventId, kind=$kind, senderId=$senderId, occurredAt=$occurredAt, language=$language, text=$text, translations=$translations, utteranceId=$utteranceId, segmentIndex=$segmentIndex, media=$media]';
+  String toString() => 'TimelineEvent[roomId=$roomId, eventId=$eventId, kind=$kind, senderId=$senderId, occurredAt=$occurredAt, language=$language, text=$text, translations=$translations, utteranceId=$utteranceId, segmentIndex=$segmentIndex, media=$media, messageId=$messageId, deleted=$deleted]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
@@ -120,6 +132,16 @@ class TimelineEvent {
       json[r'media'] = this.media;
     } else {
       json[r'media'] = null;
+    }
+    if (this.messageId != null) {
+      json[r'message_id'] = this.messageId;
+    } else {
+      json[r'message_id'] = null;
+    }
+    if (this.deleted != null) {
+      json[r'deleted'] = this.deleted;
+    } else {
+      json[r'deleted'] = null;
     }
     return json;
   }
@@ -168,6 +190,8 @@ class TimelineEvent {
         utteranceId: mapValueOfType<String>(json, r'utterance_id'),
         segmentIndex: mapValueOfType<int>(json, r'segment_index'),
         media: TimelineMedia.fromJson(json[r'media']),
+        messageId: mapValueOfType<String>(json, r'message_id'),
+        deleted: TimelineDeletion.fromJson(json[r'deleted']),
       );
     }
     return null;

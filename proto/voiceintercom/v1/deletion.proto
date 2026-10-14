@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package voiceintercom.v1;
+
+// 履歴の行(テキスト入力、画像・動画)を送った本人が消した知らせ。API が
+// DELETE /rooms/{room_id}/timeline/event で行を墓石にした後に、LiveKit の Server API
+// (RoomService.SendData)からデータチャネル(topic は "deletion"、reliable)でルームの全員に配信する。
+//
+// 受け手は、送信元の参加者があるもの(参加者が送ったもの)を捨てる。参加者は topic を偽れるため。
+// 送信元の参加者が無いだけでは、サーバーから来たとは言えない(入った直後の参加者が送ったものも
+// 無しで届く)。受け手は、これを「行が消された」という知らせとして扱い、
+// GET /rooms/{room_id}/timeline/event で event_id の行が消されていることを確かめてから、
+// 表示を「削除された…」に変える。表示に使う送信者や message_id も、履歴の行のものを使う。
+// 同じ event_id が2回以上届くことがある(DELETE のやり直し)。
+//
+// 項目を足すときは番号を足すだけにする。名前の変更と番号の使い回しはしない(消すときは reserved)。
+message DeletionMessage {
+  // 消した履歴の行の event_id(`<occurred_at>#<source_id>`)
+  string event_id = 1;
+  // 行の送信者の LiveKit identity(履歴の sender_id。消せるのは送った本人だけ)
+  string sender_identity = 2;
+  // 行の種類。"text"(テキスト入力)か "media"(画像・動画)
+  string kind = 3;
+  // text のとき、送信者のアプリが振った TextMessage の message_id(字幕の Caption の
+  // message_id と同じ)。受け手は、この message_id の字幕を「削除されたテキスト」にする。
+  // 分からなければ空
+  string message_id = 4;
+  // 消した時刻。ISO 8601(UTC、ミリ秒まで。例 2026-10-10T00:00:00.000Z)
+  string deleted_at = 5;
+}

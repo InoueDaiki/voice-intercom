@@ -185,6 +185,18 @@ data "aws_iam_policy_document" "api" {
     resources = ["${module.media.bucket_arn}/*"]
   }
 
+  # 送った本人が消した画像・動画の本体とサムネイルを消す(services/api の deletion.py)
+  statement {
+    actions   = ["s3:DeleteObject"]
+    resources = ["${module.media.bucket_arn}/rooms/*"]
+  }
+
+  # 消した画像・動画の CloudFront のキャッシュを無効にする(media_id ごとに1パス)
+  statement {
+    actions   = ["cloudfront:CreateInvalidation"]
+    resources = [module.media.distribution_arn]
+  }
+
   # ListBucket がないと、ないオブジェクトの HeadObject が 404 ではなく 403 になり、
   # メディアの complete で「まだ置かれていない」(409)を見分けられない
   statement {
@@ -227,6 +239,8 @@ module "api" {
     ROOMS_TABLE     = module.rooms_table.table_name
     MEDIA_BUCKET    = module.media.bucket_name
     MEDIA_BASE_URL  = "https://${module.media.cdn_domain_name}"
+    # 消した画像・動画のキャッシュの無効化(deletion.py)
+    MEDIA_DISTRIBUTION_ID = module.media.distribution_id
 
     LIVEKIT_CLIENT_URL = var.livekit_client_url
     LIVEKIT_API_KEY    = var.livekit_api_key

@@ -53,6 +53,7 @@ part 'model/room.dart';
 part 'model/room_list.dart';
 part 'model/speaking_notification_request.dart';
 part 'model/text_notification_request.dart';
+part 'model/timeline_deletion.dart';
 part 'model/timeline_event.dart';
 part 'model/timeline_media.dart';
 part 'model/timeline_page.dart';

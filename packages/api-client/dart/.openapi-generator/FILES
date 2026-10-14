@@ -33,6 +33,7 @@ lib/model/room.dart
 lib/model/room_list.dart
 lib/model/speaking_notification_request.dart
 lib/model/text_notification_request.dart
+lib/model/timeline_deletion.dart
 lib/model/timeline_event.dart
 lib/model/timeline_media.dart
 lib/model/timeline_page.dart

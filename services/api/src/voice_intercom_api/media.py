@@ -163,8 +163,12 @@ def complete_media_upload(
 
 
 def _announce_again(room: Room, event: TimelineEvent) -> TimelineEvent:
-    """2回目からの complete。配信だけをやり直す(push 通知は送らない)。"""
-    media_broadcast.announce(room, event, None, first=False)
+    """2回目からの complete。配信だけをやり直す(push 通知は送らない)。
+
+    送った本人が消した後なら、配信もせず墓石を返す。
+    """
+    if event.deleted is None:
+        media_broadcast.announce(room, event, None, first=False)
     return event
 
 

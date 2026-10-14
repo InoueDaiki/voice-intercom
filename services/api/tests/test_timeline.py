@@ -70,6 +70,8 @@ def test_agent_puts_utterance(agent: str, member: str) -> None:
         "utterance_id": "utt-1",
         "segment_index": 0,
         "media": None,
+        "message_id": None,
+        "deleted": None,
     }
     assert call("GET", "/rooms/room-a/timeline", member) == (
         200,

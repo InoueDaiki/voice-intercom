@@ -2,13 +2,15 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:livekit_client/livekit_client.dart';
-import 'package:voice_intercom_api_client/api.dart' show TimelineEvent;
+import 'package:voice_intercom_api_client/api.dart'
+    show TimelineEvent, TimelineEventKindEnum;
 import 'package:voice_intercom_schema/gen/voiceintercom/v1/caption.pb.dart';
 import 'package:voice_intercom_schema/gen/voiceintercom/v1/text.pb.dart';
 import 'package:voice_intercom_schema/gen/voiceintercom/v1/text_status.pb.dart';
 
 import 'background_audio.dart';
 import 'caption_board.dart';
+import 'deletion_receiver.dart';
 import 'media_feed.dart';
 import 'media_receiver.dart';
 import 'subscription.dart';
@@ -24,6 +26,17 @@ const textStatusTopic = 'text_status';
 /// 画像・動画の配信(設計メモの「データチャネルの取り決め」)。API が Server API から送る
 const mediaTopic = 'media';
 
+/// 送った本人が消した知らせ(proto/voiceintercom/v1/deletion.proto)。API が Server API から送る
+const deletionTopic = 'deletion';
+
+/// 自分のテキストの履歴の行がまだ保存されていない(Agent は訳がそろってから保存する)
+class NotSavedYetException implements Exception {
+  const NotSavedYetException();
+
+  @override
+  String toString() => 'まだ履歴に保存されていない';
+}
+
 /// 1つのルームへの接続。PTT、購読、字幕、テキスト入力を受け持つ。
 class RoomSession extends ChangeNotifier {
   RoomSession({
@@ -32,7 +45,15 @@ class RoomSession extends ChangeNotifier {
     required this.roomName,
     this.backgroundAudio = const BackgroundAudio(),
     Future<List<TimelineEvent>> Function()? fetchRecentTimeline,
-  }) {
+    Future<TimelineEvent?> Function(String eventId)? fetchTimelineEvent,
+    Future<TimelineEvent> Function(String eventId)? deleteTimelineEvent,
+    this.findTextRetryDelays = const [
+      Duration(seconds: 1),
+      Duration(seconds: 2),
+      Duration(seconds: 4),
+    ],
+  }) : _fetchRecent = fetchRecentTimeline,
+       _deleteEvent = deleteTimelineEvent {
     // Agent を知ってから送る。知る前に Agent が返した字幕は捨てるため(TextSender)
     textSender = TextSender(
       send: _sendText,
@@ -47,7 +68,24 @@ class RoomSession extends ChangeNotifier {
         isKnown: media.contains,
       );
     }
+    final fetchOne = fetchTimelineEvent;
+    if (fetchOne != null) {
+      deletionReceiver = DeletionReceiver(
+        fetchEvent: fetchOne,
+        onConfirmed: (row) => applyTimeline([row]),
+        isApplied: _appliedDeletions.contains,
+      );
+    }
   }
+
+  final Future<List<TimelineEvent>> Function()? _fetchRecent;
+  final Future<TimelineEvent> Function(String eventId)? _deleteEvent;
+
+  /// 自分のテキストの行を履歴で探すとき、見つからなければ読み直すまでの間隔
+  final List<Duration> findTextRetryDelays;
+
+  // 反映した墓石の event_id
+  final Set<String> _appliedDeletions = {};
 
   // WebRTC の初期化はアプリで1回だけ
   static final Future<void> _webrtcReady = LiveKitClient.initialize();
@@ -79,6 +117,10 @@ class RoomSession extends ChangeNotifier {
   /// topic `media` の受け手。履歴を読めないとき(fetchRecentTimeline を渡さないとき)は null で、
   /// topic `media` を捨てる
   MediaReceiver? mediaReceiver;
+
+  /// topic `deletion` の受け手。1件を読めないとき(fetchTimelineEvent を渡さないとき)は null で、
+  /// topic `deletion` を捨てる(入り直したときの履歴の読み直しで反映される)
+  DeletionReceiver? deletionReceiver;
 
   /// つなぎ直したときに呼ぶ(履歴を読み直して、切れていた間の画像・動画を埋める)
   void Function()? onReconnected;
@@ -269,6 +311,17 @@ class RoomSession extends ChangeNotifier {
   void handleData(DataReceivedEvent e) => _onData(e);
 
   void _onData(DataReceivedEvent e) {
+    if (e.topic == deletionTopic) {
+      // 画像・動画の配信と同じく、送信元の参加者があるものは捨て、無いものも履歴で確かめる
+      final result = deletionReceiver?.receive(
+        e.data,
+        fromParticipant: e.participant != null,
+      );
+      if (result == DeletionReceiveResult.fromParticipant) {
+        debugPrint('参加者が送った topic deletion を捨てた: ${e.participant?.identity}');
+      }
+      return;
+    }
     if (e.topic == mediaTopic) {
       // 送信元の参加者があるものは捨て、無いものも履歴で確かめてから出す(MediaReceiver)
       final result = mediaReceiver?.receive(
@@ -344,6 +397,86 @@ class RoomSession extends ChangeNotifier {
     }
   }
 
+  /// 履歴の行を表示に反映する(入室とつなぎ直しで読んだ先頭のページ、確かめた墓石、自分の削除)。
+  /// 画像・動画は足し(墓石なら「削除された…」に置き換え)、消したテキストは字幕を
+  /// 「削除されたテキスト」にする。
+  void applyTimeline(Iterable<TimelineEvent> rows) {
+    final list = rows.toList();
+    var changed = media.addAll(list);
+    for (final row in list) {
+      if (row.deleted == null) {
+        continue;
+      }
+      changed = _appliedDeletions.add(row.eventId) || changed;
+      if (row.kind == TimelineEventKindEnum.text) {
+        captions.markTextDeleted(row.senderId, row.messageId ?? '');
+      }
+    }
+    if (changed) {
+      _changed();
+    }
+  }
+
+  /// 自分の送ったテキストか(消す操作を出すか)
+  bool canDeleteCaption(CaptionSegment segment) =>
+      _deleteEvent != null &&
+      _fetchRecent != null &&
+      segment.isText &&
+      !segment.deleted &&
+      segment.speakerIdentity == myIdentity;
+
+  /// 自分の送った画像・動画か(消す操作を出すか)
+  bool canDeleteMedia(TimelineEvent event) =>
+      _deleteEvent != null &&
+      event.deleted == null &&
+      event.senderId == myIdentity;
+
+  /// 自分の送ったテキストを消す。履歴の行は Agent が訳をそろえてから保存するので、
+  /// message_id の行を先頭のページで探し、無ければ [findTextRetryDelays] の間隔で読み直す。
+  /// それでも無ければ [NotSavedYetException]。
+  Future<void> deleteOwnText(CaptionSegment segment) async {
+    final fetch = _fetchRecent;
+    final delete = _deleteEvent;
+    if (fetch == null || delete == null || !segment.isText) {
+      throw StateError('消せない字幕');
+    }
+    TimelineEvent? row;
+    for (var i = 0; ; i++) {
+      final rows = await fetch();
+      row = rows
+          .where(
+            (r) =>
+                r.kind == TimelineEventKindEnum.text &&
+                r.senderId == myIdentity &&
+                r.messageId == segment.messageId,
+          )
+          .firstOrNull;
+      if (row != null || i >= findTextRetryDelays.length || _disposed) {
+        break;
+      }
+      await Future<void>.delayed(findTextRetryDelays[i]);
+    }
+    if (row == null) {
+      throw const NotSavedYetException();
+    }
+    final tombstone = await delete(row.eventId);
+    if (!_disposed) {
+      applyTimeline([tombstone]);
+    }
+  }
+
+  /// 自分の送った画像・動画を消す
+  Future<void> deleteOwnMedia(TimelineEvent event) async {
+    final delete = _deleteEvent;
+    if (delete == null) {
+      throw StateError('消せない');
+    }
+    final tombstone = await delete(event.eventId);
+    if (!_disposed) {
+      applyTimeline([tombstone]);
+    }
+  }
+
   /// identity から表示名を引く。自分なら「自分」
   String displayName(String identity) {
     if (identity == myIdentity) {
@@ -378,6 +511,7 @@ class RoomSession extends ChangeNotifier {
     _stopBackground();
     textSender.dispose();
     mediaReceiver?.dispose();
+    deletionReceiver?.dispose();
     unawaited(_listener?.dispose());
     unawaited(room.disconnect().then((_) => room.dispose()));
     super.dispose();

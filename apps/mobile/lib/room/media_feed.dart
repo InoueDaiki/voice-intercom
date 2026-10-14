@@ -26,12 +26,24 @@ class MediaFeed {
 
   bool contains(String eventId) => _items.containsKey(eventId);
 
-  /// 足す。画像・動画でないものと、もうあるもの(同じ event_id)は捨てる。足したら true
+  /// 消した行(墓石)を表示しているか
+  bool isDeleted(String eventId) => _items[eventId]?.deleted != null;
+
+  /// 足す。画像・動画でないものと、もうあるもの(同じ event_id)は捨てる。足したら true。
+  ///
+  /// 送った本人が消した行(墓石。`deleted` があり `media` が無い)も足し、もうある行は墓石で
+  /// 置き換える(「削除された画像・動画」をその場所に出す)。墓石を消していない行で戻すことはしない
+  /// (古い応答や遅れた complete の応答が後から届いても、消したものを戻さない)。
   bool add(TimelineEvent event) {
-    if (event.kind != TimelineEventKindEnum.media || event.media == null) {
+    if (event.kind != TimelineEventKindEnum.media) {
       return false;
     }
-    if (_items.containsKey(event.eventId)) {
+    final deleted = event.deleted != null;
+    if (!deleted && event.media == null) {
+      return false;
+    }
+    final current = _items[event.eventId];
+    if (current != null && (current.deleted != null || !deleted)) {
       return false;
     }
     _items[event.eventId] = event;
