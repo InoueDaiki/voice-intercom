@@ -17,12 +17,13 @@ class MediaUpload {
     required this.uploadUrl,
     required this.thumbnailUploadUrl,
     required this.expiresAt,
+    this.multipart,
   });
 
   String mediaId;
 
-  /// 本体を PUT する署名付き URL。Content-Type ヘッダーを content_type と同じにする
-  String uploadUrl;
+  /// 本体を1回で PUT する署名付き URL。Content-Type ヘッダーを content_type と同じにする。マルチパート(multipart がある)なら null
+  String? uploadUrl;
 
   /// サムネイルを PUT する署名付き URL(Content-Type は image/jpeg)。has_thumbnail が false なら null
   String? thumbnailUploadUrl;
@@ -30,34 +31,48 @@ class MediaUpload {
   /// 署名付き URL の期限(ISO 8601、UTC)
   String expiresAt;
 
+  /// 本体をマルチパートで上げるなら、その分け方。パートの署名付き URL は POST .../media/{media_id}/parts で取る
+  MultipartUpload? multipart;
+
   @override
   bool operator ==(Object other) => identical(this, other) || other is MediaUpload &&
     other.mediaId == mediaId &&
     other.uploadUrl == uploadUrl &&
     other.thumbnailUploadUrl == thumbnailUploadUrl &&
-    other.expiresAt == expiresAt;
+    other.expiresAt == expiresAt &&
+    other.multipart == multipart;
 
   @override
   int get hashCode =>
     // ignore: unnecessary_parenthesis
     (mediaId.hashCode) +
-    (uploadUrl.hashCode) +
+    (uploadUrl == null ? 0 : uploadUrl!.hashCode) +
     (thumbnailUploadUrl == null ? 0 : thumbnailUploadUrl!.hashCode) +
-    (expiresAt.hashCode);
+    (expiresAt.hashCode) +
+    (multipart == null ? 0 : multipart!.hashCode);
 
   @override
-  String toString() => 'MediaUpload[mediaId=$mediaId, uploadUrl=$uploadUrl, thumbnailUploadUrl=$thumbnailUploadUrl, expiresAt=$expiresAt]';
+  String toString() => 'MediaUpload[mediaId=$mediaId, uploadUrl=$uploadUrl, thumbnailUploadUrl=$thumbnailUploadUrl, expiresAt=$expiresAt, multipart=$multipart]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
       json[r'media_id'] = this.mediaId;
+    if (this.uploadUrl != null) {
       json[r'upload_url'] = this.uploadUrl;
+    } else {
+      json[r'upload_url'] = null;
+    }
     if (this.thumbnailUploadUrl != null) {
       json[r'thumbnail_upload_url'] = this.thumbnailUploadUrl;
     } else {
       json[r'thumbnail_upload_url'] = null;
     }
       json[r'expires_at'] = this.expiresAt;
+    if (this.multipart != null) {
+      json[r'multipart'] = this.multipart;
+    } else {
+      json[r'multipart'] = null;
+    }
     return json;
   }
 
@@ -75,7 +90,6 @@ class MediaUpload {
         assert(json.containsKey(r'media_id'), 'Required key "MediaUpload[media_id]" is missing from JSON.');
         assert(json[r'media_id'] != null, 'Required key "MediaUpload[media_id]" has a null value in JSON.');
         assert(json.containsKey(r'upload_url'), 'Required key "MediaUpload[upload_url]" is missing from JSON.');
-        assert(json[r'upload_url'] != null, 'Required key "MediaUpload[upload_url]" has a null value in JSON.');
         assert(json.containsKey(r'thumbnail_upload_url'), 'Required key "MediaUpload[thumbnail_upload_url]" is missing from JSON.');
         assert(json.containsKey(r'expires_at'), 'Required key "MediaUpload[expires_at]" is missing from JSON.');
         assert(json[r'expires_at'] != null, 'Required key "MediaUpload[expires_at]" has a null value in JSON.');
@@ -84,9 +98,10 @@ class MediaUpload {
 
       return MediaUpload(
         mediaId: mapValueOfType<String>(json, r'media_id')!,
-        uploadUrl: mapValueOfType<String>(json, r'upload_url')!,
+        uploadUrl: mapValueOfType<String>(json, r'upload_url'),
         thumbnailUploadUrl: mapValueOfType<String>(json, r'thumbnail_upload_url'),
         expiresAt: mapValueOfType<String>(json, r'expires_at')!,
+        multipart: MultipartUpload.fromJson(json[r'multipart']),
       );
     }
     return null;

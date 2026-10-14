@@ -102,13 +102,37 @@ class Api {
     return res;
   });
 
-  /// アップロードした画像・動画を履歴に保存する。2回目からは同じ履歴を返す
-  Future<TimelineEvent> completeMediaUpload(String roomId, String mediaId) =>
-      _call((c) async {
-        final res = await MediaApi(c).completeMediaUpload(roomId, mediaId);
-        if (res == null) {
-          throw ApiException(500, 'complete の応答が空');
-        }
-        return res;
-      });
+  /// マルチパートのパート(と、要ればサムネイル)を PUT する署名付き URL
+  Future<UploadPartUrls> createUploadPartUrls(
+    String roomId,
+    String mediaId,
+    CreateUploadPartUrlsRequest request,
+  ) => _call((c) async {
+    final res = await MediaApi(c)
+        .createUploadPartUrls(roomId, mediaId, request);
+    if (res == null) {
+      throw ApiException(500, 'parts の応答が空');
+    }
+    return res;
+  });
+
+  /// アップロードした画像・動画を履歴に保存する。2回目からは同じ履歴を返す。
+  /// マルチパートなら [parts] に全パートの番号と ETag を渡す
+  Future<TimelineEvent> completeMediaUpload(
+    String roomId,
+    String mediaId, {
+    List<CompletedPart>? parts,
+  }) => _call((c) async {
+    final res = await MediaApi(c).completeMediaUpload(
+      roomId,
+      mediaId,
+      completeMediaUploadRequest: parts == null
+          ? null
+          : CompleteMediaUploadRequest(parts: parts),
+    );
+    if (res == null) {
+      throw ApiException(500, 'complete の応答が空');
+    }
+    return res;
+  });
 }

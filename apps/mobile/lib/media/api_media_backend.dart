@@ -8,7 +8,7 @@ import '../api.dart';
 import 'http_put.dart';
 import 'media_uploader.dart';
 
-/// [MediaUploader] の送り先。uploads と complete は API、PUT は署名付き URL(S3)。
+/// [MediaUploader] の送り先。uploads・parts・complete は API、PUT は署名付き URL(S3)。
 class ApiMediaBackend implements MediaUploadBackend {
   ApiMediaBackend(this._api, {http.Client? client})
     : _client = client ?? http.Client();
@@ -25,16 +25,31 @@ class ApiMediaBackend implements MediaUploadBackend {
   ) => _api.createMediaUpload(roomId, request);
 
   @override
-  Future<void> putFile(
+  Future<UploadPartUrls> partUrls(
+    String roomId,
+    String mediaId,
+    List<int> partNumbers, {
+    bool thumbnail = false,
+  }) => _api.createUploadPartUrls(
+    roomId,
+    mediaId,
+    CreateUploadPartUrlsRequest(partNumbers: partNumbers, thumbnail: thumbnail),
+  );
+
+  /// ファイルは [offset] から [length] バイトだけを読みながら送る(10GB の本体でも、
+  /// メモリに載るのは送っている途中の分だけ)
+  @override
+  Future<String?> putFile(
     String url,
     String path,
     int length,
-    String contentType, {
+    String? contentType, {
+    int offset = 0,
     void Function(int sent)? onProgress,
   }) => putSigned(
     _client,
     url,
-    body: File(path).openRead(),
+    body: File(path).openRead(offset, offset + length),
     length: length,
     contentType: contentType,
     onProgress: onProgress,
@@ -51,8 +66,11 @@ class ApiMediaBackend implements MediaUploadBackend {
       );
 
   @override
-  Future<TimelineEvent> complete(String roomId, String mediaId) =>
-      _api.completeMediaUpload(roomId, mediaId);
+  Future<TimelineEvent> complete(
+    String roomId,
+    String mediaId, {
+    List<CompletedPart>? parts,
+  }) => _api.completeMediaUpload(roomId, mediaId, parts: parts);
 
   void close() => _client.close();
 }

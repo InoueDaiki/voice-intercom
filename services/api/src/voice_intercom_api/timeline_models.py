@@ -14,8 +14,14 @@ from voice_intercom_api.models import Language
 MediaContentType = Literal["image/jpeg", "image/png", "image/webp", "image/heic", "video/mp4"]
 THUMBNAIL_CONTENT_TYPE = "image/jpeg"
 
-# 本体の上限。これより大きいものはマルチパートにする予定で、まだ受け付けない(README)
-MAX_MEDIA_BYTES = 100 * 1024 * 1024
+# 本体の上限(10GB)。大きいものはマルチパートで上げる(media.py)
+MAX_MEDIA_BYTES = 10 * 1024 * 1024 * 1024
+
+# マルチパートのパートの数の上限(S3 の上限)
+MAX_UPLOAD_PARTS = 10_000
+
+# パートの署名付き URL を1回で取れる数
+MAX_PART_URLS_PER_REQUEST = 100
 
 # 幅・高さの上限(ピクセル)。JPEG と HEIC の上限に合わせる
 MAX_MEDIA_SIDE = 65535
@@ -197,7 +203,10 @@ class PutTimelineEventRequest(BaseModel):
 class CreateMediaUploadRequest(BaseModel):
     content_type: MediaContentType
     size_bytes: int = Field(
-        gt=0, le=MAX_MEDIA_BYTES, description="本体のバイト数(上限 100MB。マルチパートは未対応)"
+        gt=0,
+        le=MAX_MEDIA_BYTES,
+        description="本体のバイト数(上限 10GB)。16MB 以上ならマルチパートになる。"
+        "complete で、置かれた大きさがこれと違えば失敗にする",
     )
     has_thumbnail: bool = Field(
         default=False, description="サムネイル(image/jpeg)も上げるなら true"
@@ -217,13 +226,81 @@ class CreateMediaUploadRequest(BaseModel):
         return self
 
 
+class MultipartUpload(BaseModel):
+    """本体をパートに分けて PUT する(マルチパート)ときの分け方。"""
+
+    part_size: int = Field(
+        description="パートのバイト数。最後のパートだけは残り(これ以下)。"
+        "パート n はファイルの (n-1)*part_size バイト目から"
+    )
+    part_count: int = Field(description="パートの数。番号は 1 から part_count")
+
+
 class MediaUpload(BaseModel):
     media_id: str
-    upload_url: str = Field(
-        description="本体を PUT する署名付き URL。Content-Type ヘッダーを content_type と同じにする"
+    upload_url: str | None = Field(
+        description="本体を1回で PUT する署名付き URL。Content-Type ヘッダーを content_type と"
+        "同じにする。マルチパート(multipart がある)なら null"
     )
     thumbnail_upload_url: str | None = Field(
         description="サムネイルを PUT する署名付き URL(Content-Type は image/jpeg)。"
         "has_thumbnail が false なら null"
     )
     expires_at: str = Field(description="署名付き URL の期限(ISO 8601、UTC)")
+    multipart: MultipartUpload | None = Field(
+        default=None,
+        description="本体をマルチパートで上げるなら、その分け方。パートの署名付き URL は "
+        "POST .../media/{media_id}/parts で取る",
+    )
+
+
+PartNumber = Annotated[int, Field(ge=1, le=MAX_UPLOAD_PARTS, description="パートの番号(1 から)")]
+
+
+class CreateUploadPartUrlsRequest(BaseModel):
+    part_numbers: list[PartNumber] = Field(
+        default_factory=list[int],
+        max_length=MAX_PART_URLS_PER_REQUEST,
+        description=f"署名付き URL が要るパートの番号(1回で {MAX_PART_URLS_PER_REQUEST} 個まで)",
+    )
+    thumbnail: bool = Field(
+        default=False, description="サムネイルの署名付き URL も取り直すなら true"
+    )
+
+    @model_validator(mode="after")
+    def _unique(self) -> Self:
+        if len(set(self.part_numbers)) != len(self.part_numbers):
+            raise ValueError("part_numbers が重なっている")
+        return self
+
+
+class UploadPartUrl(BaseModel):
+    part_number: int
+    url: str = Field(
+        description="パートを PUT する署名付き URL。Content-Type は要らない(付けても署名に"
+        "入らない)。応答の ETag ヘッダーを complete に渡す"
+    )
+
+
+class UploadPartUrls(BaseModel):
+    parts: list[UploadPartUrl]
+    thumbnail_upload_url: str | None = Field(
+        description="thumbnail が true で、サムネイルを上げるアップロードなら、その署名付き URL"
+    )
+    expires_at: str = Field(description="署名付き URL の期限(ISO 8601、UTC)")
+
+
+class CompletedPart(BaseModel):
+    part_number: PartNumber
+    etag: str = Field(
+        min_length=1, max_length=128, description="パートの PUT の応答の ETag ヘッダー(そのまま)"
+    )
+
+
+class CompleteMediaUploadRequest(BaseModel):
+    parts: list[CompletedPart] | None = Field(
+        default=None,
+        max_length=MAX_UPLOAD_PARTS,
+        description="マルチパートなら、全パートの番号と ETag(1 から part_count まで1つずつ)。"
+        "1回の PUT なら送らない",
+    )

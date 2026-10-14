@@ -129,7 +129,7 @@ def test_upload_unknown_room(admin: str) -> None:
         pytest.param({"content_type": "image/gif"}, id="content_type"),
         pytest.param({"content_type": "video/quicktime"}, id="mov"),
         pytest.param({"size_bytes": 0}, id="empty"),
-        pytest.param({"size_bytes": 100 * 1024 * 1024 + 1}, id="too-large"),
+        pytest.param({"size_bytes": 10 * 1024**3 + 1}, id="too-large"),
         pytest.param({"width": 0, "height": 100}, id="width-zero"),
         pytest.param({"width": 100, "height": 65536}, id="height-too-large"),
         pytest.param({"width": 100}, id="width-only"),
@@ -149,7 +149,7 @@ def test_upload_validates(member: str, overrides: dict[str, Any]) -> None:
 
 
 def test_upload_accepts_limit(member: str) -> None:
-    assert create_upload(member, size_bytes=100 * 1024 * 1024)[0] == 200
+    assert create_upload(member, size_bytes=10 * 1024**3)[0] == 200
     assert create_upload(member, width=65535, height=1)[0] == 200
     assert (
         create_upload(
@@ -164,7 +164,7 @@ def test_upload_accepts_limit(member: str) -> None:
 
 def test_complete(member: str, other_member: str) -> None:
     store.put_user("member-1", display_name="Taro", language="ja")
-    _, upload = create_upload(member, has_thumbnail=True)
+    _, upload = create_upload(member, has_thumbnail=True, size_bytes=4)
     media_id = upload["media_id"]
     put_object(f"rooms/room-a/{media_id}/original", "image/png", b"abcd")
     put_object(f"rooms/room-a/{media_id}/thumbnail", "image/jpeg")
@@ -188,7 +188,6 @@ def test_complete(member: str, other_member: str) -> None:
         "content_type": "image/png",
         "url": f"{MEDIA_BASE_URL}/rooms/room-a/{media_id}/original",
         "thumbnail_url": f"{MEDIA_BASE_URL}/rooms/room-a/{media_id}/thumbnail",
-        # 宣言した大きさではなく、置かれた大きさ
         "size_bytes": 4,
         # 送らなければ null
         "width": None,

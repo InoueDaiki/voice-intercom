@@ -236,8 +236,9 @@ SSM の値を変えたときは、新しいタスクでないと読み直さな�
 | `GET /rooms/{room_id}/timeline/event?event_id=...` | 履歴の1件(強い整合の読み取り)。消した行は墓石(`deleted` 付き)で返す。無ければ 404 | 管理者、メンバー |
 | `DELETE /rooms/{room_id}/timeline/event?event_id=...` | 送ったテキスト入力か画像・動画を消す。行は残して墓石にし(`deleted` を付け、`text`・`translations`・`media` は空)、2回目からは同じ墓石を返す。今ルームにいる人へデータチャネル(topic `deletion`)で知らせ、画像・動画なら S3 の本体とサムネイルを消して CloudFront のキャッシュを無効にする。他人の行と音声の発話は 403 | 送った本人 |
 | `PUT /rooms/{room_id}/timeline/{source_id}` | 発話(`utterance`、字幕の区切りごと)かテキスト入力(`text`。アプリが振った `message_id` も持つ)を履歴に保存する。`event_id` は `<occurred_at>#<source_id>` で、同じなら置き換える(再送しても1件)。消した行(墓石)は置き換えず、墓石を返す | Agent |
-| `POST /rooms/{room_id}/media/uploads` | 画像・動画を S3 に PUT する署名付き URL(本体と、`has_thumbnail` ならサムネイル)。期限は1時間。送信者が測った `width`・`height`(1〜65535、両方か無し)と、動画なら `duration_ms`(1〜86,400,000)を任意で送り、履歴に入れる | 管理者、メンバー |
-| `POST /rooms/{room_id}/media/{media_id}/complete` | 本文なし。アップロードした画像・動画を履歴(`media`)に保存し、今ルームにいる人へデータチャネル(topic `media`)で配信する。最初の complete では、ルームにいないメンバーに push 通知も送る。本体かサムネイルがまだ置かれていなければ 409。2回目からは同じ履歴を返し、配信だけをやり直す | アップロードした本人 |
+| `POST /rooms/{room_id}/media/uploads` | 画像・動画を S3 に PUT する署名付き URL(本体と、`has_thumbnail` ならサムネイル)。期限は1時間。`size_bytes` は 10GB まで。16MB 以上ならマルチパートにし、`upload_url` の代わりに `multipart`(`part_size`・`part_count`)を返す。送信者が測った `width`・`height`(1〜65535、両方か無し)と、動画なら `duration_ms`(1〜86,400,000)を任意で送り、履歴に入れる | 管理者、メンバー |
+| `POST /rooms/{room_id}/media/{media_id}/parts` | マルチパートのパートを PUT する署名付き URL(`part_numbers` で 100 個まで、期限1時間。`thumbnail: true` ならサムネイルの URL も取り直す)。マルチパートでない・保存した後は 409 | アップロードした本人 |
+| `POST /rooms/{room_id}/media/{media_id}/complete` | 1回の PUT なら本文なし。マルチパートなら `parts`(全パートの `part_number` と `etag`)を送り、API が完了させる。アップロードした画像・動画を履歴(`media`)に保存し、今ルームにいる人へデータチャネル(topic `media`)で配信する。最初の complete では、ルームにいないメンバーに push 通知も送る。本体かサムネイルがまだ置かれていない、大きさが申告と違えば 409。マルチパートを完了できなければ 410(uploads からやり直す)。2回目からは同じ履歴を返し、配信だけをやり直す | アップロードした本人 |
 | `POST /rooms/{room_id}/notifications/speaking` | 誰かが話し始めたことを push 通知する(`{speaker_id, present_ids}`)。ルームのメンバーから話者と `present_ids` を除いた人に送り、`{sent, skipped}` を返す。同じルーム × 同じ受け手には `NOTIFY_INTERVAL_S`(既定 300 秒。テキスト・画像・動画の通知と共通)に1回まで。ルームがなければ 404。送信に失敗しても 500 にせず `sent: 0` | Agent |
 | `POST /rooms/{room_id}/notifications/text` | テキスト入力が届いたことを push 通知する(`{sender_id, present_ids, text}`)。本文は「<表示名>さん: <テキストの先頭50文字>」。宛先・間引き・応答は `notifications/speaking` と同じ | Agent |
 
@@ -247,14 +248,19 @@ Agent は client credentials のトークン(スコープ `voice-intercom/agent`
 
 画像・動画のアップロード:
 
-1. `POST .../media/uploads` に `content_type`(`image/jpeg`、`image/png`、`image/webp`、`image/heic`、`video/mp4`)と `size_bytes`(と、測れれば `width`・`height`・`duration_ms`)を送り、`upload_url` をもらう。
+1. `POST .../media/uploads` に `content_type`(`image/jpeg`、`image/png`、`image/webp`、`image/heic`、`video/mp4`)と `size_bytes`(と、測れれば `width`・`height`・`duration_ms`)を送り、`upload_url`(16MB 以上なら `multipart`)をもらう。
 2. `upload_url` に本体を PUT する。**Content-Type ヘッダーを `content_type` と同じにする**(署名に含めてあり、違うと S3 も SeaweedFS も 403)。サムネイルは `thumbnail_upload_url` に `image/jpeg` で PUT する。
-3. `POST .../media/{media_id}/complete` を呼ぶ。履歴の `media.url`(CloudFront)で表示・再生する。
+   - マルチパートなら、`POST .../media/{media_id}/parts` でパートの URL を取り、パート n(ファイルの `(n-1)*part_size` バイト目から `part_size` バイト。最後は残り)を PUT する。Content-Type は要らない。応答の `ETag` ヘッダーを覚えておく。パートは並べて送ってよく、失敗したパートは同じ番号で送り直せばよい。
+3. `POST .../media/{media_id}/complete` を呼ぶ(マルチパートなら `parts` に全パートの番号と ETag)。履歴の `media.url`(CloudFront)で表示・再生する。
 
 - 画像・動画には文を添えられない(翻訳などを考えないため。設計メモの「画像・動画のルームへの配信」)。前に受け付けていた complete の `text` は、送られても無視する(Pydantic の既定で知らない項目を捨てる。REST API は未リリースだが、作りかけのクライアントが 422 にならないように)。履歴の media の行は `text` が常に空、`language` が常に null で、前に文を添えて保存した行も読むときに空にする。
 - `width`・`height`・`duration_ms` は、送信者のアプリが整えた後の本体で測った値(向きを反映した後)。API は中身を読んで確かめず、範囲だけを確かめる。`duration_ms` は動画のときだけ。履歴の `media` にそのまま入り、送らなかった行(足す前の行、管理コンソールから上げたもの)は null。
 
-- 本体の上限は 100MB で、単一の PUT だけにしている。設計メモの「100MB 以上はマルチパート」は後回し(未完了のマルチパートを消すライフサイクルルールは、`infra/modules/media` に既にある)。署名付き URL では大きさを縛れないので、complete で置かれた大きさを確かめ、上限を超えていれば 409 にする。
+- 本体の上限は 10GB。16MB 以上はマルチパートで、パートは 8MB(10,000 個を超えるなら 1MB 単位で大きくする。10GB では 1,280 個)。理由は設計メモの「画像・動画のアップロード」。署名付き URL では大きさを縛れないので、complete で置かれた大きさが `size_bytes` と同じかを確かめる。
+- マルチパートの UploadId はクライアントに返さず、仮の行に持つ。Content-Type は uploads の CreateMultipartUpload で決まる。未完了のマルチパートは、ライフサイクルルール(`infra/modules/media`)が1日で消す。仮の行も1日で消えるので、マルチパートは1日のうちに complete する。
+- complete は、サムネイルを先に確かめてから(無ければ 409)、CompleteMultipartUpload を呼ぶ。パートが合わない(ETag 違い)・アップロードが無い・完了した本体の大きさが違うときは、アップロードを取りやめて(完了した後なら本体を消して)410。前の complete が完了させた後に応答を失ったときは、S3 が NoSuchUpload を返すので、本体があればそのまま保存に進む。
+- 消した画像・動画は、マルチパートも取りやめる(Lambda に `s3:AbortMultipartUpload` を許してある)。消した後に complete が呼ばれたら、墓石を返し、S3 の本体とサムネイルを消し直す。
+- ローカルの SeaweedFS(4.48)も、パートの署名付き URL、CompleteMultipartUpload、AbortMultipartUpload に対応している(2026-10-14 に確かめた。設計メモの「画像・動画のアップロード」)。
 - S3 のキーは `rooms/<room_id>/<media_id>/original` と `.../thumbnail`。
 - complete を呼べる人は、uploads のときに timeline テーブルへ書く仮の行(`room_id` が `media-upload#<room_id>`。履歴には出ない。1日で TTL が消す)で確かめる。理由は `services/api` の `media.py` のコメント。
 - CloudFront の URL は署名なしで読める。`media_id` は推測できない乱数(UUID4)にしている。

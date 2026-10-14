@@ -179,9 +179,11 @@ data "aws_iam_policy_document" "api" {
     resources = [module.users_table.table_arn, module.rooms_table.table_arn]
   }
 
-  # 署名付き URL の発行(アップロードと、必要なら直接の取得)。HeadObject は GetObject の権限で動く
+  # 署名付き URL の発行(アップロードと、必要なら直接の取得)。HeadObject は GetObject の権限で動く。
+  # マルチパートの開始・パートの PUT・完了は PutObject の権限で動く。取りやめ(完了できないとき、
+  # 消したとき)には AbortMultipartUpload が要る
   statement {
-    actions   = ["s3:PutObject", "s3:GetObject"]
+    actions   = ["s3:PutObject", "s3:GetObject", "s3:AbortMultipartUpload"]
     resources = ["${module.media.bucket_arn}/*"]
   }
 

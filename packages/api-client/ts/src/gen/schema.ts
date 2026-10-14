@@ -95,9 +95,29 @@ export interface paths {
         put?: never;
         /**
          * 画像・動画をアップロードする署名付き URL を発行する(管理者かメンバー)
-         * @description PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。width・height・duration_ms は、送信者が測った値をそのまま履歴に入れる(API は確かめない)。
+         * @description PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。size_bytes が 16MB 以上なら、upload_url は null で、multipart(パートの大きさと数)を返す。パートの署名付き URL は parts で取る。width・height・duration_ms は、送信者が測った値をそのまま履歴に入れる(API は確かめない)。
          */
         post: operations["createMediaUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms/{room_id}/media/{media_id}/parts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * マルチパートのパートを PUT する署名付き URL を発行する(アップロードした本人)
+         * @description 1回で 100 個まで。期限は1時間なので、送る少し前に取る。期限が近づいたら、同じパートの URL を取り直してよい。thumbnail が true なら、サムネイルの署名付き URL も取り直す。マルチパートでないアップロードと、保存した後は 409。part_count より大きい番号は 422。
+         */
+        post: operations["createUploadPartUrls"];
         delete?: never;
         options?: never;
         head?: never;
@@ -115,7 +135,7 @@ export interface paths {
         put?: never;
         /**
          * アップロードした画像・動画を履歴に保存する(アップロードした本人)
-         * @description 本体(とサムネイル)が置かれていなければ 409。2回目からは、最初に保存した履歴を返す。保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。本文は要らない(画像・動画には文を添えられない)。前のクライアントが送る本文(text など)は無視する。
+         * @description 本体(とサムネイル)が置かれていなければ 409。置かれた本体の大きさが uploads の size_bytes と違えば 409(マルチパートでは 410)。マルチパートなら、本文の parts に全パートの番号と ETag を入れる(完了させてから確かめる)。完了できない(ETag が合わない、アップロードが取りやめられた・期限で消えた)なら 410 で、uploads からやり直す。2回目からは、最初に保存した履歴を返す。保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。1回の PUT なら本文は要らない(画像・動画には文を添えられない)。前のクライアントが送る本文(text など)は無視する。
          */
         post: operations["completeMediaUpload"];
         delete?: never;
@@ -273,6 +293,27 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** CompleteMediaUploadRequest */
+        CompleteMediaUploadRequest: {
+            /**
+             * Parts
+             * @description マルチパートなら、全パートの番号と ETag(1 から part_count まで1つずつ)。1回の PUT なら送らない
+             */
+            parts?: components["schemas"]["CompletedPart"][] | null;
+        };
+        /** CompletedPart */
+        CompletedPart: {
+            /**
+             * Part Number
+             * @description パートの番号(1 から)
+             */
+            part_number: number;
+            /**
+             * Etag
+             * @description パートの PUT の応答の ETag ヘッダー(そのまま)
+             */
+            etag: string;
+        };
         /** CreateMediaUploadRequest */
         CreateMediaUploadRequest: {
             /**
@@ -282,7 +323,7 @@ export interface components {
             content_type: "image/jpeg" | "image/png" | "image/webp" | "image/heic" | "video/mp4";
             /**
              * Size Bytes
-             * @description 本体のバイト数(上限 100MB。マルチパートは未対応)
+             * @description 本体のバイト数(上限 10GB)。16MB 以上ならマルチパートになる。complete で、置かれた大きさがこれと違えば失敗にする
              */
             size_bytes: number;
             /**
@@ -325,6 +366,20 @@ export interface components {
              * @default []
              */
             member_ids: string[];
+        };
+        /** CreateUploadPartUrlsRequest */
+        CreateUploadPartUrlsRequest: {
+            /**
+             * Part Numbers
+             * @description 署名付き URL が要るパートの番号(1回で 100 個まで)
+             */
+            part_numbers?: number[];
+            /**
+             * Thumbnail
+             * @description サムネイルの署名付き URL も取り直すなら true
+             * @default false
+             */
+            thumbnail: boolean;
         };
         /**
          * ErrorResponse
@@ -373,9 +428,9 @@ export interface components {
             media_id: string;
             /**
              * Upload Url
-             * @description 本体を PUT する署名付き URL。Content-Type ヘッダーを content_type と同じにする
+             * @description 本体を1回で PUT する署名付き URL。Content-Type ヘッダーを content_type と同じにする。マルチパート(multipart がある)なら null
              */
-            upload_url: string;
+            upload_url: string | null;
             /**
              * Thumbnail Upload Url
              * @description サムネイルを PUT する署名付き URL(Content-Type は image/jpeg)。has_thumbnail が false なら null
@@ -386,6 +441,24 @@ export interface components {
              * @description 署名付き URL の期限(ISO 8601、UTC)
              */
             expires_at: string;
+            /** @description 本体をマルチパートで上げるなら、その分け方。パートの署名付き URL は POST .../media/{media_id}/parts で取る */
+            multipart?: components["schemas"]["MultipartUpload"] | null;
+        };
+        /**
+         * MultipartUpload
+         * @description 本体をパートに分けて PUT する(マルチパート)ときの分け方。
+         */
+        MultipartUpload: {
+            /**
+             * Part Size
+             * @description パートのバイト数。最後のパートだけは残り(これ以下)。パート n はファイルの (n-1)*part_size バイト目から
+             */
+            part_size: number;
+            /**
+             * Part Count
+             * @description パートの数。番号は 1 から part_count
+             */
+            part_count: number;
         };
         /** NotificationResult */
         NotificationResult: {
@@ -691,6 +764,31 @@ export interface components {
             name?: string | null;
             /** Member Ids */
             member_ids?: string[] | null;
+        };
+        /** UploadPartUrl */
+        UploadPartUrl: {
+            /** Part Number */
+            part_number: number;
+            /**
+             * Url
+             * @description パートを PUT する署名付き URL。Content-Type は要らない(付けても署名に入らない)。応答の ETag ヘッダーを complete に渡す
+             */
+            url: string;
+        };
+        /** UploadPartUrls */
+        UploadPartUrls: {
+            /** Parts */
+            parts: components["schemas"]["UploadPartUrl"][];
+            /**
+             * Thumbnail Upload Url
+             * @description thumbnail が true で、サムネイルを上げるアップロードなら、その署名付き URL
+             */
+            thumbnail_upload_url: string | null;
+            /**
+             * Expires At
+             * @description 署名付き URL の期限(ISO 8601、UTC)
+             */
+            expires_at: string;
         };
         /** User */
         User: {
@@ -1242,6 +1340,80 @@ export interface operations {
             };
         };
     };
+    createUploadPartUrls: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ルームの ID */
+                room_id: string;
+                /** @description uploads が返した media_id */
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateUploadPartUrlsRequest"];
+            };
+        };
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadPartUrls"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description ルームか、アップロード(media_id)がない */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description マルチパートではない、またはもう保存した */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     completeMediaUpload: {
         parameters: {
             query?: never;
@@ -1254,7 +1426,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CompleteMediaUploadRequest"] | null;
+            };
+        };
         responses: {
             /** @description 成功 */
             200: {
@@ -1292,7 +1468,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description 本体かサムネイルがまだ置かれていない、または上限より大きい */
+            /** @description 本体かサムネイルがまだ置かれていない、または大きさが違う */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -1301,13 +1477,22 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description マルチパートを完了できない。uploads からやり直す */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description マルチパートなのに parts がそろっていない */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

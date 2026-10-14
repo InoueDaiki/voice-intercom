@@ -13,23 +13,27 @@ class PutFailedException implements Exception {
   String toString() => 'PUT が $statusCode で失敗した';
 }
 
-/// 署名付き URL に本体を PUT する。
+/// 署名付き URL に PUT し、応答の ETag を返す(無ければ null)。
 ///
 /// - Content-Type は署名に含まれるので、uploads に渡した content_type と同じにする
-///   (違うと S3 も SeaweedFS も 403。charset なども付けない)。
+///   (違うと S3 も SeaweedFS も 403。charset なども付けない)。マルチパートのパートは
+///   Content-Type を署名に含めないので、[contentType] を null にして付けない。
 /// - 署名付きの PUT は chunked を受け付けないので、Content-Length を付ける。
 /// - [onProgress] には、送り出したバイト数を渡す(実際に届いた量より少し先に進む)。
-Future<void> putSigned(
+/// - ETag はマルチパートの complete に渡す。引用符を含めて、ヘッダーのまま返す。
+Future<String?> putSigned(
   http.Client client,
   String url, {
   required Stream<List<int>> body,
   required int length,
-  required String contentType,
+  String? contentType,
   void Function(int sent)? onProgress,
 }) async {
   final request = http.StreamedRequest('PUT', Uri.parse(url))
-    ..contentLength = length
-    ..headers['Content-Type'] = contentType;
+    ..contentLength = length;
+  if (contentType != null) {
+    request.headers['Content-Type'] = contentType;
+  }
   var sent = 0;
   final pumping = () async {
     try {
@@ -50,4 +54,6 @@ Future<void> putSigned(
   if (response.statusCode < 200 || response.statusCode >= 300) {
     throw PutFailedException(response.statusCode, text);
   }
+  // package:http はヘッダーの名前を小文字にする
+  return response.headers['etag'];
 }

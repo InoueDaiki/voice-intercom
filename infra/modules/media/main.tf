@@ -34,7 +34,9 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "this" {
   }
 }
 
-# 未完了のマルチパートアップロードを消す
+# 未完了のマルチパートアップロードを消す。API の仮の行(complete を呼べる期間)も1日なので揃える
+# (services/api の timeline_store.py の PENDING_UPLOAD_TTL)。S3 は始めてからの日数を UTC の
+# 0時に切り上げて数えるので、実際に消えるのは1〜2日後
 resource "aws_s3_bucket_lifecycle_configuration" "this" {
   bucket = aws_s3_bucket.this.id
 
@@ -50,7 +52,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
   }
 }
 
-# 管理コンソール(ブラウザ)から署名付き URL で PUT するため。アプリ(ネイティブ)には CORS は効かない
+# 管理コンソール(ブラウザ)から署名付き URL で PUT するため。アプリ(ネイティブ)には CORS は効かない。
+# マルチパートでは、パートの PUT の応答の ETag を complete に渡すので、ブラウザから読めるようにする
 resource "aws_s3_bucket_cors_configuration" "this" {
   count  = length(var.cors_allowed_origins) > 0 ? 1 : 0
   bucket = aws_s3_bucket.this.id
@@ -59,6 +62,7 @@ resource "aws_s3_bucket_cors_configuration" "this" {
     allowed_methods = ["PUT"]
     allowed_origins = var.cors_allowed_origins
     allowed_headers = ["Content-Type"]
+    expose_headers  = ["ETag"]
     max_age_seconds = 3600
   }
 }

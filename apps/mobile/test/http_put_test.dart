@@ -35,6 +35,27 @@ void main() {
     expect(progress, [3, 5]);
   });
 
+  test('マルチパートのパートは Content-Type を付けず、ETag をそのまま返す', () async {
+    late http.BaseRequest seen;
+    final client = MockClient.streaming((request, bodyStream) async {
+      seen = request;
+      await bodyStream.drain<void>();
+      return http.StreamedResponse(
+        const Stream.empty(),
+        200,
+        headers: {'etag': '"0123abcd"'},
+      );
+    });
+    final etag = await putSigned(
+      client,
+      'https://s3.example/x?partNumber=2&uploadId=u',
+      body: Stream.value([1, 2]),
+      length: 2,
+    );
+    expect(seen.headers.containsKey('Content-Type'), isFalse);
+    expect(etag, '"0123abcd"');
+  });
+
   test('2xx でなければ PutFailedException', () async {
     final client = MockClient.streaming((request, bodyStream) async {
       await bodyStream.drain<void>();

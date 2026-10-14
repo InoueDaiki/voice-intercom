@@ -22,6 +22,8 @@
 - アップロードした人(uploader_id)、Content-Type、大きさ、サムネイルの有無、幅・高さ・動画の長さ
   (送られたときだけ)を持つ。complete で
   クライアントに送り直させず、ここから読む。
+- マルチパートなら、S3 の UploadId(upload_id)とパートの大きさ(part_size)も持つ。UploadId は
+  クライアントに渡さず、パートの署名付き URL の発行と complete で、ここから読む。
 - complete したら completed_event_id を書く。2回目の complete は同じ履歴を返す(再送に備える)。
 - expires_at_epoch(UNIX 秒)を TTL にして、complete されなかった行も消えるようにする。
 
@@ -51,7 +53,8 @@ from voice_intercom_api.timeline_models import (
     TimelineMedia,
 )
 
-# 仮の行を残す長さ。署名付き URL の期限(1時間)より十分長くする
+# 仮の行を残す長さ。署名付き URL の期限(1時間)より十分長くする。マルチパートの complete も
+# この間に呼ぶ(未完了のマルチパートは S3 のライフサイクルルールが1日で消す。infra/modules/media)
 PENDING_UPLOAD_TTL = timedelta(days=1)
 
 # 仮の行の TTL の属性名(infra/envs/<env>/main.tf の timeline テーブルの ttl_attribute と揃える)
@@ -278,6 +281,15 @@ class PendingUpload:
     width: int | None = None
     height: int | None = None
     duration_ms: int | None = None
+    # マルチパートのときだけ
+    upload_id: str | None = None
+    part_size: int | None = None
+
+    @property
+    def part_count(self) -> int | None:
+        if self.part_size is None:
+            return None
+        return -(-self.size_bytes // self.part_size)
 
 
 def _pending_key(room_id: str, media_id: str) -> dict[str, str]:
@@ -295,6 +307,8 @@ def create_pending_upload(
     width: int | None = None,
     height: int | None = None,
     duration_ms: int | None = None,
+    upload_id: str | None = None,
+    part_size: int | None = None,
 ) -> None:
     now = datetime.now(UTC)
     _timeline().put_item(
@@ -308,6 +322,8 @@ def create_pending_upload(
                 "width": width,
                 "height": height,
                 "duration_ms": duration_ms,
+                "upload_id": upload_id,
+                "part_size": part_size,
                 "created_at": store.now(),
                 TTL_ATTRIBUTE: int((now + PENDING_UPLOAD_TTL).timestamp()),
             }
@@ -330,6 +346,8 @@ def get_pending_upload(room_id: str, media_id: str) -> PendingUpload | None:
         width=_optional_int(item.get("width")),
         height=_optional_int(item.get("height")),
         duration_ms=_optional_int(item.get("duration_ms")),
+        upload_id=item.get("upload_id"),
+        part_size=_optional_int(item.get("part_size")),
     )
 
 
