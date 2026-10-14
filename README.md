@@ -236,11 +236,12 @@ SSM の値を変えたときは、新しいタスクでないと読み直さな�
 | `PUT /rooms/{room_id}/timeline/{source_id}` | 発話(`utterance`、字幕の区切りごと)かテキスト入力(`text`)を履歴に保存する。`event_id` は `<occurred_at>#<source_id>` で、同じなら置き換える(再送しても1件) | Agent |
 | `POST /rooms/{room_id}/media/uploads` | 画像・動画を S3 に PUT する署名付き URL(本体と、`has_thumbnail` ならサムネイル)。期限は1時間 | 管理者、メンバー |
 | `POST /rooms/{room_id}/media/{media_id}/complete` | アップロードした画像・動画を履歴(`media`)に保存し、今ルームにいる人へデータチャネル(topic `media`)で配信する。最初の complete では、ルームにいないメンバーに push 通知も送る。本体かサムネイルがまだ置かれていなければ 409。2回目からは同じ履歴を返し、配信だけをやり直す | アップロードした本人 |
-| `POST /rooms/{room_id}/notifications/speaking` | 誰かが話し始めたことを push 通知する(`{speaker_id, present_ids}`)。ルームのメンバーから話者と `present_ids` を除いた人に送り、`{sent, skipped}` を返す。同じルーム × 同じ受け手には `SPEAKING_NOTIFY_INTERVAL_S`(既定 600 秒)に1回まで。ルームがなければ 404。送信に失敗しても 500 にせず `sent: 0` | Agent |
+| `POST /rooms/{room_id}/notifications/speaking` | 誰かが話し始めたことを push 通知する(`{speaker_id, present_ids}`)。ルームのメンバーから話者と `present_ids` を除いた人に送り、`{sent, skipped}` を返す。同じルーム × 同じ受け手には `NOTIFY_INTERVAL_S`(既定 300 秒。テキスト・画像・動画の通知と共通)に1回まで。ルームがなければ 404。送信に失敗しても 500 にせず `sent: 0` | Agent |
+| `POST /rooms/{room_id}/notifications/text` | テキスト入力が届いたことを push 通知する(`{sender_id, present_ids, text}`)。本文は「<表示名>さん: <テキストの先頭50文字>」。宛先・間引き・応答は `notifications/speaking` と同じ | Agent |
 
 言語は gpt-realtime-translate が出力できる13言語のコード(`ja`、`en` など)。Agent の翻訳先はこの言語で決まるので、プロフィールがないとトークンを発行しない。
 
-Agent は client credentials のトークン(スコープ `voice-intercom/agent`)で呼ぶ。Agent のトークンは利用者向けのエンドポイントでは 403、`PUT .../timeline/...` と `POST .../notifications/speaking` は利用者のトークンでは 403 になる。
+Agent は client credentials のトークン(スコープ `voice-intercom/agent`)で呼ぶ。Agent のトークンは利用者向けのエンドポイントでは 403、`PUT .../timeline/...` と `POST .../notifications/...` は利用者のトークンでは 403 になる。
 
 画像・動画のアップロード:
 
@@ -259,7 +260,7 @@ complete で履歴に保存した後に、API が LiveKit の Server API でル�
 
 1. `ListParticipants` で今ルームにいる人(kind が `STANDARD`)を取る。
 2. 1人以上いれば、`SendData` で topic `media`、reliable、宛先なし(送信者本人を含む全員)に `MediaMessage`(`proto/voiceintercom/v1/media.proto`)を送る。中身は complete の応答(履歴の行)と同じで、添えた文は UTF-8 で 4096 バイトを超えると切り詰め、`text_truncated` を true にする。
-3. 最初の complete のときだけ、ルームのメンバーから送信者と今ルームにいる人を除いた人に push 通知を送る。タイトルはルームの名前、本文は「<表示名>さんが画像を送りました: <添えた文の先頭>」(動画なら「動画を送りました」)、data は `{"type": "media", "room_id": ..., "event_id": ...}`。
+3. 最初の complete のときだけ、ルームのメンバーから送信者と今ルームにいる人を除いた人に push 通知を送る。タイトルはルームの名前、本文は「<表示名>さんが画像を送りました: <添えた文の先頭>」(動画なら「動画を送りました」)、data は `{"type": "media", "room_id": ..., "event_id": ...}`。同じルーム × 同じ受け手には、テキスト・話し始めと共通の間隔(5分)に1回まで(「push 通知」)。
 
 - 配信や通知が失敗しても complete は 200 で履歴を返す(ログに残す)。`ListParticipants` が失敗したら配信を飛ばし、push 通知は送信者以外の全員に送る。
 - LiveKit の呼び出しは1回2秒、push 通知は8秒で待つのをやめる(Lambda の timeout 15秒に収める)。
@@ -281,10 +282,14 @@ complete で履歴に保存した後に、API が LiveKit の Server API でル�
 
 送るのは `voice_intercom_api.notify` の `send_to_users`。
 
-どこから送るか: 誰かが話し始めたときに、Agent が `POST /rooms/{room_id}/notifications/speaking` を呼んで送る(`services/api` の `notifications.py`)。今ルームに入っていないメンバーに、タイトルはルームの名前、本文は「<話者の表示名>さんが話しています」(プロフィールが無ければ「誰かが話しています」)、data は `{"type": "speaking", "room_id": ...}` で届く。画像・動画は、complete から API が送る(「画像・動画のルームへの配信」)。チャット(テキスト入力)からは、今は送らない。
+どこから送るか: ルームに何か届いたら(テキスト入力、音声の話し始め、画像、動画)、今ルームに入っていないメンバーに送る。タイトルはどれもルームの名前。
 
-- 送る相手は、ルームの `member_ids` から、`speaker_id` と `present_ids`(今ルームに入っている人)を除いた人。
-- 同じルーム × 同じ受け手には、`SPEAKING_NOTIFY_INTERVAL_S` 秒(既定 600)に1回まで。間隔の内側の人は `skipped` に数える。受け手ごとの最後の送信時刻は timeline テーブルの別のパーティション(`room_id` が `notify-speaking#<room_id>`、`event_id` が受け手の sub。履歴には出ない)に置き、条件付きの UpdateItem(前回が間隔より前なら更新)で決めるので、同時に呼ばれても二重に送らない。テーブルを増やさず、メディアの仮の行と同じく TTL で消える。
+- 話し始め: Agent が `POST /rooms/{room_id}/notifications/speaking` を呼んで送る(`services/api` の `notifications.py`)。本文は「<話者の表示名>さんが話しています」(プロフィールが無ければ「誰かが話しています」)、data は `{"type": "speaking", "room_id": ...}`。
+- テキスト入力: テキストはデータチャネルで Agent にだけ届くので、Agent が受け付けたときに `POST /rooms/{room_id}/notifications/text` を呼んで送る。本文は「<表示名>さん: <テキストの先頭50文字>…」(改行は空白に。プロフィールが無ければ「誰か: …」。原文のまま)、data は `{"type": "text", "room_id": ...}`。
+- 画像・動画: complete から API が送る(「画像・動画のルームへの配信」)。
+
+- 送る相手は、ルームの `member_ids` から、送信者(`speaker_id`、`sender_id`)と `present_ids`(今ルームに入っている人)を除いた人。
+- 同じルーム × 同じ受け手には、`NOTIFY_INTERVAL_S` 秒(既定 300)に1回まで。最初の1件はすぐ送る。種類(テキスト・話し始め・画像・動画)は分けずに数え、別のルームは別に数える(`room_push.py`)。間隔の内側の人は `skipped` に数える。受け手ごとの最後の送信時刻は timeline テーブルの別のパーティション(`room_id` が `notify#<room_id>`、`event_id` が受け手の sub。履歴には出ない)に置き、条件付きの UpdateItem(前回が間隔より前なら更新)で決めるので、同時に呼ばれても二重に送らない。テーブルを増やさず、メディアの仮の行と同じく TTL で消える。
 - `sent` は送信の対象にした人数(端末を登録していない人も含む)。サービスアカウントが未設定・読めない、FCM の呼び出しが例外になった、などのときはログに残して `sent: 0` を返し、取った時刻を戻す(次の呼び出しで送れる)。
 - 送信は 10 秒で待つのをやめて応答する(Lambda の timeout 15 秒に収めるため)。待ちきれなかった送信は続いているものとして数え、時刻は戻さない。Agent は応答を待たずに次へ進む前提。
 
