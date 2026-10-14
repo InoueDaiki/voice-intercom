@@ -157,8 +157,11 @@ class TextInput:
         *,
         max_chars: int,
         history: HistorySink | None = None,
+        on_accepted: Callable[[str, str], None] | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
+        # 受け付けたテキストの (送信者, 本文) を知らせる先(push 通知。notify.py)
+        self._on_accepted = on_accepted
         self._translator = translator
         self._history = history
         self._now = now
@@ -190,6 +193,8 @@ class TextInput:
                 len(message.text),
             )
             return
+        if self._on_accepted is not None:
+            self._on_accepted(sender, text)
         received_at = self._now()
         plan = plan_text(sender_language, listeners)
         segment_id = new_segment_id()

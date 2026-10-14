@@ -67,6 +67,8 @@ def lk(monkeypatch: pytest.MonkeyPatch) -> FakeLiveKit:
 def push(monkeypatch: pytest.MonkeyPatch) -> FakeNotify:
     fake = FakeNotify()
     monkeypatch.setattr(notify, "send_to_users", fake.send_to_users)
+    # サービスアカウントは設定済みとみなす
+    monkeypatch.setattr(notify, "service_account", lambda: None)
     return fake
 
 
@@ -334,6 +336,38 @@ def test_everyone_present_sends_no_push(
     assert push.calls == []
 
 
+def test_push_is_throttled_per_recipient_and_room(
+    make_token: Token, member: str, lk: FakeLiveKit, push: FakeNotify
+) -> None:
+    store.create_room("room-x", "現場X", ["member-1", "member-3"])
+
+    upload(member)
+    # 続けて送っても、間隔の内側の人には送らない
+    upload(member)
+    # 別の人が送っても、受け手 × ルームで数える(member-1 にはまだ送っていない)
+    upload(make_token(sub="member-2", **{"cognito:groups": []}))
+    # 別のルームは別に数える
+    upload(member, room_id="room-x")
+
+    assert [c["user_ids"] for c in push.calls] == [
+        ["member-2", "member-3", "member-4"],
+        ["member-1"],
+        ["member-3"],
+    ]
+    assert push.calls[2]["title"] == "現場X"
+
+
+def test_push_error_releases_interval(member: str, lk: FakeLiveKit, push: FakeNotify) -> None:
+    push.error = RuntimeError("FCM の失敗")
+    upload(member)
+
+    # 送れなかったときは時刻を戻すので、次の画像で送れる
+    push.error = None
+    upload(member)
+
+    assert [c["user_ids"] for c in push.calls] == [["member-2", "member-3", "member-4"]]
+
+
 def test_push_error_is_not_500(member: str, lk: FakeLiveKit, push: FakeNotify) -> None:
     push.error = RuntimeError("FCM のアクセストークンを作れなかった")
 
@@ -353,6 +387,7 @@ def test_slow_push_returns_in_time(
         return SendResult()
 
     monkeypatch.setattr(notify, "send_to_users", slow)
+    monkeypatch.setattr(notify, "service_account", lambda: None)
     monkeypatch.setattr(media_broadcast, "PUSH_TIMEOUT_S", 0.1)
     started = time.monotonic()
     try:

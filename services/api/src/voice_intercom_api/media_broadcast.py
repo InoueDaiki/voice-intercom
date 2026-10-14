@@ -8,7 +8,8 @@ docs/設計メモ.md の「画像・動画のルームへの配信」の B(API �
    いなければ送らない(livekit-server 1.13.9 では、無いルームへの SendData は 3 秒待って
    503 になる)。
 3. 最初の complete のときだけ、ルームのメンバーから、送信者と今ルームにいる人を除いた人に
-   push 通知を送る。
+   push 通知を送る。同じルーム × 同じ受け手には、テキスト・話し始めの通知と共通の間隔
+   (既定 5 分)に1回まで(room_push.py)。
 
 - 送信者は JWT の sub、中身は保存した履歴の行から作る。参加者は書き換えられない。
 - 2回目の complete でも 1 と 2 は行う(1回目の配信が失敗したときに、やり直せば届くように)。
@@ -18,7 +19,8 @@ docs/設計メモ.md の「画像・動画のルームへの配信」の B(API �
 - ListParticipants が失敗したら(LiveKit に届かないなど)、配信は飛ばし、push 通知は
   送信者以外のメンバー全員に送る(今ルームにいる人が分からないため)。
 - 時間: LiveKit の呼び出しは1回 LIVEKIT_TIMEOUT_S 秒、push 通知は PUSH_TIMEOUT_S 秒で待つのを
-  やめる。合わせて 12 秒で、S3 と DynamoDB の読み書きを足しても Lambda の timeout(15秒)に収める。
+  やめる。合わせて 12 秒で、S3 と DynamoDB の読み書き(間引きの UpdateItem は受け手ごとに1回、
+  数 ms)を足しても Lambda の timeout(15秒)に収める。
 """
 
 import asyncio
@@ -30,7 +32,7 @@ import aiohttp
 from livekit import api as livekit
 from livekit.api.room_service import RoomService
 
-from voice_intercom_api import notify
+from voice_intercom_api import room_push
 from voice_intercom_api.config import get_settings
 from voice_intercom_api.models import Room, User
 from voice_intercom_api.timeline_models import TimelineEvent
@@ -158,11 +160,10 @@ def notify_absent(
     room: Room, event: TimelineEvent, sender: User | None, present: list[str] | None
 ) -> None:
     """ルームのメンバーから、送信者と今ルームにいる人を除いた人に push 通知を送る。"""
-    excluded = {event.sender_id, *(present or [])}
-    recipients = [uid for uid in dict.fromkeys(room.member_ids) if uid not in excluded]
-    if not recipients:
-        return
-    notify.send_to_users_within(
+    recipients = room_push.recipients_of(room.member_ids, [event.sender_id, *(present or [])])
+    # 同じルーム × 同じ受け手に、テキスト・話し始めと共通の間隔で1回まで(room_push.py)
+    room_push.send_throttled(
+        room.room_id,
         recipients,
         title=room.name,
         body=push_body(event, sender),

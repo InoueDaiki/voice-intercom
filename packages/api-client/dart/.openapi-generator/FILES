@@ -25,6 +25,7 @@ lib/model/http_validation_error.dart
 lib/model/live_kit_token_request.dart
 lib/model/live_kit_token_response.dart
 lib/model/media_upload.dart
+lib/model/notification_result.dart
 lib/model/put_timeline_event_request.dart
 lib/model/put_user_request.dart
 lib/model/register_device_request.dart
@@ -32,7 +33,7 @@ lib/model/response_validation_error.dart
 lib/model/room.dart
 lib/model/room_list.dart
 lib/model/speaking_notification_request.dart
-lib/model/speaking_notification_result.dart
+lib/model/text_notification_request.dart
 lib/model/timeline_event.dart
 lib/model/timeline_media.dart
 lib/model/timeline_page.dart

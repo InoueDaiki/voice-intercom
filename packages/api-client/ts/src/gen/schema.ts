@@ -111,9 +111,29 @@ export interface paths {
         put?: never;
         /**
          * 誰かが話し始めたことを、ルームにいないメンバーに push 通知する(Agent)
-         * @description ルームのメンバーから、話者と present_ids を除いた人に送る。同じルーム × 同じ受け手には、間隔(既定 600 秒)に1回まで。送信に失敗しても 500 にはせず、sent を 0 にして返す。
+         * @description ルームのメンバーから、話者と present_ids を除いた人に送る。同じルーム × 同じ受け手には、間隔(既定 300 秒。テキスト・画像・動画の通知と共通)に1回まで。送信に失敗しても 500 にはせず、sent を 0 にして返す。
          */
         post: operations["notifySpeaking"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms/{room_id}/notifications/text": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * テキスト入力が届いたことを、ルームにいないメンバーに push 通知する(Agent)
+         * @description ルームのメンバーから、送信者と present_ids を除いた人に送る。本文は「<表示名>さん: <テキストの先頭>」。同じルーム × 同じ受け手には、間隔(既定 300 秒。話し始め・画像・動画の通知と共通)に1回まで。送信に失敗しても 500 にはせず、sent を 0 にして返す。
+         */
+        post: operations["notifyText"];
         delete?: never;
         options?: never;
         head?: never;
@@ -337,6 +357,19 @@ export interface components {
              */
             expires_at: string;
         };
+        /** NotificationResult */
+        NotificationResult: {
+            /**
+             * Sent
+             * @description 送った人数
+             */
+            sent: number;
+            /**
+             * Skipped
+             * @description 前回の通知から間隔がたっていないので、送らなかった人数
+             */
+            skipped: number;
+        };
         /**
          * PutTimelineEventRequest
          * @description Agent が発話とテキスト入力を保存するときの本文。
@@ -459,18 +492,24 @@ export interface components {
              */
             present_ids: string[];
         };
-        /** SpeakingNotificationResult */
-        SpeakingNotificationResult: {
+        /** TextNotificationRequest */
+        TextNotificationRequest: {
             /**
-             * Sent
-             * @description 送った人数
+             * Sender Id
+             * @description 送信者の user_id(sub)
              */
-            sent: number;
+            sender_id: string;
             /**
-             * Skipped
-             * @description 前回の通知から間隔がたっていないので、送らなかった人数
+             * Present Ids
+             * @description 今ルームに入っている人の user_id(sub)。この人たちには送らない
+             * @default []
              */
-            skipped: number;
+            present_ids: string[];
+            /**
+             * Text
+             * @description 送られたテキスト(本文には先頭だけを入れる)
+             */
+            text: string;
         };
         /**
          * TimelineEvent
@@ -1102,7 +1141,70 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SpeakingNotificationResult"];
+                    "application/json": components["schemas"]["NotificationResult"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description ルームがない */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    notifyText: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ルームの ID */
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TextNotificationRequest"];
+            };
+        };
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationResult"];
                 };
             };
             /** @description トークンがない、または不正 */
