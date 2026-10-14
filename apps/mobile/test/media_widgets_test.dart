@@ -90,16 +90,17 @@ void main() {
     expect(find.byType(ListTile), findsNothing);
   });
 
-  testWidgets('画像は送信者・時刻・添えた文を出し、タップで全画面に開く', (tester) async {
+  testWidgets('画像は送信者・時刻を出し、タップで全画面に開く', (tester) async {
     final event = mediaEvent(
       '2026-10-13T00:00:00.000Z',
       sourceId: 'img1',
       thumbnailUrl: 'https://media.example/rooms/r1/img1/thumbnail',
+      // 文を添えられたころの行が残っていても出さない(API も空にして返す)
       text: '入荷した箱',
     );
     await tester.pumpWidget(app(MediaCard(event: event, sender: 'ボブ')));
     expect(find.textContaining('ボブ(画像)'), findsOneWidget);
-    expect(find.text('入荷した箱'), findsOneWidget);
+    expect(find.text('入荷した箱'), findsNothing);
     // 一覧ではサムネイルだけを読む
     final image = tester.widget<Image>(find.byType(Image));
     expect(
@@ -118,7 +119,7 @@ void main() {
       find.byType(MediaViewerScreen),
     );
     expect(viewer.media.url, 'https://media.example/rooms/r1/img1/original');
-    expect(viewer.caption, '入荷した箱');
+    expect(find.text('入荷した箱'), findsNothing);
     expect(find.byType(InteractiveViewer), findsOneWidget);
   });
 
@@ -133,6 +134,74 @@ void main() {
     expect(find.byType(Image), findsNothing);
     expect(find.byIcon(Icons.movie_outlined), findsOneWidget);
     expect(find.byIcon(Icons.play_circle_fill), findsOneWidget);
+    // 長さの分からない動画(足す前に保存した履歴)には長さを出さない
+    expect(find.byKey(const Key('duration-v1')), findsNothing);
+  });
+
+  testWidgets('縦長の動画は縦長の枠を先に取り、長さを出す', (tester) async {
+    final event = mediaEvent(
+      '2026-10-13T00:00:00.000Z',
+      sourceId: 'v2',
+      video: true,
+      width: 720,
+      height: 1280,
+      durationMs: 75000,
+    );
+    await tester.pumpWidget(app(MediaCard(event: event, sender: '自分')));
+    final box = tester.getSize(find.byKey(const Key('media-v2')));
+    expect(box.height, 240);
+    expect(box.width, closeTo(240 * 720 / 1280, 0.01));
+    expect(find.text('1:15'), findsOneWidget);
+  });
+
+  testWidgets('幅・高さの無い画像(足す前に保存した履歴)は決まった枠で出す', (tester) async {
+    final event = mediaEvent('2026-10-13T00:00:00.000Z', sourceId: 'old');
+    await tester.pumpWidget(app(MediaCard(event: event, sender: 'ボブ')));
+    expect(
+      tester.getSize(find.byKey(const Key('media-old'))),
+      const Size(200, 150),
+    );
+  });
+
+  test('枠の大きさ', () {
+    Size box({int? width, int? height}) => mediaBoxSize(
+      mediaEvent(
+        '2026-10-13T00:00:00.000Z',
+        width: width,
+        height: height,
+      ).media!,
+    );
+    expect(box(width: 1600, height: 1200), const Size(240, 180));
+    expect(box(width: 1000, height: 1000), const Size(240, 240));
+    // 極端に細長いものは 3:1 で止める
+    expect(box(width: 10000, height: 100), const Size(240, 80));
+    expect(box(width: 100, height: 10000), const Size(80, 240));
+    expect(box(), const Size(200, 150));
+  });
+
+  test('動画の長さの表示', () {
+    expect(formatDuration(400), '0:01');
+    expect(formatDuration(15000), '0:15');
+    expect(formatDuration(15001), '0:16');
+    expect(formatDuration(180000), '3:00');
+    expect(formatDuration(3723000), '1:02:03');
+    expect(
+      durationLabel(
+        mediaEvent(
+          '2026-10-13T00:00:00.000Z',
+          video: true,
+          durationMs: 9000,
+        ).media!,
+      ),
+      '0:09',
+    );
+    // 画像には出さない
+    expect(
+      durationLabel(
+        mediaEvent('2026-10-13T00:00:00.000Z', durationMs: 9000).media!,
+      ),
+      isNull,
+    );
   });
 
   test('一覧で読む URL', () {

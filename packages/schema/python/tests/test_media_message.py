@@ -10,13 +10,14 @@ def test_roundtrip() -> None:
         content_type="image/jpeg",
         url="https://media.example/rooms/r/m/original",
         size_bytes=1234,
-        text="現場の写真",
-        language="ja",
+        width=1080,
+        height=1920,
     )
 
     decoded = MediaMessage.FromString(message.SerializeToString())
 
     assert decoded == message
-    # 無いサムネイルは空文字、切り詰めていなければ false
+    # 無いサムネイルは空文字、分からない長さは 0。使わない text 系は空のまま
     assert decoded.thumbnail_url == ""
-    assert decoded.text_truncated is False
+    assert decoded.duration_ms == 0
+    assert (decoded.text, decoded.text_truncated, decoded.language) == ("", False, "")

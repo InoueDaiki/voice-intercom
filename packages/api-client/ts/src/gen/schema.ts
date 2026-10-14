@@ -71,7 +71,7 @@ export interface paths {
         put?: never;
         /**
          * 画像・動画をアップロードする署名付き URL を発行する(管理者かメンバー)
-         * @description PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。
+         * @description PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。width・height・duration_ms は、送信者が測った値をそのまま履歴に入れる(API は確かめない)。
          */
         post: operations["createMediaUpload"];
         delete?: never;
@@ -91,7 +91,7 @@ export interface paths {
         put?: never;
         /**
          * アップロードした画像・動画を履歴に保存する(アップロードした本人)
-         * @description 本体(とサムネイル)が置かれていなければ 409。2回目からは、最初に保存した履歴を返す。保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。
+         * @description 本体(とサムネイル)が置かれていなければ 409。2回目からは、最初に保存した履歴を返す。保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。本文は要らない(画像・動画には文を添えられない)。前のクライアントが送る本文(text など)は無視する。
          */
         post: operations["completeMediaUpload"];
         delete?: never;
@@ -229,15 +229,6 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** CompleteMediaUploadRequest */
-        CompleteMediaUploadRequest: {
-            /**
-             * Text
-             * @description 画像・動画に添える文
-             * @default
-             */
-            text: string;
-        };
         /** CreateMediaUploadRequest */
         CreateMediaUploadRequest: {
             /**
@@ -256,6 +247,21 @@ export interface components {
              * @default false
              */
             has_thumbnail: boolean;
+            /**
+             * Width
+             * @description 表示の幅(ピクセル。向きを反映した後。height と一緒に送る)。分からなければ null
+             */
+            width?: number | null;
+            /**
+             * Height
+             * @description 表示の高さ(ピクセル。向きを反映した後。width と一緒に送る)。分からなければ null
+             */
+            height?: number | null;
+            /**
+             * Duration Ms
+             * @description 動画の長さ(ミリ秒。動画のときだけ)。画像と、分からないときは null
+             */
+            duration_ms?: number | null;
         };
         /** CreateRoomRequest */
         CreateRoomRequest: {
@@ -507,7 +513,7 @@ export interface components {
             language: ("es" | "pt" | "fr" | "ja" | "ru" | "zh" | "de" | "ko" | "hi" | "id" | "vi" | "it" | "en") | null;
             /**
              * Text
-             * @description 原文。media では空文字か、添えた文
+             * @description 原文。media では常に空文字(画像・動画には文を添えられない)
              */
             text: string;
             /**
@@ -551,6 +557,21 @@ export interface components {
             thumbnail_url: string | null;
             /** Size Bytes */
             size_bytes: number;
+            /**
+             * Width
+             * @description 表示の幅(ピクセル。向きを反映した後。height と一緒に送る)。分からなければ null
+             */
+            width?: number | null;
+            /**
+             * Height
+             * @description 表示の高さ(ピクセル。向きを反映した後。width と一緒に送る)。分からなければ null
+             */
+            height?: number | null;
+            /**
+             * Duration Ms
+             * @description 動画の長さ(ミリ秒。動画のときだけ)。画像と、分からないときは null
+             */
+            duration_ms?: number | null;
         };
         /** TimelinePage */
         TimelinePage: {
@@ -1018,11 +1039,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CompleteMediaUploadRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description 成功 */
             200: {

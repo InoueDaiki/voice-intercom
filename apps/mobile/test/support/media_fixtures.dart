@@ -8,6 +8,9 @@ TimelineEvent mediaEvent(
   bool video = false,
   String? thumbnailUrl,
   String text = '',
+  int? width,
+  int? height,
+  int? durationMs,
 }) => TimelineEvent(
   roomId: 'r1',
   eventId: '$occurredAt#$sourceId',
@@ -26,6 +29,9 @@ TimelineEvent mediaEvent(
     url: 'https://media.example/rooms/r1/$sourceId/original',
     thumbnailUrl: thumbnailUrl,
     sizeBytes: 1234,
+    width: width,
+    height: height,
+    durationMs: durationMs,
   ),
 );
 

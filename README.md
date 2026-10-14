@@ -234,8 +234,8 @@ SSM の値を変えたときは、新しいタスクでないと読み直さな�
 | `POST /livekit/token` | LiveKit の参加用トークン。プロフィールの表示名を name に、言語を参加者の属性 `language` に入れる。Agent のディスパッチ(`AGENT_NAME`、既定 `voice-intercom`)も入れ、ルームが作られたときに Agent が入る。ルームがなければ 404、プロフィールが未登録なら 409 | 管理者、メンバー |
 | `GET /rooms/{room_id}/timeline` | ルームの履歴(`{items, next_before}`)を新しい順に。`limit`(1〜100、既定 50)と `before`(前の応答の `next_before`)でページングする | 管理者、メンバー |
 | `PUT /rooms/{room_id}/timeline/{source_id}` | 発話(`utterance`、字幕の区切りごと)かテキスト入力(`text`)を履歴に保存する。`event_id` は `<occurred_at>#<source_id>` で、同じなら置き換える(再送しても1件) | Agent |
-| `POST /rooms/{room_id}/media/uploads` | 画像・動画を S3 に PUT する署名付き URL(本体と、`has_thumbnail` ならサムネイル)。期限は1時間 | 管理者、メンバー |
-| `POST /rooms/{room_id}/media/{media_id}/complete` | アップロードした画像・動画を履歴(`media`)に保存し、今ルームにいる人へデータチャネル(topic `media`)で配信する。最初の complete では、ルームにいないメンバーに push 通知も送る。本体かサムネイルがまだ置かれていなければ 409。2回目からは同じ履歴を返し、配信だけをやり直す | アップロードした本人 |
+| `POST /rooms/{room_id}/media/uploads` | 画像・動画を S3 に PUT する署名付き URL(本体と、`has_thumbnail` ならサムネイル)。期限は1時間。送信者が測った `width`・`height`(1〜65535、両方か無し)と、動画なら `duration_ms`(1〜86,400,000)を任意で送り、履歴に入れる | 管理者、メンバー |
+| `POST /rooms/{room_id}/media/{media_id}/complete` | 本文なし。アップロードした画像・動画を履歴(`media`)に保存し、今ルームにいる人へデータチャネル(topic `media`)で配信する。最初の complete では、ルームにいないメンバーに push 通知も送る。本体かサムネイルがまだ置かれていなければ 409。2回目からは同じ履歴を返し、配信だけをやり直す | アップロードした本人 |
 | `POST /rooms/{room_id}/notifications/speaking` | 誰かが話し始めたことを push 通知する(`{speaker_id, present_ids}`)。ルームのメンバーから話者と `present_ids` を除いた人に送り、`{sent, skipped}` を返す。同じルーム × 同じ受け手には `SPEAKING_NOTIFY_INTERVAL_S`(既定 600 秒)に1回まで。ルームがなければ 404。送信に失敗しても 500 にせず `sent: 0` | Agent |
 
 言語は gpt-realtime-translate が出力できる13言語のコード(`ja`、`en` など)。Agent の翻訳先はこの言語で決まるので、プロフィールがないとトークンを発行しない。
@@ -244,9 +244,12 @@ Agent は client credentials のトークン(スコープ `voice-intercom/agent`
 
 画像・動画のアップロード:
 
-1. `POST .../media/uploads` に `content_type`(`image/jpeg`、`image/png`、`image/webp`、`image/heic`、`video/mp4`)と `size_bytes` を送り、`upload_url` をもらう。
+1. `POST .../media/uploads` に `content_type`(`image/jpeg`、`image/png`、`image/webp`、`image/heic`、`video/mp4`)と `size_bytes`(と、測れれば `width`・`height`・`duration_ms`)を送り、`upload_url` をもらう。
 2. `upload_url` に本体を PUT する。**Content-Type ヘッダーを `content_type` と同じにする**(署名に含めてあり、違うと S3 も SeaweedFS も 403)。サムネイルは `thumbnail_upload_url` に `image/jpeg` で PUT する。
-3. `POST .../media/{media_id}/complete` を呼ぶ(`text` で文を添えられる)。履歴の `media.url`(CloudFront)で表示・再生する。
+3. `POST .../media/{media_id}/complete` を呼ぶ。履歴の `media.url`(CloudFront)で表示・再生する。
+
+- 画像・動画には文を添えられない(翻訳などを考えないため。設計メモの「画像・動画のルームへの配信」)。前に受け付けていた complete の `text` は、送られても無視する(Pydantic の既定で知らない項目を捨てる。REST API は未リリースだが、作りかけのクライアントが 422 にならないように)。履歴の media の行は `text` が常に空、`language` が常に null で、前に文を添えて保存した行も読むときに空にする。
+- `width`・`height`・`duration_ms` は、送信者のアプリが整えた後の本体で測った値(向きを反映した後)。API は中身を読んで確かめず、範囲だけを確かめる。`duration_ms` は動画のときだけ。履歴の `media` にそのまま入り、送らなかった行(足す前の行、管理コンソールから上げたもの)は null。
 
 - 本体の上限は 100MB で、単一の PUT だけにしている。設計メモの「100MB 以上はマルチパート」は後回し(未完了のマルチパートを消すライフサイクルルールは、`infra/modules/media` に既にある)。署名付き URL では大きさを縛れないので、complete で置かれた大きさを確かめ、上限を超えていれば 409 にする。
 - S3 のキーは `rooms/<room_id>/<media_id>/original` と `.../thumbnail`。
@@ -258,8 +261,8 @@ Agent は client credentials のトークン(スコープ `voice-intercom/agent`
 complete で履歴に保存した後に、API が LiveKit の Server API でルームに知らせる(`services/api` の `media_broadcast.py`。決めた理由は設計メモの「画像・動画のルームへの配信」)。
 
 1. `ListParticipants` で今ルームにいる人(kind が `STANDARD`)を取る。
-2. 1人以上いれば、`SendData` で topic `media`、reliable、宛先なし(送信者本人を含む全員)に `MediaMessage`(`proto/voiceintercom/v1/media.proto`)を送る。中身は complete の応答(履歴の行)と同じで、添えた文は UTF-8 で 4096 バイトを超えると切り詰め、`text_truncated` を true にする。
-3. 最初の complete のときだけ、ルームのメンバーから送信者と今ルームにいる人を除いた人に push 通知を送る。タイトルはルームの名前、本文は「<表示名>さんが画像を送りました: <添えた文の先頭>」(動画なら「動画を送りました」)、data は `{"type": "media", "room_id": ..., "event_id": ...}`。
+2. 1人以上いれば、`SendData` で topic `media`、reliable、宛先なし(送信者本人を含む全員)に `MediaMessage`(`proto/voiceintercom/v1/media.proto`)を送る。中身は complete の応答(履歴の行)と同じで、`width`・`height`・`duration_ms` も入れる(分からなければ 0)。`text`・`text_truncated`・`language` は使わない(常に空。古いアプリのために項目は残し、`deprecated` にした)。
+3. 最初の complete のときだけ、ルームのメンバーから送信者と今ルームにいる人を除いた人に push 通知を送る。タイトルはルームの名前、本文は「<表示名>さんが画像を送りました」(動画なら「動画を送りました」)、data は `{"type": "media", "room_id": ..., "event_id": ...}`。
 
 - 配信や通知が失敗しても complete は 200 で履歴を返す(ログに残す)。`ListParticipants` が失敗したら配信を飛ばし、push 通知は送信者以外の全員に送る。
 - LiveKit の呼び出しは1回2秒、push 通知は8秒で待つのをやめる(Lambda の timeout 15秒に収める)。

@@ -25,16 +25,13 @@ enum OutgoingMediaState {
 
 /// 送信中の画像・動画1つ。送信者の画面にだけ出す(ほかの人には何も送らない)。
 class OutgoingMedia {
-  OutgoingMedia(this.localId, this.sourcePath, {this.text = ''});
+  OutgoingMedia(this.localId, this.sourcePath);
 
   /// 端末の中だけの ID(media_id は uploads の後に決まる)
   final String localId;
 
   /// 選んだファイル
   final String sourcePath;
-
-  /// 添える文
-  final String text;
 
   OutgoingMediaState state = OutgoingMediaState.preparing;
 
@@ -83,11 +80,7 @@ abstract interface class MediaUploadBackend {
 
   Future<void> putBytes(String url, Uint8List bytes, String contentType);
 
-  Future<TimelineEvent> complete(
-    String roomId,
-    String mediaId,
-    CompleteMediaUploadRequest request,
-  );
+  Future<TimelineEvent> complete(String roomId, String mediaId);
 }
 
 /// 画像・動画を送る。整える → uploads → 本体とサムネイルの PUT → complete。
@@ -131,9 +124,9 @@ class MediaUploader {
       .where((m) => m.state != OutgoingMediaState.done)
       .toList(growable: false);
 
-  /// 選んだファイルを送る
-  OutgoingMedia submit(String path, {String text = ''}) {
-    final item = OutgoingMedia('local-${_nextId++}', path, text: text);
+  /// 選んだファイルを送る。画像・動画には文を添えられない(設計メモの「画像・動画のルームへの配信」)
+  OutgoingMedia submit(String path) {
+    final item = OutgoingMedia('local-${_nextId++}', path);
     _items.add(item);
     _enqueue(item);
     return item;
@@ -222,6 +215,10 @@ class MediaUploader {
             contentType: contentType,
             sizeBytes: media.sizeBytes,
             hasThumbnail: media.thumbnail != null,
+            // 表示の枠(縦横比)と動画の長さ。整えた後の本体で測った値
+            width: media.width,
+            height: media.height,
+            durationMs: media.durationMs,
           ),
         )
         ..bodyUploaded = false
@@ -255,11 +252,7 @@ class MediaUploader {
     _set(item, OutgoingMediaState.completing);
     final TimelineEvent event;
     try {
-      event = await backend.complete(
-        roomId,
-        item.ticket!.mediaId,
-        CompleteMediaUploadRequest(text: item.text),
-      );
+      event = await backend.complete(roomId, item.ticket!.mediaId);
     } on ApiException catch (e) {
       if (e.code == 409) {
         // 本体かサムネイルが置かれていない(か、大きさが上限を超えた)。PUT からやり直す

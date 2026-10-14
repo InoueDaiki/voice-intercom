@@ -36,7 +36,6 @@ part 'api/rooms_api.dart';
 part 'api/timeline_api.dart';
 part 'api/users_api.dart';
 
-part 'model/complete_media_upload_request.dart';
 part 'model/create_media_upload_request.dart';
 part 'model/create_room_request.dart';
 part 'model/error_response.dart';

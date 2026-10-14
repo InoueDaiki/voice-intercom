@@ -11,7 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:integration_test/integration_test.dart';
 import 'package:voice_intercom/screens/media_viewer_screen.dart';
-import 'package:voice_intercom/screens/media_widgets.dart';
+import 'package:voice_intercom/screens/timeline_screen.dart';
 import 'package:voice_intercom/screens/room_screen.dart';
 
 import 'helpers.dart';
@@ -35,18 +35,21 @@ void main() {
     final file = File(
       '${Directory.systemTemp.path}/media_upload_test_${DateTime.now().millisecondsSinceEpoch}.jpg',
     )..writeAsBytesSync(img.encodeJpg(image, quality: 95));
-    final caption = '統合テスト ${DateTime.now().toIso8601String()}';
-
-    final item = room.uploader.submit(file.path, text: caption);
+    final item = room.uploader.submit(file.path);
+    // 画像・動画には文を添えられないので、表示は media_id のキーで探す
+    Finder card() => find.byKey(Key('media-${item.event?.media?.mediaId}'));
     await pumpUntil(
       tester,
-      () => shows(find.text(caption)) && !item.active,
+      () => !item.active && shows(card()),
       timeout: const Duration(seconds: 60),
       reason: 'complete の応答でルームの表示に出る',
     );
     expect(item.error, isNull);
     final media = item.event!.media!;
     expect(media.thumbnailUrl, isNotNull);
+    // 整えた後の本体で測った幅・高さが履歴に入る。画像に長さは無い
+    expect((media.width, media.height), (1600, 1200));
+    expect(media.durationMs, isNull);
 
     // タップで全画面に開く
     await tester.tap(find.byKey(Key('media-${media.mediaId}')));
@@ -68,7 +71,7 @@ void main() {
     await tester.tap(find.byIcon(Icons.history));
     await pumpUntil(
       tester,
-      () => shows(find.text(caption)) && shows(find.byType(MediaThumbnail)),
+      () => shows(find.byType(TimelineScreen)) && shows(card()),
       reason: '履歴',
     );
     file.deleteSync();

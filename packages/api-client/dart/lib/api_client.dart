@@ -183,8 +183,6 @@ class ApiClient {
           return valueString == 'true' || valueString == '1';
         case 'DateTime':
           return value is DateTime ? value : DateTime.tryParse(value);
-        case 'CompleteMediaUploadRequest':
-          return CompleteMediaUploadRequest.fromJson(value);
         case 'CreateMediaUploadRequest':
           return CreateMediaUploadRequest.fromJson(value);
         case 'CreateRoomRequest':

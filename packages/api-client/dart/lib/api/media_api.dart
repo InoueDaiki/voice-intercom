@@ -18,7 +18,7 @@ class MediaApi {
 
   /// アップロードした画像・動画を履歴に保存する(アップロードした本人)
   ///
-  /// 本体(とサムネイル)が置かれていなければ 409。2回目からは、最初に保存した履歴を返す。保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。
+  /// 本体(とサムネイル)が置かれていなければ 409。2回目からは、最初に保存した履歴を返す。保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。本文は要らない(画像・動画には文を添えられない)。前のクライアントが送る本文(text など)は無視する。
   ///
   /// Note: This method returns the HTTP [Response].
   ///
@@ -29,22 +29,20 @@ class MediaApi {
   ///
   /// * [String] mediaId (required):
   ///   uploads が返した media_id
-  ///
-  /// * [CompleteMediaUploadRequest] completeMediaUploadRequest (required):
-  Future<Response> completeMediaUploadWithHttpInfo(String roomId, String mediaId, CompleteMediaUploadRequest completeMediaUploadRequest, { Future<void>? abortTrigger, }) async {
+  Future<Response> completeMediaUploadWithHttpInfo(String roomId, String mediaId, { Future<void>? abortTrigger, }) async {
     // ignore: prefer_const_declarations
     final path = r'/rooms/{room_id}/media/{media_id}/complete'
       .replaceAll('{room_id}', roomId)
       .replaceAll('{media_id}', mediaId);
 
     // ignore: prefer_final_locals
-    Object? postBody = completeMediaUploadRequest;
+    Object? postBody;
 
     final queryParams = <QueryParam>[];
     final headerParams = <String, String>{};
     final formParams = <String, String>{};
 
-    const contentTypes = <String>['application/json'];
+    const contentTypes = <String>[];
 
 
     return apiClient.invokeAPI(
@@ -61,7 +59,7 @@ class MediaApi {
 
   /// アップロードした画像・動画を履歴に保存する(アップロードした本人)
   ///
-  /// 本体(とサムネイル)が置かれていなければ 409。2回目からは、最初に保存した履歴を返す。保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。
+  /// 本体(とサムネイル)が置かれていなければ 409。2回目からは、最初に保存した履歴を返す。保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。本文は要らない(画像・動画には文を添えられない)。前のクライアントが送る本文(text など)は無視する。
   ///
   /// Parameters:
   ///
@@ -70,10 +68,8 @@ class MediaApi {
   ///
   /// * [String] mediaId (required):
   ///   uploads が返した media_id
-  ///
-  /// * [CompleteMediaUploadRequest] completeMediaUploadRequest (required):
-  Future<TimelineEvent?> completeMediaUpload(String roomId, String mediaId, CompleteMediaUploadRequest completeMediaUploadRequest, { Future<void>? abortTrigger, }) async {
-    final response = await completeMediaUploadWithHttpInfo(roomId, mediaId, completeMediaUploadRequest, abortTrigger: abortTrigger,);
+  Future<TimelineEvent?> completeMediaUpload(String roomId, String mediaId, { Future<void>? abortTrigger, }) async {
+    final response = await completeMediaUploadWithHttpInfo(roomId, mediaId, abortTrigger: abortTrigger,);
     if (response.statusCode >= HttpStatus.badRequest) {
       throw ApiException(response.statusCode, await _decodeBodyBytes(response));
     }
@@ -89,7 +85,7 @@ class MediaApi {
 
   /// 画像・動画をアップロードする署名付き URL を発行する(管理者かメンバー)
   ///
-  /// PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。
+  /// PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。width・height・duration_ms は、送信者が測った値をそのまま履歴に入れる(API は確かめない)。
   ///
   /// Note: This method returns the HTTP [Response].
   ///
@@ -128,7 +124,7 @@ class MediaApi {
 
   /// 画像・動画をアップロードする署名付き URL を発行する(管理者かメンバー)
   ///
-  /// PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。
+  /// PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。width・height・duration_ms は、送信者が測った値をそのまま履歴に入れる(API は確かめない)。
   ///
   /// Parameters:
   ///

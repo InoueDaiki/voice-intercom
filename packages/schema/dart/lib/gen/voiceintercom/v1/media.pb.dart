@@ -37,9 +37,12 @@ class MediaMessage extends $pb.GeneratedMessage {
     $core.String? url,
     $core.String? thumbnailUrl,
     $fixnum.Int64? sizeBytes,
-    $core.String? text,
-    $core.bool? textTruncated,
-    $core.String? language,
+    @$core.Deprecated('This field is deprecated.') $core.String? text,
+    @$core.Deprecated('This field is deprecated.') $core.bool? textTruncated,
+    @$core.Deprecated('This field is deprecated.') $core.String? language,
+    $core.int? width,
+    $core.int? height,
+    $core.int? durationMs,
   }) {
     final result = MediaMessage._();
     if (eventId != null) result.eventId = eventId;
@@ -53,6 +56,9 @@ class MediaMessage extends $pb.GeneratedMessage {
     if (text != null) result.text = text;
     if (textTruncated != null) result.textTruncated = textTruncated;
     if (language != null) result.language = language;
+    if (width != null) result.width = width;
+    if (height != null) result.height = height;
+    if (durationMs != null) result.durationMs = durationMs;
     return result;
   }
 
@@ -83,6 +89,10 @@ class MediaMessage extends $pb.GeneratedMessage {
     ..aOS(9, _omitFieldNames ? '' : 'text')
     ..aOB(10, _omitFieldNames ? '' : 'textTruncated')
     ..aOS(11, _omitFieldNames ? '' : 'language')
+    ..aI(12, _omitFieldNames ? '' : 'width', fieldType: $pb.PbFieldType.OU3)
+    ..aI(13, _omitFieldNames ? '' : 'height', fieldType: $pb.PbFieldType.OU3)
+    ..aI(14, _omitFieldNames ? '' : 'durationMs',
+        fieldType: $pb.PbFieldType.OU3)
     ..hasRequiredFields = false;
 
   @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
@@ -187,36 +197,79 @@ class MediaMessage extends $pb.GeneratedMessage {
   @$pb.TagNumber(8)
   void clearSizeBytes() => $_clearField(8);
 
-  /// 添えた文。UTF-8 で 4096 バイトを超えるときは先頭だけを入れ(文字の途中では切らない)、
-  /// text_truncated を true にする
+  /// 使わない(常に空)。画像・動画には文を添えられない(2026-10-13 に決めた。設計メモの
+  /// 「画像・動画のルームへの配信」)。古いアプリが読むので項目は残す
+  @$core.Deprecated('This field is deprecated.')
   @$pb.TagNumber(9)
   $core.String get text => $_getSZ(8);
+  @$core.Deprecated('This field is deprecated.')
   @$pb.TagNumber(9)
   set text($core.String value) => $_setString(8, value);
+  @$core.Deprecated('This field is deprecated.')
   @$pb.TagNumber(9)
   $core.bool hasText() => $_has(8);
+  @$core.Deprecated('This field is deprecated.')
   @$pb.TagNumber(9)
   void clearText() => $_clearField(9);
 
-  /// text が切り詰められていれば true。全文は履歴で読む
+  /// 使わない(常に false)。text と同じ
+  @$core.Deprecated('This field is deprecated.')
   @$pb.TagNumber(10)
   $core.bool get textTruncated => $_getBF(9);
+  @$core.Deprecated('This field is deprecated.')
   @$pb.TagNumber(10)
   set textTruncated($core.bool value) => $_setBool(9, value);
+  @$core.Deprecated('This field is deprecated.')
   @$pb.TagNumber(10)
   $core.bool hasTextTruncated() => $_has(9);
+  @$core.Deprecated('This field is deprecated.')
   @$pb.TagNumber(10)
   void clearTextTruncated() => $_clearField(10);
 
-  /// 添えた文の言語(送信者のプロフィールの言語。BCP 47)。分からなければ空
+  /// 使わない(常に空)。添えた文の言語だったもの。text と同じ
+  @$core.Deprecated('This field is deprecated.')
   @$pb.TagNumber(11)
   $core.String get language => $_getSZ(10);
+  @$core.Deprecated('This field is deprecated.')
   @$pb.TagNumber(11)
   set language($core.String value) => $_setString(10, value);
+  @$core.Deprecated('This field is deprecated.')
   @$pb.TagNumber(11)
   $core.bool hasLanguage() => $_has(10);
+  @$core.Deprecated('This field is deprecated.')
   @$pb.TagNumber(11)
   void clearLanguage() => $_clearField(11);
+
+  /// 表示の幅と高さ(ピクセル。向きを反映した後の値。縦向きなら height が大きい)。
+  /// 送信者のアプリが整えた後の本体で測った値。分からなければ 0(古いアプリが上げたもの、
+  /// 管理コンソールから上げたものなど)。受け手は 0 なら決まった枠で表示する
+  @$pb.TagNumber(12)
+  $core.int get width => $_getIZ(11);
+  @$pb.TagNumber(12)
+  set width($core.int value) => $_setUnsignedInt32(11, value);
+  @$pb.TagNumber(12)
+  $core.bool hasWidth() => $_has(11);
+  @$pb.TagNumber(12)
+  void clearWidth() => $_clearField(12);
+
+  @$pb.TagNumber(13)
+  $core.int get height => $_getIZ(12);
+  @$pb.TagNumber(13)
+  set height($core.int value) => $_setUnsignedInt32(12, value);
+  @$pb.TagNumber(13)
+  $core.bool hasHeight() => $_has(12);
+  @$pb.TagNumber(13)
+  void clearHeight() => $_clearField(13);
+
+  /// 動画の長さ(ミリ秒)。画像と、分からないときは 0
+  @$pb.TagNumber(14)
+  $core.int get durationMs => $_getIZ(13);
+  @$pb.TagNumber(14)
+  set durationMs($core.int value) => $_setUnsignedInt32(13, value);
+  @$pb.TagNumber(14)
+  $core.bool hasDurationMs() => $_has(13);
+  @$pb.TagNumber(14)
+  void clearDurationMs() => $_clearField(14);
 }
 
 const $core.bool _omitFieldNames =

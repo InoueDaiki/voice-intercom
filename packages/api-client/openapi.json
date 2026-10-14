@@ -473,7 +473,7 @@
           "media"
         ],
         "summary": "画像・動画をアップロードする署名付き URL を発行する(管理者かメンバー)",
-        "description": "PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。",
+        "description": "PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。width・height・duration_ms は、送信者が測った値をそのまま履歴に入れる(API は確かめない)。",
         "operationId": "createMediaUpload",
         "parameters": [
           {
@@ -564,7 +564,7 @@
           "media"
         ],
         "summary": "アップロードした画像・動画を履歴に保存する(アップロードした本人)",
-        "description": "本体(とサムネイル)が置かれていなければ 409。2回目からは、最初に保存した履歴を返す。保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。",
+        "description": "本体(とサムネイル)が置かれていなければ 409。2回目からは、最初に保存した履歴を返す。保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。本文は要らない(画像・動画には文を添えられない)。前のクライアントが送る本文(text など)は無視する。",
         "operationId": "completeMediaUpload",
         "parameters": [
           {
@@ -592,16 +592,6 @@
             "in": "path"
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CompleteMediaUploadRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "422": {
             "description": "Validation Error",
@@ -1316,19 +1306,6 @@
   },
   "components": {
     "schemas": {
-      "CompleteMediaUploadRequest": {
-        "properties": {
-          "text": {
-            "type": "string",
-            "maxLength": 10000,
-            "title": "Text",
-            "description": "画像・動画に添える文",
-            "default": ""
-          }
-        },
-        "type": "object",
-        "title": "CompleteMediaUploadRequest"
-      },
       "CreateMediaUploadRequest": {
         "properties": {
           "content_type": {
@@ -1354,6 +1331,48 @@
             "title": "Has Thumbnail",
             "description": "サムネイル(image/jpeg)も上げるなら true",
             "default": false
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width",
+            "description": "表示の幅(ピクセル。向きを反映した後。height と一緒に送る)。分からなければ null"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height",
+            "description": "表示の高さ(ピクセル。向きを反映した後。width と一緒に送る)。分からなければ null"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 86400000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms",
+            "description": "動画の長さ(ミリ秒。動画のときだけ)。画像と、分からないときは null"
           }
         },
         "type": "object",
@@ -1847,7 +1866,7 @@
           "text": {
             "type": "string",
             "title": "Text",
-            "description": "原文。media では空文字か、添えた文"
+            "description": "原文。media では常に空文字(画像・動画には文を添えられない)"
           },
           "translations": {
             "additionalProperties": {
@@ -1949,6 +1968,48 @@
           "size_bytes": {
             "type": "integer",
             "title": "Size Bytes"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width",
+            "description": "表示の幅(ピクセル。向きを反映した後。height と一緒に送る)。分からなければ null"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height",
+            "description": "表示の高さ(ピクセル。向きを反映した後。width と一緒に送る)。分からなければ null"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 86400000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms",
+            "description": "動画の長さ(ミリ秒。動画のときだけ)。画像と、分からないときは null"
           }
         },
         "type": "object",

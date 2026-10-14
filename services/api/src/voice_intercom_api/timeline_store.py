@@ -6,13 +6,16 @@
 - event_id は `<occurred_at>#<source_id>`。occurred_at は桁をそろえた UTC の時刻なので、
   文字列の順が時刻の順になり、ルームの履歴を1回の Query で新しい順に取れる。
 - 項目の形は TimelineEvent とほぼ同じ。ただし media には URL を持たせず、media_id、content_type、
-  size_bytes、has_thumbnail だけを持ち、読むときに URL を作る
+  size_bytes、has_thumbnail(と、あれば width、height、duration_ms)だけを持ち、読むときに URL を作る
   (CloudFront のドメインが変わっても困らない)。
+- media の行は text と language を持たない(画像・動画には文を添えられない)。前に添えた文を
+  保存した行があっても、読むときに空にする。
 
 アップロード中のメディアの仮の行(complete で本人かを確かめるため):
 - room_id を `media-upload#<room_id>`、event_id を media_id にする。
   ルームの ID に # は使えないので、履歴のパーティションと混ざらず、履歴の Query にも出てこない。
-- アップロードした人(uploader_id)、Content-Type、大きさ、サムネイルの有無を持つ。complete で
+- アップロードした人(uploader_id)、Content-Type、大きさ、サムネイルの有無、幅・高さ・動画の長さ
+  (送られたときだけ)を持つ。complete で
   クライアントに送り直させず、ここから読む。
 - complete したら completed_event_id を書く。2回目の complete は同じ履歴を返す(再送に備える)。
 - expires_at_epoch(UNIX 秒)を TTL にして、complete されなかった行も消えるようにする。
@@ -63,16 +66,23 @@ def make_event_id(occurred_at: str, source_id: str) -> str:
     return f"{occurred_at}#{source_id}"
 
 
+def _optional_int(value: Any) -> int | None:
+    # DynamoDB の数は Decimal で返る
+    return None if value is None else int(value)
+
+
 def _to_event(item: dict[str, Any]) -> TimelineEvent:
     media = item.get("media")
+    is_media = item["kind"] == "media"
     return TimelineEvent(
         room_id=item["room_id"],
         event_id=item["event_id"],
         kind=item["kind"],
         sender_id=item["sender_id"],
         occurred_at=item["occurred_at"],
-        language=item.get("language"),
-        text=item.get("text", ""),
+        # 画像・動画に添えた文は返さない(前に保存した行も)
+        language=None if is_media else item.get("language"),
+        text="" if is_media else item.get("text", ""),
         translations=item.get("translations", {}),
         utterance_id=item.get("utterance_id"),
         segment_index=item.get("segment_index"),
@@ -88,6 +98,9 @@ def _to_event(item: dict[str, Any]) -> TimelineEvent:
             if media.get("has_thumbnail")
             else None,
             size_bytes=media["size_bytes"],
+            width=_optional_int(media.get("width")),
+            height=_optional_int(media.get("height")),
+            duration_ms=_optional_int(media.get("duration_ms")),
         ),
     )
 
@@ -165,6 +178,9 @@ class PendingUpload:
     size_bytes: int
     has_thumbnail: bool
     completed_event_id: str | None
+    width: int | None = None
+    height: int | None = None
+    duration_ms: int | None = None
 
 
 def _pending_key(room_id: str, media_id: str) -> dict[str, str]:
@@ -179,18 +195,26 @@ def create_pending_upload(
     content_type: str,
     size_bytes: int,
     has_thumbnail: bool,
+    width: int | None = None,
+    height: int | None = None,
+    duration_ms: int | None = None,
 ) -> None:
     now = datetime.now(UTC)
     _timeline().put_item(
         Item=_pending_key(room_id, media_id)
-        | {
-            "uploader_id": uploader_id,
-            "content_type": content_type,
-            "size_bytes": size_bytes,
-            "has_thumbnail": has_thumbnail,
-            "created_at": store.now(),
-            TTL_ATTRIBUTE: int((now + PENDING_UPLOAD_TTL).timestamp()),
-        }
+        | _without_none(
+            {
+                "uploader_id": uploader_id,
+                "content_type": content_type,
+                "size_bytes": size_bytes,
+                "has_thumbnail": has_thumbnail,
+                "width": width,
+                "height": height,
+                "duration_ms": duration_ms,
+                "created_at": store.now(),
+                TTL_ATTRIBUTE: int((now + PENDING_UPLOAD_TTL).timestamp()),
+            }
+        )
     )
 
 
@@ -206,6 +230,9 @@ def get_pending_upload(room_id: str, media_id: str) -> PendingUpload | None:
         size_bytes=int(item["size_bytes"]),
         has_thumbnail=bool(item["has_thumbnail"]),
         completed_event_id=item.get("completed_event_id"),
+        width=_optional_int(item.get("width")),
+        height=_optional_int(item.get("height")),
+        duration_ms=_optional_int(item.get("duration_ms")),
     )
 
 
@@ -217,9 +244,7 @@ class AlreadyCompletedError(Exception):
         self.event_id = event_id
 
 
-def complete_upload(
-    pending: PendingUpload, *, sender_id: str, occurred_at: str, language: str | None, text: str
-) -> TimelineEvent:
+def complete_upload(pending: PendingUpload, *, sender_id: str, occurred_at: str) -> TimelineEvent:
     """メディアの履歴を書き、仮の行に completed_event_id を書く。
 
     2つを1つのトランザクションにし、同時に2回 complete されても履歴が2件にならないようにする。
@@ -234,15 +259,18 @@ def complete_upload(
             "kind": "media",
             "sender_id": sender_id,
             "occurred_at": occurred_at,
-            "language": language,
-            "text": text,
             "translations": {},
-            "media": {
-                "media_id": pending.media_id,
-                "content_type": pending.content_type,
-                "size_bytes": pending.size_bytes,
-                "has_thumbnail": pending.has_thumbnail,
-            },
+            "media": _without_none(
+                {
+                    "media_id": pending.media_id,
+                    "content_type": pending.content_type,
+                    "size_bytes": pending.size_bytes,
+                    "has_thumbnail": pending.has_thumbnail,
+                    "width": pending.width,
+                    "height": pending.height,
+                    "duration_ms": pending.duration_ms,
+                }
+            ),
         }
     )
     # リソースの meta.client は、Table と同じく Python の値を DynamoDB の型に直してくれる

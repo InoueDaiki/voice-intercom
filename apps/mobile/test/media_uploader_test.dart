@@ -30,6 +30,8 @@ class FakePreparer implements MediaPreparer {
       sizeBytes: 100,
       isVideo: video,
       thumbnail: thumbnail,
+      size: video ? (width: 720, height: 1280) : (width: 1600, height: 1200),
+      durationMs: video ? 15500 : null,
     );
   }
 }
@@ -87,12 +89,8 @@ class FakeBackend implements MediaUploadBackend {
   }
 
   @override
-  Future<TimelineEvent> complete(
-    String roomId,
-    String mediaId,
-    CompleteMediaUploadRequest request,
-  ) async {
-    calls.add('complete $mediaId ${request.text}');
+  Future<TimelineEvent> complete(String roomId, String mediaId) async {
+    calls.add('complete $mediaId');
     _maybeFail('complete');
     return mediaEvent('2026-10-13T00:00:00.000Z', sourceId: mediaId);
   }
@@ -124,7 +122,7 @@ void main() {
   Future<void> settle() => pumpEventQueue();
 
   test('整える → uploads → 本体とサムネイルの PUT → complete', () async {
-    final item = uploader.submit('/tmp/a.jpg', text: '見て');
+    final item = uploader.submit('/tmp/a.jpg');
     expect(item.state, OutgoingMediaState.preparing);
     await settle();
 
@@ -132,7 +130,7 @@ void main() {
       'uploads',
       'put https://s3.example/media1/original image/jpeg',
       'put https://s3.example/media1/thumbnail image/jpeg',
-      'complete media1 見て',
+      'complete media1',
     ]);
     final request = backend.requests.single;
     expect(
@@ -141,6 +139,9 @@ void main() {
     );
     expect(request.sizeBytes, 100);
     expect(request.hasThumbnail, isTrue);
+    // 整えた後の本体で測った幅・高さ。画像に長さは無い
+    expect((request.width, request.height), (1600, 1200));
+    expect(request.durationMs, isNull);
     expect(item.state, OutgoingMediaState.done);
     expect(completed.single.media!.mediaId, 'media1');
     // 済んだものは送信中の一覧から外れる
@@ -164,6 +165,9 @@ void main() {
       CreateMediaUploadRequestContentTypeEnum.videoSlashMp4,
     );
     expect(item.isVideo, isTrue);
+    final request = backend.requests.single;
+    expect((request.width, request.height), (720, 1280));
+    expect(request.durationMs, 15500);
   });
 
   test('本体の PUT が失敗したら、同じ署名付き URL で PUT からやり直す', () async {
@@ -181,7 +185,7 @@ void main() {
     expect(backend.calls, [
       'put https://s3.example/media1/original image/jpeg',
       'put https://s3.example/media1/thumbnail image/jpeg',
-      'complete media1 ',
+      'complete media1',
     ]);
     expect(preparer.calls, 1);
     expect(item.state, OutgoingMediaState.done);
@@ -197,7 +201,7 @@ void main() {
     backend.calls.clear();
     uploader.retry(item);
     await settle();
-    expect(backend.calls, ['complete media1 ']);
+    expect(backend.calls, ['complete media1']);
     expect(item.state, OutgoingMediaState.done);
   });
 
@@ -212,7 +216,7 @@ void main() {
     expect(backend.calls, [
       'put https://s3.example/media1/original image/jpeg',
       'put https://s3.example/media1/thumbnail image/jpeg',
-      'complete media1 ',
+      'complete media1',
     ]);
   });
 
@@ -226,7 +230,7 @@ void main() {
     await settle();
     expect(backend.calls, [
       'put https://s3.example/media1/thumbnail image/jpeg',
-      'complete media1 ',
+      'complete media1',
     ]);
   });
 
@@ -241,7 +245,7 @@ void main() {
     uploader.retry(item);
     await settle();
     expect(backend.calls.first, 'uploads');
-    expect(backend.calls.last, 'complete media2 ');
+    expect(backend.calls.last, 'complete media2');
   });
 
   test('uploads が失敗したら uploads からやり直す', () async {
@@ -295,7 +299,7 @@ void main() {
     await settle();
     expect(
       backend.calls.where((c) => c == 'uploads' || c.startsWith('complete')),
-      ['uploads', 'complete media1 ', 'uploads', 'complete media2 '],
+      ['uploads', 'complete media1', 'uploads', 'complete media2'],
     );
     expect(completed.map((e) => e.media!.mediaId), ['media1', 'media2']);
   });
