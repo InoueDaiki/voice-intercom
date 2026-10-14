@@ -108,7 +108,8 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
    - 動画: `video_compress` で H.264 の MP4(1280x720 まで、音声つき)にし、サムネイルを作る(動画は必ず作る)。長さは3分まで(案。カメラは `maxDuration` で、ライブラリから選んだものは圧縮の前に確かめる)。圧縮しても 100MB を超えれば送らない。
 2. **uploads**(`POST .../media/uploads`)で署名付き URL をもらう。`size_bytes` は整えた後の大きさ。`width`・`height`・`duration_ms` も、整えた後の本体で測って送る(下の「幅・高さ・長さ」)。
 3. **PUT**。本体を `content_type` と同じ Content-Type で、サムネイルを `image/jpeg` で PUT する。Content-Length を付け、charset などは付けない(署名が合わず 403 になる)。
-4. **complete**(`POST .../media/{media_id}/complete`、本文なし)。応答(履歴の行)で、すぐルームの表示に足す。画像・動画には文を添えられない(`MediaUploader.submit` はファイルだけを受ける)。
+   - **マルチパート**(本体が 16MB 以上。API が uploads で `multipart` を返す): サムネイルを先に上げ、パートの署名付き URL を `POST .../media/{media_id}/parts` で、送る前に 100 個ずつ取り(期限の5分前を過ぎたら取り直す)、パート(8MB)を同時に4本まで PUT する。パートには Content-Type を付けず、応答の `ETag` を集める。ファイルはパートの範囲だけを読みながら送る(`File.openRead(start, end)`。10GB でも全体をメモリに載せない)。失敗したパートは、その場で3回まで(1秒・2秒おいて)そのパートだけ送り直す。進み具合はサムネイルと全パート(送っている途中の分を含む)の合計。
+4. **complete**(`POST .../media/{media_id}/complete`。本文なし。マルチパートなら全パートの番号と ETag)。応答(履歴の行)で、すぐルームの表示に足す。画像・動画には文を添えられない(`MediaUploader.submit` はファイルだけを受ける)。
 
 幅・高さ・長さ(`lib/media/media_preparer.dart`):
 
@@ -122,6 +123,8 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
 
 - 整えたファイルは作り直さない。署名付き URL は期限(1時間)の5分前までは使い回し、それより近ければ uploads から取り直す。
 - PUT し終えたもの(本体、サムネイル)は上げ直さない。complete が 409(本体かサムネイルが無い)なら、PUT からやり直す。
+- マルチパートでは、送り終えたパート(ETag)を覚えておき、やり直しでは残りのパートだけを送る。uploads の期限(1時間)が過ぎても uploads はやり直さず、パートとサムネイルの URL を取り直す。complete の 409 はサムネイルだけ上げ直す。API が 404・410(アップロードが無い、期限で消えた、完了できない)を返したら、送り終えたパートを捨てて uploads からやり直す。
+- 覚えておくのはメモリの中だけ。アプリを裏に回しても、プロセスが生きていれば「やり直す」で続きから送れる(裏にいる間の通信は OS 次第で切れる)。アプリが落ちたら、送信中のものは消える(今の「段階ごとのやり直し」と同じ範囲)。
 - complete は2回目からも同じ履歴を返すので、応答が失われたときに呼び直しても重ならない。
 - 形式・大きさ・長さで送れないものは、やり直しのボタンを出さない(× で一覧から外す)。
 
@@ -165,7 +168,7 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
 - 端末でのキャッシュ。今は `Image.network` のメモリのキャッシュだけ。URL の中身は変わらないので、ディスクに長く持ってよい(設計メモの「URL」)。
 - 全画面の表示・再生で、読む前に縦横比の枠を取ること(今はカードと履歴の一覧だけ)。
 - 動画の幅・高さの向き(上の「幅・高さ・長さ」)を、Android と iOS の実機で確かめること。
-- 100MB 以上のマルチパート。
+- マルチパートの続きを、アプリが落ちた後に再開すること(送り終えたパートと media_id をディスクに残す。API の仮の行と未完了のアップロードは1日残る)。裏に回したまま送り続けること(iOS の background URLSession、Android の WorkManager など)。
 - 消したものの、端末のメモリに残った画像(`Image.network` のキャッシュ)は追い出していない。表示はしない。
 
 ## バックグラウンドでの音声
@@ -239,7 +242,7 @@ flutter test
 
 ### 画像・動画
 
-`integration_test/media_upload_test.dart` は、入室して、作った JPEG(1MB 超え。サムネイルも作る)を送り、complete の応答でルームの表示に出ること、タップで全画面に開くこと、履歴に出ることを確かめる。`image_picker` の画面は操作できないので、`RoomScreenState.uploader` にファイルを直接渡す(整える・uploads・PUT・complete は本物を通る)。Agent と相手役は要らない(ルーム `mobile-test` は要る)。SeaweedFS に PUT し、`MEDIA_BASE_URL` から読む。
+`integration_test/media_upload_test.dart` は、入室して、作った JPEG(1MB 超え。サムネイルも作る)を送り、complete の応答でルームの表示に出ること、タップで全画面に開くこと、履歴に出ることを確かめる。`image_picker` の画面は操作できないので、`RoomScreenState.uploader` にファイルを直接渡す(整える・uploads・PUT・complete は本物を通る)。Agent と相手役は要らない(ルーム `mobile-test` は要る)。SeaweedFS に PUT し、`MEDIA_BASE_URL` から読む。2つ目のテストは、約 40MB の JPEG(320x240 の画像を APP15 のセグメントで膨らませたもの。形式の見分けとデコードはそのまま通る)をマルチパート(8MB × 6)で送り、進み具合が途中の値を通ること、履歴の大きさ・幅・高さ、読み直した本体が送ったファイルとバイトまで同じことを確かめる。Android エミュレーター(Medium Phone)では、2つで約1分20秒(40MB の送信は約19秒)で通った(2026-10-14)。
 
 ```sh
 flutter test integration_test/media_upload_test.dart -d <シミュレーターの ID> --dart-define=DEV_HOST=<DEV_HOST>
