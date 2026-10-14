@@ -95,7 +95,7 @@ export interface paths {
         put?: never;
         /**
          * 画像・動画をアップロードする署名付き URL を発行する(管理者かメンバー)
-         * @description PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。
+         * @description PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。width・height・duration_ms は、送信者が測った値をそのまま履歴に入れる(API は確かめない)。
          */
         post: operations["createMediaUpload"];
         delete?: never;
@@ -115,7 +115,7 @@ export interface paths {
         put?: never;
         /**
          * アップロードした画像・動画を履歴に保存する(アップロードした本人)
-         * @description 本体(とサムネイル)が置かれていなければ 409。2回目からは、最初に保存した履歴を返す。保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。
+         * @description 本体(とサムネイル)が置かれていなければ 409。2回目からは、最初に保存した履歴を返す。保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。本文は要らない(画像・動画には文を添えられない)。前のクライアントが送る本文(text など)は無視する。
          */
         post: operations["completeMediaUpload"];
         delete?: never;
@@ -135,9 +135,29 @@ export interface paths {
         put?: never;
         /**
          * 誰かが話し始めたことを、ルームにいないメンバーに push 通知する(Agent)
-         * @description ルームのメンバーから、話者と present_ids を除いた人に送る。同じルーム × 同じ受け手には、間隔(既定 600 秒)に1回まで。送信に失敗しても 500 にはせず、sent を 0 にして返す。
+         * @description ルームのメンバーから、話者と present_ids を除いた人に送る。同じルーム × 同じ受け手には、間隔(既定 300 秒。テキスト・画像・動画の通知と共通)に1回まで。送信に失敗しても 500 にはせず、sent を 0 にして返す。
          */
         post: operations["notifySpeaking"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms/{room_id}/notifications/text": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * テキスト入力が届いたことを、ルームにいないメンバーに push 通知する(Agent)
+         * @description ルームのメンバーから、送信者と present_ids を除いた人に送る。本文は「<表示名>さん: <テキストの先頭>」。同じルーム × 同じ受け手には、間隔(既定 300 秒。話し始め・画像・動画の通知と共通)に1回まで。送信に失敗しても 500 にはせず、sent を 0 にして返す。
+         */
+        post: operations["notifyText"];
         delete?: never;
         options?: never;
         head?: never;
@@ -253,15 +273,6 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** CompleteMediaUploadRequest */
-        CompleteMediaUploadRequest: {
-            /**
-             * Text
-             * @description 画像・動画に添える文
-             * @default
-             */
-            text: string;
-        };
         /** CreateMediaUploadRequest */
         CreateMediaUploadRequest: {
             /**
@@ -280,6 +291,21 @@ export interface components {
              * @default false
              */
             has_thumbnail: boolean;
+            /**
+             * Width
+             * @description 表示の幅(ピクセル。向きを反映した後。height と一緒に送る)。分からなければ null
+             */
+            width?: number | null;
+            /**
+             * Height
+             * @description 表示の高さ(ピクセル。向きを反映した後。width と一緒に送る)。分からなければ null
+             */
+            height?: number | null;
+            /**
+             * Duration Ms
+             * @description 動画の長さ(ミリ秒。動画のときだけ)。画像と、分からないときは null
+             */
+            duration_ms?: number | null;
         };
         /** CreateRoomRequest */
         CreateRoomRequest: {
@@ -360,6 +386,19 @@ export interface components {
              * @description 署名付き URL の期限(ISO 8601、UTC)
              */
             expires_at: string;
+        };
+        /** NotificationResult */
+        NotificationResult: {
+            /**
+             * Sent
+             * @description 送った人数
+             */
+            sent: number;
+            /**
+             * Skipped
+             * @description 前回の通知から間隔がたっていないので、送らなかった人数
+             */
+            skipped: number;
         };
         /**
          * PutTimelineEventRequest
@@ -488,18 +527,24 @@ export interface components {
              */
             present_ids: string[];
         };
-        /** SpeakingNotificationResult */
-        SpeakingNotificationResult: {
+        /** TextNotificationRequest */
+        TextNotificationRequest: {
             /**
-             * Sent
-             * @description 送った人数
+             * Sender Id
+             * @description 送信者の user_id(sub)
              */
-            sent: number;
+            sender_id: string;
             /**
-             * Skipped
-             * @description 前回の通知から間隔がたっていないので、送らなかった人数
+             * Present Ids
+             * @description 今ルームに入っている人の user_id(sub)。この人たちには送らない
+             * @default []
              */
-            skipped: number;
+            present_ids: string[];
+            /**
+             * Text
+             * @description 送られたテキスト(本文には先頭だけを入れる)
+             */
+            text: string;
         };
         /**
          * TimelineDeletion
@@ -552,7 +597,7 @@ export interface components {
             language: ("es" | "pt" | "fr" | "ja" | "ru" | "zh" | "de" | "ko" | "hi" | "id" | "vi" | "it" | "en") | null;
             /**
              * Text
-             * @description 原文。media では空文字か、添えた文
+             * @description 原文。media では常に空文字(画像・動画には文を添えられない)
              */
             text: string;
             /**
@@ -603,6 +648,21 @@ export interface components {
             thumbnail_url: string | null;
             /** Size Bytes */
             size_bytes: number;
+            /**
+             * Width
+             * @description 表示の幅(ピクセル。向きを反映した後。height と一緒に送る)。分からなければ null
+             */
+            width?: number | null;
+            /**
+             * Height
+             * @description 表示の高さ(ピクセル。向きを反映した後。width と一緒に送る)。分からなければ null
+             */
+            height?: number | null;
+            /**
+             * Duration Ms
+             * @description 動画の長さ(ミリ秒。動画のときだけ)。画像と、分からないときは null
+             */
+            duration_ms?: number | null;
         };
         /** TimelinePage */
         TimelinePage: {
@@ -1194,11 +1254,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CompleteMediaUploadRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description 成功 */
             200: {
@@ -1278,7 +1334,70 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SpeakingNotificationResult"];
+                    "application/json": components["schemas"]["NotificationResult"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description ルームがない */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    notifyText: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ルームの ID */
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TextNotificationRequest"];
+            };
+        };
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationResult"];
                 };
             };
             /** @description トークンがない、または不正 */

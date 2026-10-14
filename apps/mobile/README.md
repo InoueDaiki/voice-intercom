@@ -78,7 +78,9 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
 - **PTT**: 入室したらマイクのトラックを publish する。publish の前にミュートしておくので、ミュートのまま publish され、音は漏れない。押している間だけミュートを外す。ミュートの操作は1つずつ順に、必ず await する(設計メモの「PTT の方式」)。iOS では接続の前に `AudioManager.instance.setMicrophoneMuteMode(MicrophoneMuteMode.inputMixer)` にし(OS のミュート音が鳴らない)、トラックは `stopAudioCaptureOnMute: false` で作る(ミュートでマイクを止めず、外すのが速い)。Android では `setMicrophoneMuteMode` は何もしない。
 - **聞く**: `autoSubscribe` を切り、Agent 以外の参加者のマイクのトラックと、Agent の `translation-<自分の言語>` だけを購読する。
 - **字幕**: topic `caption` は、送信元が Agent の参加者(`DataReceivedEvent.participant` の `kind` が `AGENT`)のものだけを読み、送信元が無いもの・Agent 以外の参加者のものは捨てる。参加者は topic を偽れるため(トークンの `canPublishData` は topic を限れない。設計メモの「字幕の送信元」)。`Caption` を `(segment_id, language, translated)` ごとに連結し、確定で置き換える(空の確定は消す)。区切り(`segment_id`)ごとに、原文と自分の言語の訳を並べる。話者と同じ言語なら訳は出ない(Agent が作らない)。
-- **テキスト入力**: topic `text` で `TextMessage` を送る。Agent をまだ知らない間は送らずに待ち、Agent が入ったらすぐ送る。Agent が後から入るルームでは、アプリが Agent を知るまでの約3秒に返ってきた字幕を捨ててしまい、送り直しは Agent が重複として捨てるため。入室の直後(約3秒以内)に送ると、Agent が送信元を知らずに捨てることがある(設計メモの「Agent の結合確認」)。Agent は受け付けるとすぐ原文の字幕を `message_id` 付きで配信するので、自分の `message_id` の字幕が4秒のうちに届かなければ、同じ `message_id` で送り直す(3回まで。だめなら「届かなかった」と出す)。Agent は同じ `(identity, message_id)` を1回だけ処理する。
+- **テキスト入力**: topic `text` で `TextMessage` を送る。Agent をまだ知らない間は送らずに待ち、Agent が入ったらすぐ送る。Agent が後から入るルームでは、アプリが Agent を知るまでの約3秒に返ってきた字幕を捨ててしまい、送り直しは Agent が重複として捨てるため。入室の直後(約3秒以内)に送ると、Agent が送信元を知らずに捨てることがある(設計メモの「Agent の結合確認」)。Agent は受け付けるとすぐ、送信者だけに `TextStatus`(topic `text_status`)の `ACCEPTED` を送り、原文の字幕を `message_id` 付きで配信する。どちらも4秒のうちに届かなければ、同じ `message_id` で送り直す(3回まで。だめなら「届かなかった」と出す)。`TextStatus` も字幕と同じく、送信元が Agent の参加者のものだけを読む。
+  - 表示: 送信中は「送信中(n回目)」、`ACCEPTED` の後は結果が届くまで「届いた」、`COMPLETED` で消す。`REJECTED` は「断られた(理由。長すぎるなら最大の文字数)」、`FAILED` は「失敗した(訳せなかった言語、読み上げられなかった言語)」。`TextStatus` を送らない古い Agent では、自分の字幕が届いたら消す。断られた・失敗したものは、後から字幕や送り直しへの `ACCEPTED` が届いても戻さない。
+  - 二重の対策: (1) Agent を知ってから送る(`TextSender.canSend`)ので、Agent が後から入ったルームでも、返ってくる字幕と `TextStatus` を捨てない。(2) それでも最初の応答を捨てたとき(つなぎ直しの間、Agent の入れ替わりなど)は、送り直しに Agent が処理をやり直さずに字幕と `TextStatus` を送信者だけに送り直すので、送り直しが止まる。(1) が効いていれば (2) は要らないが、(2) は (1) の前提(アプリが Agent を知っている)が崩れたときの備え。逆に (2) だけでは、Agent を知るまでの約3秒に送り直しの回数を使い切ることがあるので (1) も残す。
 - **履歴**: `GET /rooms/{room_id}/timeline` を50件ずつ、`next_before` で古いほうへ読む。画像・動画の行はサムネイルを出し、タップで開く。
 - **画像・動画**: 下の「画像・動画」。
 - **削除**: 下の「送ったものの削除」。
@@ -104,9 +106,15 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
 1. **整える**(`DeviceMediaPreparer`)。形式は拡張子や mimeType ではなく、ファイルの先頭のバイトで見分ける。
    - 画像: `image_picker` に `imageQuality: 85` と `maxWidth` / `maxHeight: 2048` を渡して選ぶ(iOS の HEIC も JPEG になる見込み)。届いた形式が JPEG、PNG、WebP、HEIC ならそのまま送る。GIF など API が受け付けない形式は JPEG にする(動きは失う)。1MB を超えたらサムネイル(JPEG、長い辺 480px)を作る。HEIC のまま届いたら、アプリでは読めない(`image` が HEIC を読めない)ので、サムネイルなしで `image/heic` として送る。
    - 動画: `video_compress` で H.264 の MP4(1280x720 まで、音声つき)にし、サムネイルを作る(動画は必ず作る)。長さは3分まで(案。カメラは `maxDuration` で、ライブラリから選んだものは圧縮の前に確かめる)。圧縮しても 100MB を超えれば送らない。
-2. **uploads**(`POST .../media/uploads`)で署名付き URL をもらう。`size_bytes` は整えた後の大きさ。
+2. **uploads**(`POST .../media/uploads`)で署名付き URL をもらう。`size_bytes` は整えた後の大きさ。`width`・`height`・`duration_ms` も、整えた後の本体で測って送る(下の「幅・高さ・長さ」)。
 3. **PUT**。本体を `content_type` と同じ Content-Type で、サムネイルを `image/jpeg` で PUT する。Content-Length を付け、charset などは付けない(署名が合わず 403 になる)。
-4. **complete**(`POST .../media/{media_id}/complete`)。応答(履歴の行)で、すぐルームの表示に足す。
+4. **complete**(`POST .../media/{media_id}/complete`、本文なし)。応答(履歴の行)で、すぐルームの表示に足す。画像・動画には文を添えられない(`MediaUploader.submit` はファイルだけを受ける)。
+
+幅・高さ・長さ(`lib/media/media_preparer.dart`):
+
+- 幅・高さは、向きを反映した後の表示の大きさ(縦向きなら高さが大きい)。API の範囲(1〜65535)の外や、測れないときは送らない。
+- 画像: 画素をデコードせずにヘッダーから読み、JPEG は EXIF の向き(5〜8 は幅と高さを入れ替える)を反映する。GIF などを JPEG にしたものは、変換した後の大きさ。HEIC は読めないので送らない。
+- 動画: 長い辺と短い辺は `video_compress` の圧縮後の `MediaInfo` から、縦か横かはサムネイル用に取り出したフレーム(向きを反映して取り出される)で決める。`video_compress` 3.1.4 の Android は、回転が 0・180 のときに幅と高さを入れ替え、90・270 では入れ替えない(逆に見える)ため。実機で確かめる。長さは圧縮後の `MediaInfo.duration`(無ければ元の動画の長さ)をミリ秒に丸める。
 
 送信中は、送信者の画面にだけ段階(圧縮中・送信中・保存中)と進み具合を出す。ほかの人には何も送らない。
 
@@ -119,7 +127,11 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
 
 ### 見る
 
-ルームの表示では、字幕と画像・動画を時刻の順に並べる(字幕は届いた時刻、画像・動画は `occurred_at`)。送信者・時刻・サムネイル(無ければ画像は本体、動画は枠だけ)・添えた文を出し、タップで画像を全画面(つまんで拡大)に、動画を再生(`video_player` に URL をそのまま渡す)にする。一覧ではサムネイルだけを読み、本体はタップしてから読む。
+ルームの表示では、字幕と画像・動画を時刻の順に並べる(字幕は届いた時刻、画像・動画は `occurred_at`)。送信者・時刻・サムネイル(無ければ画像は本体、動画は枠だけ)を出し、タップで画像を全画面(つまんで拡大)に、動画を再生(`video_player` に URL をそのまま渡す)にする。一覧ではサムネイルだけを読み、本体はタップしてから読む。
+
+- サムネイルの枠は、履歴の `width`・`height` の縦横比で先に取る(長い辺 240、細長いものは 3:1 で止めて切り取る。`mediaBoxSize`)。画像を読み終えても周りがずれない。幅・高さの無い行(足す前に保存した履歴、管理コンソールから上げたもの)は 200x150 の枠にする。
+- 動画は、サムネイルの右下に長さ(`分:秒`、秒は切り上げ)を出す。履歴の画面では「動画 0:15」と出す。長さの無い行には出さない。
+- 前に文を添えて保存した行があっても、API が空にして返すので、文は出ない。
 
 画像・動画は、次の3つから入る(`MediaFeed`。`event_id` で重ねない)。
 
@@ -136,12 +148,12 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
 3. **残りは「履歴に新しい行がある」という知らせとして扱う。** `GET /rooms/{room_id}/timeline` の先頭のページ(新しい順の50件)を読み、`event_id` の行があれば、その行(`MediaMessage` の中身ではなく)を `addMedia` に渡す。無ければ1秒後と3秒後に読み直し、それでも無ければ捨てる。
    - 履歴を読むのは同時に1回だけ。読んでいる間に届いたものは、読み終えてから次の1回でまとめて確かめる。確かめ待ちは50件まで。
    - 読み直すのは、履歴の読み込みが DynamoDB の結果整合の読み取り(`ConsistentRead` を付けていない)で、保存の直後は行がまだ見えないことがあるため。ローカルの DynamoDB Local では、すぐ見える。
-   - 表示は履歴の行なので、`text_truncated` が true でも全文が出る。
+   - 表示は履歴の行なので、幅・高さ・長さも履歴のものを使う(`MediaMessage` の `width` などは読まない)。
 
 **送信元の確かめに履歴を使う理由**(SDK の送信元の identity を使わない理由)。送信元の参加者が null というだけでは、API から来たとは言えない。受け手が新しい参加者を知るまでの約3秒は、参加者が送ったものも null で届く(設計メモの「サーバー側の確認」)。
 
 - `livekit_client`(2.13.1)では、送信元の identity は内部のイベント(`EngineDataPacketReceivedEvent.identity`)にしか無い。このイベントは `@internal` で、パッケージの公開の API(`livekit_client.dart`)から export されていない。使うには `package:livekit_client/src/...` を直接 import して `room.engine` のイベントを聞くことになり、SDK の版を上げると黙って壊れうる(内部の名前や流れは予告なく変わる)。
-- 履歴で確かめれば、送信元だけでなく中身(URL、送信者、添えた文)も API が保存したものになる。偽った `MediaMessage` は、本物の `event_id` を書いても、表示されるのは履歴の行なので害が無い。偽った `event_id` は履歴に無いので出ない。
+- 履歴で確かめれば、送信元だけでなく中身(URL、送信者、幅・高さ・長さ)も API が保存したものになる。偽った `MediaMessage` は、本物の `event_id` を書いても、表示されるのは履歴の行なので害が無い。偽った `event_id` は履歴に無いので出ない。
 - 費用は、1件につき受け手ごとに1回の GET(100人のルームなら100回)。ルームの表示で待つのは、配信から1回の API 呼び出しの分(ローカルで数ミリ秒〜数十ミリ秒)。
 
 `MediaReceiver` を作るのは、履歴を読む関数を渡したとき(`RoomSession` の `fetchRecentTimeline`。ルームの画面が渡す)だけ。渡さなければ topic `media` を捨てる。
@@ -149,10 +161,10 @@ AWS の dev 環境に向けるときは、`terraform output` の `oidc_issuer`�
 ### 残していること
 
 
-- 添えた文の入力。API の `text` は渡せる(`MediaUploader.submit` の `text`)が、画面には入力欄がない。
 - 送信中の取り消し(圧縮・アップロードの途中で止める)。
 - 端末でのキャッシュ。今は `Image.network` のメモリのキャッシュだけ。URL の中身は変わらないので、ディスクに長く持ってよい(設計メモの「URL」)。
-- 幅・高さ・動画の長さ(表示の枠を先に取る。設計メモの「決めていないこと」)。
+- 全画面の表示・再生で、読む前に縦横比の枠を取ること(今はカードと履歴の一覧だけ)。
+- 動画の幅・高さの向き(上の「幅・高さ・長さ」)を、Android と iOS の実機で確かめること。
 - 100MB 以上のマルチパート。
 - 消したものの、端末のメモリに残った画像(`Image.network` のキャッシュ)は追い出していない。表示はしない。
 

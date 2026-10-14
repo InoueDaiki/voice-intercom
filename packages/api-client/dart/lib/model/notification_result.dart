@@ -10,9 +10,9 @@
 
 part of openapi.api;
 
-class SpeakingNotificationResult {
-  /// Returns a new [SpeakingNotificationResult] instance.
-  SpeakingNotificationResult({
+class NotificationResult {
+  /// Returns a new [NotificationResult] instance.
+  NotificationResult({
     required this.sent,
     required this.skipped,
   });
@@ -24,7 +24,7 @@ class SpeakingNotificationResult {
   int skipped;
 
   @override
-  bool operator ==(Object other) => identical(this, other) || other is SpeakingNotificationResult &&
+  bool operator ==(Object other) => identical(this, other) || other is NotificationResult &&
     other.sent == sent &&
     other.skipped == skipped;
 
@@ -35,7 +35,7 @@ class SpeakingNotificationResult {
     (skipped.hashCode);
 
   @override
-  String toString() => 'SpeakingNotificationResult[sent=$sent, skipped=$skipped]';
+  String toString() => 'NotificationResult[sent=$sent, skipped=$skipped]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
@@ -44,10 +44,10 @@ class SpeakingNotificationResult {
     return json;
   }
 
-  /// Returns a new [SpeakingNotificationResult] instance and imports its values from
+  /// Returns a new [NotificationResult] instance and imports its values from
   /// [value] if it's a [Map], null otherwise.
   // ignore: prefer_constructors_over_static_methods
-  static SpeakingNotificationResult? fromJson(dynamic value) {
+  static NotificationResult? fromJson(dynamic value) {
     if (value is Map) {
       final json = value.cast<String, dynamic>();
 
@@ -55,14 +55,14 @@ class SpeakingNotificationResult {
       // Note 1: the values aren't checked for validity beyond being non-null.
       // Note 2: this code is stripped in release mode!
       assert(() {
-        assert(json.containsKey(r'sent'), 'Required key "SpeakingNotificationResult[sent]" is missing from JSON.');
-        assert(json[r'sent'] != null, 'Required key "SpeakingNotificationResult[sent]" has a null value in JSON.');
-        assert(json.containsKey(r'skipped'), 'Required key "SpeakingNotificationResult[skipped]" is missing from JSON.');
-        assert(json[r'skipped'] != null, 'Required key "SpeakingNotificationResult[skipped]" has a null value in JSON.');
+        assert(json.containsKey(r'sent'), 'Required key "NotificationResult[sent]" is missing from JSON.');
+        assert(json[r'sent'] != null, 'Required key "NotificationResult[sent]" has a null value in JSON.');
+        assert(json.containsKey(r'skipped'), 'Required key "NotificationResult[skipped]" is missing from JSON.');
+        assert(json[r'skipped'] != null, 'Required key "NotificationResult[skipped]" has a null value in JSON.');
         return true;
       }());
 
-      return SpeakingNotificationResult(
+      return NotificationResult(
         sent: mapValueOfType<int>(json, r'sent')!,
         skipped: mapValueOfType<int>(json, r'skipped')!,
       );
@@ -70,11 +70,11 @@ class SpeakingNotificationResult {
     return null;
   }
 
-  static List<SpeakingNotificationResult> listFromJson(dynamic json, {bool growable = false,}) {
-    final result = <SpeakingNotificationResult>[];
+  static List<NotificationResult> listFromJson(dynamic json, {bool growable = false,}) {
+    final result = <NotificationResult>[];
     if (json is List && json.isNotEmpty) {
       for (final row in json) {
-        final value = SpeakingNotificationResult.fromJson(row);
+        final value = NotificationResult.fromJson(row);
         if (value != null) {
           result.add(value);
         }
@@ -83,12 +83,12 @@ class SpeakingNotificationResult {
     return result.toList(growable: growable);
   }
 
-  static Map<String, SpeakingNotificationResult> mapFromJson(dynamic json) {
-    final map = <String, SpeakingNotificationResult>{};
+  static Map<String, NotificationResult> mapFromJson(dynamic json) {
+    final map = <String, NotificationResult>{};
     if (json is Map && json.isNotEmpty) {
       json = json.cast<String, dynamic>(); // ignore: parameter_assignments
       for (final entry in json.entries) {
-        final value = SpeakingNotificationResult.fromJson(entry.value);
+        final value = NotificationResult.fromJson(entry.value);
         if (value != null) {
           map[entry.key] = value;
         }
@@ -97,14 +97,14 @@ class SpeakingNotificationResult {
     return map;
   }
 
-  // maps a json object with a list of SpeakingNotificationResult-objects as value to a dart map
-  static Map<String, List<SpeakingNotificationResult>> mapListFromJson(dynamic json, {bool growable = false,}) {
-    final map = <String, List<SpeakingNotificationResult>>{};
+  // maps a json object with a list of NotificationResult-objects as value to a dart map
+  static Map<String, List<NotificationResult>> mapListFromJson(dynamic json, {bool growable = false,}) {
+    final map = <String, List<NotificationResult>>{};
     if (json is Map && json.isNotEmpty) {
       // ignore: parameter_assignments
       json = json.cast<String, dynamic>();
       for (final entry in json.entries) {
-        map[entry.key] = SpeakingNotificationResult.listFromJson(entry.value, growable: growable,);
+        map[entry.key] = NotificationResult.listFromJson(entry.value, growable: growable,);
       }
     }
     return map;

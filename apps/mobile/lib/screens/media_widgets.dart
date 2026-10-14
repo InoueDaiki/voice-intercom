@@ -17,6 +17,47 @@ String? previewUrl(TimelineMedia media) {
   return isVideoMedia(media) ? null : media.url;
 }
 
+/// 動画の長さ(ミリ秒)を「分:秒」(1時間からは「時:分:秒」)にする。秒は切り上げる
+/// (0.4秒の動画を 0:00 と出さない)
+String formatDuration(int ms) {
+  final total = (ms / 1000).ceil();
+  final h = total ~/ 3600;
+  final m = total ~/ 60 % 60;
+  final s = (total % 60).toString().padLeft(2, '0');
+  return h > 0 ? '$h:${m.toString().padLeft(2, '0')}:$s' : '$m:$s';
+}
+
+/// 動画の長さの表示。画像と、長さの分からない動画(足す前に保存した履歴など)は null
+String? durationLabel(TimelineMedia media) {
+  final ms = media.durationMs;
+  return isVideoMedia(media) && ms != null && ms > 0
+      ? formatDuration(ms)
+      : null;
+}
+
+/// カードのサムネイルの枠の大きさ。
+///
+/// 幅・高さがあれば、縦横比を保って [maxSide] の正方形に収める(画像を読む前に枠を取り、
+/// 読み終えても周りがずれないように)。極端に細長いものは [maxRatio] で止める(枠が細く
+/// なりすぎないように。はみ出た分は切り取って見せる)。幅・高さが無ければ(足す前に保存した
+/// 履歴、管理コンソールから上げたものなど)[fallback] の枠にする。
+Size mediaBoxSize(
+  TimelineMedia media, {
+  double maxSide = 240,
+  double maxRatio = 3,
+  Size fallback = const Size(200, 150),
+}) {
+  final w = media.width;
+  final h = media.height;
+  if (w == null || h == null || w <= 0 || h <= 0) {
+    return fallback;
+  }
+  final ratio = (w / h).clamp(1 / maxRatio, maxRatio);
+  return ratio >= 1
+      ? Size(maxSide, maxSide / ratio)
+      : Size(maxSide * ratio, maxSide);
+}
+
 /// 履歴の時刻(ISO 8601)を、端末の時刻の「月/日 時:分」にする
 String formatTime(String iso) {
   final t = DateTime.tryParse(iso)?.toLocal();
@@ -33,9 +74,7 @@ void openMediaViewer(BuildContext context, TimelineEvent event) {
     return;
   }
   Navigator.of(context).push(
-    MaterialPageRoute<void>(
-      builder: (_) => MediaViewerScreen(media: media, caption: event.text),
-    ),
+    MaterialPageRoute<void>(builder: (_) => MediaViewerScreen(media: media)),
   );
 }
 
@@ -58,6 +97,7 @@ class MediaThumbnail extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final url = previewUrl(media);
     final video = isVideoMedia(media);
+    final duration = durationLabel(media);
     Widget placeholder(IconData icon) => ColoredBox(
       color: scheme.surfaceContainerHighest,
       child: Center(child: Icon(icon, color: scheme.onSurfaceVariant)),
@@ -93,11 +133,37 @@ class MediaThumbnail extends StatelessWidget {
                         placeholder(Icons.broken_image_outlined),
                   ),
                 if (video)
-                  const Center(
+                  Center(
                     child: Icon(
                       Icons.play_circle_fill,
-                      size: 48,
+                      // 小さい枠(履歴の一覧)では小さくする
+                      size: height < 96 ? 24 : 48,
                       color: Colors.white70,
+                    ),
+                  ),
+                if (duration != null)
+                  Positioned(
+                    right: 4,
+                    bottom: 4,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 1,
+                        ),
+                        child: Text(
+                          duration,
+                          key: Key('duration-${media.mediaId}'),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
               ],
@@ -109,7 +175,8 @@ class MediaThumbnail extends StatelessWidget {
   }
 }
 
-/// ルームの時間の流れに出す画像・動画1件。送信者、時刻、サムネイル、添えた文。
+/// ルームの時間の流れに出す画像・動画1件。送信者、時刻、サムネイル(縦横比の枠)、動画の長さ。
+/// 画像・動画には文を添えられない(前に添えた文があっても、API が空にして返す)。
 class MediaCard extends StatelessWidget {
   const MediaCard({super.key, required this.event, required this.sender});
 
@@ -119,7 +186,9 @@ class MediaCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final video = isVideoMedia(event.media!);
+    final media = event.media!;
+    final video = isVideoMedia(media);
+    final box = mediaBoxSize(media);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(8),
@@ -131,11 +200,7 @@ class MediaCard extends StatelessWidget {
               style: theme.textTheme.labelMedium,
             ),
             const SizedBox(height: 4),
-            MediaThumbnail(event: event),
-            if (event.text.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(event.text),
-            ],
+            MediaThumbnail(event: event, width: box.width, height: box.height),
           ],
         ),
       ),

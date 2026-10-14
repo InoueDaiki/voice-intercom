@@ -18,6 +18,8 @@ class Settings:
     translate_close_timeout_s: float
     # session.close の前に translate に送る無音(秒)。最後の文の翻訳の欠けを防ぐ案。0 なら送らない
     translate_tail_silence_s: float
+    # session.close の後にまとめて届く、翻訳音声の末尾の無音を捨てるか(silence_trim.py)
+    translate_trim_tail: bool
     # input_audio_buffer.commit から completed を待つ上限(PoC では約0.6秒)
     whisper_commit_timeout_s: float
     # 長い発話の字幕の区切り。None なら区切らない(PTT を離すまで確定しない)
@@ -46,6 +48,7 @@ class Settings:
             text_translate_model=os.environ.get("TEXT_TRANSLATE_MODEL", "gpt-6-luna"),
             translate_close_timeout_s=float(os.environ.get("TRANSLATE_CLOSE_TIMEOUT_S", "40")),
             translate_tail_silence_s=float(os.environ.get("TRANSLATE_TAIL_SILENCE_S", "0")),
+            translate_trim_tail=os.environ.get("TRANSLATE_TRIM_TAIL", "1") != "0",
             whisper_commit_timeout_s=float(os.environ.get("WHISPER_COMMIT_TIMEOUT_S", "10")),
             segment_rules=segment_rules_from_env(),
             tts_model=os.environ.get("TTS_MODEL", "gpt-realtime-2.1-mini"),

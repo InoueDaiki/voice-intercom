@@ -8,7 +8,8 @@ docs/設計メモ.md の「画像・動画のルームへの配信」の B(API �
    いなければ送らない(livekit-server 1.13.9 では、無いルームへの SendData は 3 秒待って
    503 になる)。
 3. 最初の complete のときだけ、ルームのメンバーから、送信者と今ルームにいる人を除いた人に
-   push 通知を送る。
+   push 通知を送る。同じルーム × 同じ受け手には、テキスト・話し始めの通知と共通の間隔
+   (既定 5 分)に1回まで(room_push.py)。
 
 - 送信者は JWT の sub、中身は保存した履歴の行から作る。参加者は書き換えられない。
 - 2回目の complete でも 1 と 2 は行う(1回目の配信が失敗したときに、やり直せば届くように)。
@@ -18,7 +19,8 @@ docs/設計メモ.md の「画像・動画のルームへの配信」の B(API �
 - ListParticipants が失敗したら(LiveKit に届かないなど)、配信は飛ばし、push 通知は
   送信者以外のメンバー全員に送る(今ルームにいる人が分からないため)。
 - 時間: LiveKit の呼び出しは1回 LIVEKIT_TIMEOUT_S 秒、push 通知は PUSH_TIMEOUT_S 秒で待つのを
-  やめる。合わせて 12 秒で、S3 と DynamoDB の読み書きを足しても Lambda の timeout(15秒)に収める。
+  やめる。合わせて 12 秒で、S3 と DynamoDB の読み書き(間引きの UpdateItem は受け手ごとに1回、
+  数 ms)を足しても Lambda の timeout(15秒)に収める。
 """
 
 import asyncio
@@ -30,7 +32,7 @@ import aiohttp
 from livekit import api as livekit
 from livekit.api.room_service import RoomService
 
-from voice_intercom_api import notify
+from voice_intercom_api import room_push
 from voice_intercom_api.config import get_settings
 from voice_intercom_api.models import Room, User
 from voice_intercom_api.timeline_models import TimelineEvent
@@ -41,27 +43,13 @@ logger = logging.getLogger(__name__)
 # データチャネルの topic(アプリはこの topic の、送信元の参加者が無いデータだけを読む)
 TOPIC = "media"
 
-# MediaMessage の text の上限(UTF-8 のバイト数)。reliable のデータを小さく保つため
-MAX_TEXT_BYTES = 4096
-
 # LiveKit の Server API の1回の待ち時間(秒)。ローカルの livekit-server では 1ms 前後で返る
 LIVEKIT_TIMEOUT_S = 2.0
 
 # push 通知を待つ長さ(秒)
 PUSH_TIMEOUT_S = 8.0
 
-# push 通知の本文に足す、添えた文の先頭の文字数
-PUSH_TEXT_CHARS = 50
-
 NOTIFICATION_TYPE = "media"
-
-
-def truncate_utf8(text: str, max_bytes: int) -> tuple[str, bool]:
-    """UTF-8 で max_bytes に収まるよう、文字の途中で切らずに先頭を返す。切ったら True。"""
-    encoded = text.encode()
-    if len(encoded) <= max_bytes:
-        return text, False
-    return encoded[:max_bytes].decode(errors="ignore"), True
 
 
 def build_message(event: TimelineEvent) -> MediaMessage:
@@ -69,7 +57,7 @@ def build_message(event: TimelineEvent) -> MediaMessage:
     media = event.media
     if media is None:
         raise ValueError("media の履歴ではない")
-    text, truncated = truncate_utf8(event.text, MAX_TEXT_BYTES)
+    # text、text_truncated、language は使わない(画像・動画には文を添えられない)ので入れない
     return MediaMessage(
         event_id=event.event_id,
         sender_identity=event.sender_id,
@@ -79,9 +67,9 @@ def build_message(event: TimelineEvent) -> MediaMessage:
         url=media.url,
         thumbnail_url=media.thumbnail_url or "",
         size_bytes=media.size_bytes,
-        text=text,
-        text_truncated=truncated,
-        language=event.language or "",
+        width=media.width or 0,
+        height=media.height or 0,
+        duration_ms=media.duration_ms or 0,
     )
 
 
@@ -154,27 +142,21 @@ def broadcast(event: TimelineEvent) -> list[str] | None:
 
 
 def push_body(event: TimelineEvent, sender: User | None) -> str:
-    """push 通知の本文。「<表示名>さんが画像を送りました」に、添えた文の先頭を足す。"""
+    """push 通知の本文。「<表示名>さんが画像を送りました」(動画なら「動画を送りました」)。"""
     media = event.media
     what = "動画" if media is not None and media.content_type.startswith("video/") else "画像"
     who = "誰か" if sender is None else f"{sender.display_name}さん"
-    body = f"{who}が{what}を送りました"
-    text = event.text.strip()
-    if text:
-        head = text[:PUSH_TEXT_CHARS] + ("…" if len(text) > PUSH_TEXT_CHARS else "")
-        body += f": {head}"
-    return body
+    return f"{who}が{what}を送りました"
 
 
 def notify_absent(
     room: Room, event: TimelineEvent, sender: User | None, present: list[str] | None
 ) -> None:
     """ルームのメンバーから、送信者と今ルームにいる人を除いた人に push 通知を送る。"""
-    excluded = {event.sender_id, *(present or [])}
-    recipients = [uid for uid in dict.fromkeys(room.member_ids) if uid not in excluded]
-    if not recipients:
-        return
-    notify.send_to_users_within(
+    recipients = room_push.recipients_of(room.member_ids, [event.sender_id, *(present or [])])
+    # 同じルーム × 同じ受け手に、テキスト・話し始めと共通の間隔で1回まで(room_push.py)
+    room_push.send_throttled(
+        room.room_id,
         recipients,
         title=room.name,
         body=push_body(event, sender),

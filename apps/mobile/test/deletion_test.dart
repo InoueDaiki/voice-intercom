@@ -47,6 +47,22 @@ void main() {
       expect(board.segments.single.translations, isEmpty);
     });
 
+    test('Agent が送り直しに応えて送り直した字幕(RecentMessages)でも戻さない', () {
+      final board = CaptionBoard();
+      board.apply(textCaption('s1', 'はい'));
+      board.apply(textCaption('s1', 'Yes', language: 'en', translated: true));
+      board.markTextDeleted('alice', 'm1');
+
+      // 同じ segment_id の原文と訳の確定が、もう一度届く
+      board.apply(textCaption('s1', 'はい'));
+      board.apply(textCaption('s1', 'Yes', language: 'en', translated: true));
+
+      final segment = board.segments.single;
+      expect(segment.deleted, isTrue);
+      expect(segment.original, isNull);
+      expect(segment.translations, isEmpty);
+    });
+
     test('消した後に初めて届いた字幕も、消したものとして出す', () {
       final board = CaptionBoard();
       board.markTextDeleted('alice', 'm1');

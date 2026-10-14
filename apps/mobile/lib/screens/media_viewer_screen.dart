@@ -6,12 +6,9 @@ import 'media_widgets.dart';
 
 /// 画像を全画面で出す(つまんで拡大できる)か、動画を再生する。
 class MediaViewerScreen extends StatelessWidget {
-  const MediaViewerScreen({super.key, required this.media, this.caption = ''});
+  const MediaViewerScreen({super.key, required this.media});
 
   final TimelineMedia media;
-
-  /// 添えた文
-  final String caption;
 
   @override
   Widget build(BuildContext context) {
@@ -22,23 +19,9 @@ class MediaViewerScreen extends StatelessWidget {
         foregroundColor: Colors.white,
       ),
       body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: isVideoMedia(media)
-                  ? _VideoView(url: media.url)
-                  : _ImageView(url: media.url),
-            ),
-            if (caption.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text(
-                  caption,
-                  style: const TextStyle(color: Colors.white),
-                ),
-              ),
-          ],
-        ),
+        child: isVideoMedia(media)
+            ? _VideoView(url: media.url)
+            : _ImageView(url: media.url),
       ),
     );
   }

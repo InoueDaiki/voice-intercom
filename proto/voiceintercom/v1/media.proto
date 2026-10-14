@@ -29,11 +29,18 @@ message MediaMessage {
   string thumbnail_url = 7;
   // 本体のバイト数(実際に置かれた大きさ)
   uint64 size_bytes = 8;
-  // 添えた文。UTF-8 で 4096 バイトを超えるときは先頭だけを入れ(文字の途中では切らない)、
-  // text_truncated を true にする
-  string text = 9;
-  // text が切り詰められていれば true。全文は履歴で読む
-  bool text_truncated = 10;
-  // 添えた文の言語(送信者のプロフィールの言語。BCP 47)。分からなければ空
-  string language = 11;
+  // 使わない(常に空)。画像・動画には文を添えられない(2026-10-13 に決めた。設計メモの
+  // 「画像・動画のルームへの配信」)。古いアプリが読むので項目は残す
+  string text = 9 [deprecated = true];
+  // 使わない(常に false)。text と同じ
+  bool text_truncated = 10 [deprecated = true];
+  // 使わない(常に空)。添えた文の言語だったもの。text と同じ
+  string language = 11 [deprecated = true];
+  // 表示の幅と高さ(ピクセル。向きを反映した後の値。縦向きなら height が大きい)。
+  // 送信者のアプリが整えた後の本体で測った値。分からなければ 0(古いアプリが上げたもの、
+  // 管理コンソールから上げたものなど)。受け手は 0 なら決まった枠で表示する
+  uint32 width = 12;
+  uint32 height = 13;
+  // 動画の長さ(ミリ秒)。画像と、分からないときは 0
+  uint32 duration_ms = 14;
 }

@@ -16,6 +16,9 @@ class CreateMediaUploadRequest {
     required this.contentType,
     required this.sizeBytes,
     this.hasThumbnail = false,
+    this.width,
+    this.height,
+    this.durationMs,
   });
 
   CreateMediaUploadRequestContentTypeEnum contentType;
@@ -29,27 +32,66 @@ class CreateMediaUploadRequest {
   /// サムネイル(image/jpeg)も上げるなら true
   bool hasThumbnail;
 
+  /// 表示の幅(ピクセル。向きを反映した後。height と一緒に送る)。分からなければ null
+  ///
+  /// Minimum value: 1
+  /// Maximum value: 65535
+  int? width;
+
+  /// 表示の高さ(ピクセル。向きを反映した後。width と一緒に送る)。分からなければ null
+  ///
+  /// Minimum value: 1
+  /// Maximum value: 65535
+  int? height;
+
+  /// 動画の長さ(ミリ秒。動画のときだけ)。画像と、分からないときは null
+  ///
+  /// Minimum value: 1
+  /// Maximum value: 86400000
+  int? durationMs;
+
   @override
   bool operator ==(Object other) => identical(this, other) || other is CreateMediaUploadRequest &&
     other.contentType == contentType &&
     other.sizeBytes == sizeBytes &&
-    other.hasThumbnail == hasThumbnail;
+    other.hasThumbnail == hasThumbnail &&
+    other.width == width &&
+    other.height == height &&
+    other.durationMs == durationMs;
 
   @override
   int get hashCode =>
     // ignore: unnecessary_parenthesis
     (contentType.hashCode) +
     (sizeBytes.hashCode) +
-    (hasThumbnail.hashCode);
+    (hasThumbnail.hashCode) +
+    (width == null ? 0 : width!.hashCode) +
+    (height == null ? 0 : height!.hashCode) +
+    (durationMs == null ? 0 : durationMs!.hashCode);
 
   @override
-  String toString() => 'CreateMediaUploadRequest[contentType=$contentType, sizeBytes=$sizeBytes, hasThumbnail=$hasThumbnail]';
+  String toString() => 'CreateMediaUploadRequest[contentType=$contentType, sizeBytes=$sizeBytes, hasThumbnail=$hasThumbnail, width=$width, height=$height, durationMs=$durationMs]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
       json[r'content_type'] = this.contentType;
       json[r'size_bytes'] = this.sizeBytes;
       json[r'has_thumbnail'] = this.hasThumbnail;
+    if (this.width != null) {
+      json[r'width'] = this.width;
+    } else {
+      json[r'width'] = null;
+    }
+    if (this.height != null) {
+      json[r'height'] = this.height;
+    } else {
+      json[r'height'] = null;
+    }
+    if (this.durationMs != null) {
+      json[r'duration_ms'] = this.durationMs;
+    } else {
+      json[r'duration_ms'] = null;
+    }
     return json;
   }
 
@@ -75,6 +117,9 @@ class CreateMediaUploadRequest {
         contentType: CreateMediaUploadRequestContentTypeEnum.fromJson(json[r'content_type'])!,
         sizeBytes: mapValueOfType<int>(json, r'size_bytes')!,
         hasThumbnail: mapValueOfType<bool>(json, r'has_thumbnail') ?? false,
+        width: mapValueOfType<int>(json, r'width'),
+        height: mapValueOfType<int>(json, r'height'),
+        durationMs: mapValueOfType<int>(json, r'duration_ms'),
       );
     }
     return null;

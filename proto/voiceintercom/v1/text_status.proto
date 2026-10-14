@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package voiceintercom.v1;
+
+// テキスト入力(text.proto の TextMessage)の受け付けと結果。Agent が送信者だけに宛てて
+// (destination_identities)、データチャネル(topic "text_status"、reliable)で送る。
+//
+// 1通について、まず ACCEPTED か REJECTED を1回送る。ACCEPTED なら、翻訳と読み上げを終えたときに
+// COMPLETED か FAILED を1回送る。同じ message_id で送り直されたら、そのときの状態を送り直す
+// (処理中なら ACCEPTED)。受け手は、送信元が Agent の参加者のものだけを読む(字幕と同じ)。
+// この取り決めを知らない Agent は何も送らないので、受け手は字幕(Caption の message_id)でも
+// 届いたことを確かめる。
+message TextStatus {
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    // 受け付けた。原文の字幕より先に送る
+    STATE_ACCEPTED = 1;
+    // 断った(reason に理由)。字幕も読み上げも出さない
+    STATE_REJECTED = 2;
+    // 翻訳か読み上げの一部(または全部)に失敗した。失敗した言語は untranslated_languages と
+    // unspoken_languages に入る。ほかの言語の字幕と読み上げは出ている
+    STATE_FAILED = 3;
+    // 翻訳と読み上げを、すべて終えた
+    STATE_COMPLETED = 4;
+  }
+
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    // 前後の空白を除くと空
+    REASON_EMPTY = 1;
+    // 長すぎる(max_chars を超えた)
+    REASON_TOO_LONG = 2;
+  }
+
+  // 送信者のアプリが振った TextMessage の message_id
+  string message_id = 1;
+  State state = 2;
+  // REJECTED の理由。ほかの状態では REASON_UNSPECIFIED
+  Reason reason = 3;
+  // REJECTED で REASON_TOO_LONG のとき、受け付ける最大の文字数
+  uint32 max_chars = 4;
+  // FAILED のとき、訳せなかった言語(BCP 47)
+  repeated string untranslated_languages = 5;
+  // FAILED のとき、読み上げに失敗した言語(原文の読み上げなら送信者の言語)
+  repeated string unspoken_languages = 6;
+}

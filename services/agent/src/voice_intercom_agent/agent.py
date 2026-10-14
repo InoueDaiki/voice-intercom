@@ -16,14 +16,14 @@ from .captions import CaptionTrack, new_segment_id
 from .config import Settings
 from .history import HistoryRecorder, create_api_access, create_history, utc_now
 from .languages import participant_language, target_languages
-from .notify import SpeakingNotifier, create_speaking_notifier, present_ids
+from .notify import RoomNotifier, create_room_notifier, present_ids
 from .output import CaptionPublisher, TranslationTracks
 from .realtime import INPUT_SAMPLE_RATE, OUTPUT_SAMPLE_RATE, TranslateSession, WhisperSession
 from .recording import Recorder, create_recorder
 from .segmenter import Segmenter
 from .speech_realtime import RealtimeSpeech
 from .talk_gate import Action, TalkGate
-from .text_input import TEXT_TOPIC, RecentMessages, TextInput, parse_text_message
+from .text_input import TEXT_TOPIC, TextInput, parse_text_message
 from .text_translation import TextTranslator
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ class Deps:
     captions: CaptionPublisher
     tracks: TranslationTracks
     history: HistoryRecorder
-    speaking: SpeakingNotifier
+    notifier: RoomNotifier
     recordings: Recorder
     background: set[asyncio.Task[Any]]
 
@@ -100,6 +100,7 @@ class Utterance:
                     language=lang,
                     close_timeout_s=settings.translate_close_timeout_s,
                     tail_silence_s=settings.translate_tail_silence_s,
+                    trim_tail=settings.translate_trim_tail,
                     on_audio=audio.push,
                     on_done=audio.close,
                 )
@@ -245,7 +246,7 @@ class Speaker:
             )
             self._deps.spawn(self._utterance.run())
             # 話し始めの push 通知(バックグラウンドで API を呼ぶ。発話の処理は待たない)
-            self._deps.speaking.started(
+            self._deps.notifier.started(
                 identity,
                 present_ids(
                     (p.identity, is_person(p)) for p in self._room.remote_participants.values()
@@ -281,7 +282,7 @@ class IntercomAgent:
         self._room = room
         self._speakers: dict[str, Speaker] = {}
         http = aiohttp.ClientSession()
-        # API のトークンは、履歴の保存と話し始めの通知で共有する
+        # API のトークンは、履歴の保存と push 通知の依頼で共有する
         api = create_api_access(http)
         self._deps = Deps(
             settings=settings,
@@ -291,7 +292,7 @@ class IntercomAgent:
             tracks=TranslationTracks(room),
             # ルーム名(API の room_id)は接続してから決まるので、保存するときに読む
             history=create_history(http, lambda: room.name, api),
-            speaking=create_speaking_notifier(http, lambda: room.name, api),
+            notifier=create_room_notifier(http, lambda: room.name, api),
             recordings=create_recorder(lambda: room.name),
             background=set(),
         )
@@ -315,9 +316,10 @@ class IntercomAgent:
             self._deps.tracks.speech_input,
             max_chars=settings.text_max_chars,
             history=self._deps.history,
+            on_accepted=self._text_accepted,
+            # 受け付け・結果と、送り直しへの字幕は、送信者だけに送る
+            replies=self._deps.captions,
         )
-        # アプリの送り直し(入室の直後に捨てられたとき)を1回だけ処理する
-        self._recent_texts = RecentMessages()
         room.on("data_received", self._on_data_received)
         # participant_disconnected は、ルームの参加者から外した後に呼ばれる
         room.on("participant_connected", self._update_speech)
@@ -350,9 +352,8 @@ class IntercomAgent:
         if message is None:
             logger.warning("テキストを読めなかった: %s", sender.identity)
             return
-        if self._recent_texts.is_duplicate(sender.identity, message.message_id):
-            logger.info("送り直されたテキストを捨てた: %s %s", sender.identity, message.message_id)
-            return
+        # 同じ (identity, message_id) の送り直しには、TextInput が処理をやり直さずに
+        # 字幕と状態を送り直す
         # 送信者と言語は、メッセージではなく送信元の参加者から取る(なりすましを防ぐ)
         listeners = [
             participant_language(p.attributes)
@@ -364,6 +365,13 @@ class IntercomAgent:
                 sender.identity, participant_language(sender.attributes), listeners, message
             )
         )
+
+    def _text_accepted(self, sender: str, text: str) -> None:
+        """テキストを受け付けたら、ルームにいないメンバーへの push 通知を API に頼む(notify.py)。"""
+        present = present_ids(
+            (p.identity, is_person(p)) for p in self._room.remote_participants.values()
+        )
+        self._deps.notifier.text(sender, present, text)
 
     def _on_track_subscribed(
         self,
@@ -407,10 +415,10 @@ class IntercomAgent:
             task.cancel()
         await asyncio.gather(*self._deps.background, return_exceptions=True)
         await self._tts.aclose()
-        # 打ち切った発話の分も含めて、履歴の送り残しと録音を送る。送り中の話し始めの通知も同時に待つ
+        # 打ち切った発話の分も含めて、履歴の送り残しと録音を送る。送り中の通知も同時に待つ
         await asyncio.gather(
             self._deps.history.aclose(),
-            self._deps.speaking.aclose(),
+            self._deps.notifier.aclose(),
             self._deps.recordings.aclose(),
         )
         await self._deps.tracks.aclose()

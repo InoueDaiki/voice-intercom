@@ -6,6 +6,7 @@ import 'package:voice_intercom_api_client/api.dart'
     show TimelineEvent, TimelineEventKindEnum;
 import 'package:voice_intercom_schema/gen/voiceintercom/v1/caption.pb.dart';
 import 'package:voice_intercom_schema/gen/voiceintercom/v1/text.pb.dart';
+import 'package:voice_intercom_schema/gen/voiceintercom/v1/text_status.pb.dart';
 
 import 'background_audio.dart';
 import 'caption_board.dart';
@@ -18,6 +19,9 @@ import 'text_sender.dart';
 /// データチャネルの topic(proto/voiceintercom/v1 のコメント)
 const captionTopic = 'caption';
 const textTopic = 'text';
+
+/// テキスト入力の受け付け・結果(TextStatus)。Agent が送信者だけに宛てて送る
+const textStatusTopic = 'text_status';
 
 /// 画像・動画の配信(設計メモの「データチャネルの取り決め」)。API が Server API から送る
 const mediaTopic = 'media';
@@ -329,6 +333,10 @@ class RoomSession extends ChangeNotifier {
       }
       return;
     }
+    if (e.topic == textStatusTopic) {
+      _onTextStatus(e);
+      return;
+    }
     if (e.topic != captionTopic) {
       return;
     }
@@ -350,6 +358,24 @@ class RoomSession extends ChangeNotifier {
       textSender.acknowledge(caption.messageId);
     }
     _changed();
+  }
+
+  /// テキスト入力の受け付け・結果。字幕と同じく、送信者を偽れるので Agent の参加者からのものだけ読む。
+  /// 自分に宛てたもの(destination_identities)しか届かないので、自分の送ったテキストのもの
+  void _onTextStatus(DataReceivedEvent e) {
+    if (!isFromAgent(e.participant)) {
+      debugPrint(
+        'Agent 以外が送った topic text_status を捨てた: ${e.participant?.identity}',
+      );
+      return;
+    }
+    final TextStatus status;
+    try {
+      status = TextStatus.fromBuffer(e.data);
+    } on Exception {
+      return;
+    }
+    textSender.applyStatus(status);
   }
 
   Future<void> _sendText(TextMessage message) async {

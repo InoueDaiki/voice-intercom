@@ -51,11 +51,8 @@ class ApiMediaBackend implements MediaUploadBackend {
       );
 
   @override
-  Future<TimelineEvent> complete(
-    String roomId,
-    String mediaId,
-    CompleteMediaUploadRequest request,
-  ) => _api.completeMediaUpload(roomId, mediaId, request);
+  Future<TimelineEvent> complete(String roomId, String mediaId) =>
+      _api.completeMediaUpload(roomId, mediaId);
 
   void close() => _client.close();
 }

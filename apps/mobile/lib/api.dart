@@ -103,15 +103,12 @@ class Api {
   });
 
   /// アップロードした画像・動画を履歴に保存する。2回目からは同じ履歴を返す
-  Future<TimelineEvent> completeMediaUpload(
-    String roomId,
-    String mediaId,
-    CompleteMediaUploadRequest request,
-  ) => _call((c) async {
-    final res = await MediaApi(c).completeMediaUpload(roomId, mediaId, request);
-    if (res == null) {
-      throw ApiException(500, 'complete の応答が空');
-    }
-    return res;
-  });
+  Future<TimelineEvent> completeMediaUpload(String roomId, String mediaId) =>
+      _call((c) async {
+        final res = await MediaApi(c).completeMediaUpload(roomId, mediaId);
+        if (res == null) {
+          throw ApiException(500, 'complete の応答が空');
+        }
+        return res;
+      });
 }

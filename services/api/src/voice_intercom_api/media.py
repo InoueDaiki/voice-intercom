@@ -40,7 +40,6 @@ from voice_intercom_api.timeline_models import (
     MAX_MEDIA_BYTES,
     MEDIA_ID_PATTERN,
     THUMBNAIL_CONTENT_TYPE,
-    CompleteMediaUploadRequest,
     CreateMediaUploadRequest,
     MediaUpload,
     TimelineEvent,
@@ -57,7 +56,8 @@ MAX_THUMBNAIL_BYTES = 10 * 1024 * 1024
     "/rooms/<room_id>/media/uploads",
     summary="画像・動画をアップロードする署名付き URL を発行する(管理者かメンバー)",
     description="PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と"
-    "同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。",
+    "同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。"
+    "width・height・duration_ms は、送信者が測った値をそのまま履歴に入れる(API は確かめない)。",
     operation_id="createMediaUpload",
     tags=["media"],
     security=AUTH,
@@ -76,6 +76,9 @@ def create_media_upload(
         content_type=body.content_type,
         size_bytes=body.size_bytes,
         has_thumbnail=body.has_thumbnail,
+        width=body.width,
+        height=body.height,
+        duration_ms=body.duration_ms,
     )
     return MediaUpload(
         media_id=media_id,
@@ -102,7 +105,9 @@ def _conflict(message: str) -> ServiceError:
     "2回目からは、最初に保存した履歴を返す。"
     "保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、"
     "最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。"
-    "配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。",
+    "配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。"
+    "本文は要らない(画像・動画には文を添えられない)。"
+    "前のクライアントが送る本文(text など)は無視する。",
     operation_id="completeMediaUpload",
     tags=["media"],
     security=AUTH,
@@ -119,7 +124,6 @@ def complete_media_upload(
     media_id: Annotated[
         str, Path(pattern=MEDIA_ID_PATTERN, description="uploads が返した media_id")
     ],
-    body: Annotated[CompleteMediaUploadRequest, Body()],
     user: CurrentUser,
 ) -> TimelineEvent:
     room = visible_room(room_id, user)
@@ -145,15 +149,11 @@ def complete_media_upload(
 
     # 宣言された大きさではなく、実際に置かれた大きさを履歴に書く
     pending = replace(pending, size_bytes=original.size_bytes)
-    # 画像に添えた文の言語は、送った人のプロフィールの言語とみなす(翻訳はしない)
+    # push 通知の本文に表示名を使う
     profile = store.get_user(user.sub)
     try:
         event = timeline_store.complete_upload(
-            pending,
-            sender_id=user.sub,
-            occurred_at=format_timestamp(datetime.now(UTC)),
-            language=None if profile is None else profile.language,
-            text=body.text,
+            pending, sender_id=user.sub, occurred_at=format_timestamp(datetime.now(UTC))
         )
     except timeline_store.AlreadyCompletedError as e:
         # 同時に呼ばれた別の complete が先に保存した。push 通知はそちらが送る

@@ -183,8 +183,6 @@ class ApiClient {
           return valueString == 'true' || valueString == '1';
         case 'DateTime':
           return value is DateTime ? value : DateTime.tryParse(value);
-        case 'CompleteMediaUploadRequest':
-          return CompleteMediaUploadRequest.fromJson(value);
         case 'CreateMediaUploadRequest':
           return CreateMediaUploadRequest.fromJson(value);
         case 'CreateRoomRequest':
@@ -201,6 +199,8 @@ class ApiClient {
           return LiveKitTokenResponse.fromJson(value);
         case 'MediaUpload':
           return MediaUpload.fromJson(value);
+        case 'NotificationResult':
+          return NotificationResult.fromJson(value);
         case 'PutTimelineEventRequest':
           return PutTimelineEventRequest.fromJson(value);
         case 'PutUserRequest':
@@ -215,8 +215,8 @@ class ApiClient {
           return RoomList.fromJson(value);
         case 'SpeakingNotificationRequest':
           return SpeakingNotificationRequest.fromJson(value);
-        case 'SpeakingNotificationResult':
-          return SpeakingNotificationResult.fromJson(value);
+        case 'TextNotificationRequest':
+          return TextNotificationRequest.fromJson(value);
         case 'TimelineDeletion':
           return TimelineDeletion.fromJson(value);
         case 'TimelineEvent':

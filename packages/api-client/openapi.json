@@ -659,7 +659,7 @@
           "media"
         ],
         "summary": "画像・動画をアップロードする署名付き URL を発行する(管理者かメンバー)",
-        "description": "PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。",
+        "description": "PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。width・height・duration_ms は、送信者が測った値をそのまま履歴に入れる(API は確かめない)。",
         "operationId": "createMediaUpload",
         "parameters": [
           {
@@ -750,7 +750,7 @@
           "media"
         ],
         "summary": "アップロードした画像・動画を履歴に保存する(アップロードした本人)",
-        "description": "本体(とサムネイル)が置かれていなければ 409。2回目からは、最初に保存した履歴を返す。保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。",
+        "description": "本体(とサムネイル)が置かれていなければ 409。2回目からは、最初に保存した履歴を返す。保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。本文は要らない(画像・動画には文を添えられない)。前のクライアントが送る本文(text など)は無視する。",
         "operationId": "completeMediaUpload",
         "parameters": [
           {
@@ -778,16 +778,6 @@
             "in": "path"
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CompleteMediaUploadRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "422": {
             "description": "Validation Error",
@@ -863,7 +853,7 @@
           "notifications"
         ],
         "summary": "誰かが話し始めたことを、ルームにいないメンバーに push 通知する(Agent)",
-        "description": "ルームのメンバーから、話者と present_ids を除いた人に送る。同じルーム × 同じ受け手には、間隔(既定 600 秒)に1回まで。送信に失敗しても 500 にはせず、sent を 0 にして返す。",
+        "description": "ルームのメンバーから、話者と present_ids を除いた人に送る。同じルーム × 同じ受け手には、間隔(既定 300 秒。テキスト・画像・動画の通知と共通)に1回まで。送信に失敗しても 500 にはせず、sent を 0 にして返す。",
         "operationId": "notifySpeaking",
         "parameters": [
           {
@@ -905,7 +895,98 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SpeakingNotificationResult"
+                  "$ref": "#/components/schemas/NotificationResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ルームがない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/rooms/{room_id}/notifications/text": {
+      "post": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "テキスト入力が届いたことを、ルームにいないメンバーに push 通知する(Agent)",
+        "description": "ルームのメンバーから、送信者と present_ids を除いた人に送る。本文は「<表示名>さん: <テキストの先頭>」。同じルーム × 同じ受け手には、間隔(既定 300 秒。話し始め・画像・動画の通知と共通)に1回まで。送信に失敗しても 500 にはせず、sent を 0 にして返す。",
+        "operationId": "notifyText",
+        "parameters": [
+          {
+            "description": "ルームの ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Room Id",
+              "description": "ルームの ID"
+            },
+            "name": "room_id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TextNotificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationResult"
                 }
               }
             }
@@ -1502,19 +1583,6 @@
   },
   "components": {
     "schemas": {
-      "CompleteMediaUploadRequest": {
-        "properties": {
-          "text": {
-            "type": "string",
-            "maxLength": 10000,
-            "title": "Text",
-            "description": "画像・動画に添える文",
-            "default": ""
-          }
-        },
-        "type": "object",
-        "title": "CompleteMediaUploadRequest"
-      },
       "CreateMediaUploadRequest": {
         "properties": {
           "content_type": {
@@ -1540,6 +1608,48 @@
             "title": "Has Thumbnail",
             "description": "サムネイル(image/jpeg)も上げるなら true",
             "default": false
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width",
+            "description": "表示の幅(ピクセル。向きを反映した後。height と一緒に送る)。分からなければ null"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height",
+            "description": "表示の高さ(ピクセル。向きを反映した後。width と一緒に送る)。分からなければ null"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 86400000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms",
+            "description": "動画の長さ(ミリ秒。動画のときだけ)。画像と、分からないときは null"
           }
         },
         "type": "object",
@@ -1698,6 +1808,26 @@
           "expires_at"
         ],
         "title": "MediaUpload"
+      },
+      "NotificationResult": {
+        "properties": {
+          "sent": {
+            "type": "integer",
+            "title": "Sent",
+            "description": "送った人数"
+          },
+          "skipped": {
+            "type": "integer",
+            "title": "Skipped",
+            "description": "前回の通知から間隔がたっていないので、送らなかった人数"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sent",
+          "skipped"
+        ],
+        "title": "NotificationResult"
       },
       "PutTimelineEventRequest": {
         "properties": {
@@ -1963,25 +2093,39 @@
         ],
         "title": "SpeakingNotificationRequest"
       },
-      "SpeakingNotificationResult": {
+      "TextNotificationRequest": {
         "properties": {
-          "sent": {
-            "type": "integer",
-            "title": "Sent",
-            "description": "送った人数"
+          "sender_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Sender Id",
+            "description": "送信者の user_id(sub)"
           },
-          "skipped": {
-            "type": "integer",
-            "title": "Skipped",
-            "description": "前回の通知から間隔がたっていないので、送らなかった人数"
+          "present_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "title": "Present Ids",
+            "description": "今ルームに入っている人の user_id(sub)。この人たちには送らない",
+            "default": []
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Text",
+            "description": "送られたテキスト(本文には先頭だけを入れる)"
           }
         },
         "type": "object",
         "required": [
-          "sent",
-          "skipped"
+          "sender_id",
+          "text"
         ],
-        "title": "SpeakingNotificationResult"
+        "title": "TextNotificationRequest"
       },
       "TimelineDeletion": {
         "properties": {
@@ -2078,7 +2222,7 @@
           "text": {
             "type": "string",
             "title": "Text",
-            "description": "原文。media では空文字か、添えた文"
+            "description": "原文。media では常に空文字(画像・動画には文を添えられない)"
           },
           "translations": {
             "additionalProperties": {
@@ -2204,6 +2348,48 @@
           "size_bytes": {
             "type": "integer",
             "title": "Size Bytes"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width",
+            "description": "表示の幅(ピクセル。向きを反映した後。height と一緒に送る)。分からなければ null"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height",
+            "description": "表示の高さ(ピクセル。向きを反映した後。width と一緒に送る)。分からなければ null"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 86400000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms",
+            "description": "動画の長さ(ミリ秒。動画のときだけ)。画像と、分からないときは null"
           }
         },
         "type": "object",

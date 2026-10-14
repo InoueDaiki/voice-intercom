@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from livekit import rtc
 
 from voice_intercom_agent.agent import IntercomAgent
 from voice_intercom_agent.text_input import TEXT_TOPIC
@@ -45,3 +46,28 @@ def test_other_topics_are_ignored_silently(caplog: pytest.LogCaptureFixture) -> 
         deps = receive(packet)
     assert deps.spawned == []
     assert caplog.text == ""
+
+
+class FakeNotifier:
+    def __init__(self) -> None:
+        self.texts: list[tuple[str, list[str], str]] = []
+
+    def text(self, sender_id: str, present: list[str], text: str) -> None:
+        self.texts.append((sender_id, present, text))
+
+
+def test_accepted_text_asks_for_push_with_present_people() -> None:
+    standard = rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD
+    participants = {
+        "a": SimpleNamespace(identity="alice", kind=standard),
+        "b": SimpleNamespace(identity="bob", kind=standard),
+        "x": SimpleNamespace(identity="agent-1", kind=rtc.ParticipantKind.PARTICIPANT_KIND_AGENT),
+    }
+    notifier = FakeNotifier()
+    agent = SimpleNamespace(
+        _room=SimpleNamespace(remote_participants=participants),
+        _deps=SimpleNamespace(notifier=notifier),
+    )
+    IntercomAgent._text_accepted(agent, "alice", "はい")  # pyright: ignore[reportArgumentType]
+    # Agent は今ルームにいる人に数えない。送信者は API 側で除く
+    assert notifier.texts == [("alice", ["alice", "bob"], "はい")]

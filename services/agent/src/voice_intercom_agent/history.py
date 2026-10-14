@@ -101,7 +101,7 @@ def _log_disabled(missing: list[str], *, partly_set: bool) -> None:
     _disabled_logged = True
     # 一部だけ設定されているのは設定の誤りの可能性が高いので、警告にする
     log = logger.warning if partly_set else logger.info
-    log("履歴の保存と話し始めの通知は無効(%s が未設定)", "、".join(missing))
+    log("履歴の保存と通知は無効(%s が未設定)", "、".join(missing))
 
 
 def to_source_id(segment_id: str) -> str:
@@ -457,7 +457,7 @@ class HistoryRecorder:
 
 @dataclass(frozen=True)
 class ApiAccess:
-    """API を呼ぶための設定とトークン。履歴の保存と話し始めの通知(notify.py)で共有する。"""
+    """API を呼ぶための設定とトークン。履歴の保存と通知(notify.py)で共有する。"""
 
     settings: HistorySettings
     credentials: ClientCredentials

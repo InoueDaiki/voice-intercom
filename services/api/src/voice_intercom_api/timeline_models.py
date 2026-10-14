@@ -17,6 +17,12 @@ THUMBNAIL_CONTENT_TYPE = "image/jpeg"
 # 本体の上限。これより大きいものはマルチパートにする予定で、まだ受け付けない(README)
 MAX_MEDIA_BYTES = 100 * 1024 * 1024
 
+# 幅・高さの上限(ピクセル)。JPEG と HEIC の上限に合わせる
+MAX_MEDIA_SIDE = 65535
+
+# 動画の長さの上限(ミリ秒)。アプリの上限(3分)ではなく、明らかにおかしい値を弾くための値
+MAX_MEDIA_DURATION_MS = 24 * 60 * 60 * 1000
+
 SOURCE_ID_PATTERN = r"^[A-Za-z0-9_-]{1,128}$"
 MEDIA_ID_PATTERN = r"^[0-9a-f]{32}$"
 
@@ -90,12 +96,44 @@ class TimelineDeletion(BaseModel):
     )
 
 
+MediaWidth = Annotated[
+    int | None,
+    Field(
+        ge=1,
+        le=MAX_MEDIA_SIDE,
+        description="表示の幅(ピクセル。向きを反映した後。height と一緒に送る)。"
+        "分からなければ null",
+    ),
+]
+MediaHeight = Annotated[
+    int | None,
+    Field(
+        ge=1,
+        le=MAX_MEDIA_SIDE,
+        description="表示の高さ(ピクセル。向きを反映した後。width と一緒に送る)。"
+        "分からなければ null",
+    ),
+]
+MediaDurationMs = Annotated[
+    int | None,
+    Field(
+        ge=1,
+        le=MAX_MEDIA_DURATION_MS,
+        description="動画の長さ(ミリ秒。動画のときだけ)。画像と、分からないときは null",
+    ),
+]
+
+
 class TimelineMedia(BaseModel):
     media_id: str
     content_type: MediaContentType
     url: str = Field(description="表示・再生の URL(CloudFront)")
     thumbnail_url: str | None = Field(description="サムネイルの URL。なければ null")
     size_bytes: int
+    # 足す前に保存した履歴には無いので、どれも null がありうる
+    width: MediaWidth = None
+    height: MediaHeight = None
+    duration_ms: MediaDurationMs = None
 
 
 class TimelineEvent(BaseModel):
@@ -113,7 +151,7 @@ class TimelineEvent(BaseModel):
     sender_id: SenderId
     occurred_at: str = Field(description="ISO 8601(UTC、ミリ秒まで。例 2026-10-10T00:00:00.000Z)")
     language: OriginalLanguage
-    text: str = Field(description="原文。media では空文字か、添えた文")
+    text: str = Field(description="原文。media では常に空文字(画像・動画には文を添えられない)")
     translations: Translations
     utterance_id: UtteranceId
     segment_index: SegmentIndex
@@ -164,6 +202,19 @@ class CreateMediaUploadRequest(BaseModel):
     has_thumbnail: bool = Field(
         default=False, description="サムネイル(image/jpeg)も上げるなら true"
     )
+    # 送信者のアプリが、整えた後の本体で測った値。履歴と MediaMessage にそのまま入れる
+    # (API は中身を読んで確かめない)。管理コンソールなど、測らないクライアントは送らない
+    width: MediaWidth = None
+    height: MediaHeight = None
+    duration_ms: MediaDurationMs = None
+
+    @model_validator(mode="after")
+    def _check_dimensions(self) -> Self:
+        if (self.width is None) != (self.height is None):
+            raise ValueError("width と height は両方送るか、両方送らない")
+        if self.duration_ms is not None and not self.content_type.startswith("video/"):
+            raise ValueError("duration_ms は動画のときだけ")
+        return self
 
 
 class MediaUpload(BaseModel):
@@ -176,7 +227,3 @@ class MediaUpload(BaseModel):
         "has_thumbnail が false なら null"
     )
     expires_at: str = Field(description="署名付き URL の期限(ISO 8601、UTC)")
-
-
-class CompleteMediaUploadRequest(BaseModel):
-    text: str = Field(default="", max_length=10000, description="画像・動画に添える文")

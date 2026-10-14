@@ -16,7 +16,6 @@ lib/auth/authentication.dart
 lib/auth/http_basic_auth.dart
 lib/auth/http_bearer_auth.dart
 lib/auth/oauth.dart
-lib/model/complete_media_upload_request.dart
 lib/model/create_media_upload_request.dart
 lib/model/create_room_request.dart
 lib/model/error_response.dart
@@ -25,6 +24,7 @@ lib/model/http_validation_error.dart
 lib/model/live_kit_token_request.dart
 lib/model/live_kit_token_response.dart
 lib/model/media_upload.dart
+lib/model/notification_result.dart
 lib/model/put_timeline_event_request.dart
 lib/model/put_user_request.dart
 lib/model/register_device_request.dart
@@ -32,7 +32,7 @@ lib/model/response_validation_error.dart
 lib/model/room.dart
 lib/model/room_list.dart
 lib/model/speaking_notification_request.dart
-lib/model/speaking_notification_result.dart
+lib/model/text_notification_request.dart
 lib/model/timeline_deletion.dart
 lib/model/timeline_event.dart
 lib/model/timeline_media.dart

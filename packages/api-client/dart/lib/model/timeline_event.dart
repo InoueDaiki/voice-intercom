@@ -45,7 +45,7 @@ class TimelineEvent {
   /// 原文の言語。分からなければ null
   TimelineEventLanguageEnum? language;
 
-  /// 原文。media では空文字か、添えた文
+  /// 原文。media では常に空文字(画像・動画には文を添えられない)
   String text;
 
   /// 言語コード → 訳文。訳がなければ空

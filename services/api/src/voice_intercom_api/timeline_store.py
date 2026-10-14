@@ -6,25 +6,28 @@
 - event_id は `<occurred_at>#<source_id>`。occurred_at は桁をそろえた UTC の時刻なので、
   文字列の順が時刻の順になり、ルームの履歴を1回の Query で新しい順に取れる。
 - 項目の形は TimelineEvent とほぼ同じ。ただし media には URL を持たせず、media_id、content_type、
-  size_bytes、has_thumbnail だけを持ち、読むときに URL を作る
+  size_bytes、has_thumbnail(と、あれば width、height、duration_ms)だけを持ち、読むときに URL を作る
   (CloudFront のドメインが変わっても困らない)。
 - テキスト入力の行は、Agent が原文と訳をそろえてから1件で書く(訳は translations に持つ)。
   message_id にアプリが振った TextMessage の message_id を持つ。
 - 送った本人が消した行(墓石)は、行を残して deleted_at を書き、text と translations を消す。
   media は、本体を消し直すときと「削除された画像・動画」を出すときのために、media_id と
   content_type などを残す(URL は返さない)。墓石は Agent の PUT で上書きしない。
+- media の行は text と language を持たない(画像・動画には文を添えられない)。前に添えた文を
+  保存した行があっても、読むときに空にする。
 
 アップロード中のメディアの仮の行(complete で本人かを確かめるため):
 - room_id を `media-upload#<room_id>`、event_id を media_id にする。
   ルームの ID に # は使えないので、履歴のパーティションと混ざらず、履歴の Query にも出てこない。
-- アップロードした人(uploader_id)、Content-Type、大きさ、サムネイルの有無を持つ。complete で
+- アップロードした人(uploader_id)、Content-Type、大きさ、サムネイルの有無、幅・高さ・動画の長さ
+  (送られたときだけ)を持つ。complete で
   クライアントに送り直させず、ここから読む。
 - complete したら completed_event_id を書く。2回目の complete は同じ履歴を返す(再送に備える)。
 - expires_at_epoch(UNIX 秒)を TTL にして、complete されなかった行も消えるようにする。
 
-「話し始めた」通知を最後に送った時刻(notifications.py の間隔の判定):
-- room_id を `notify-speaking#<room_id>`、event_id を受け手の user_id にする。仮の行と同じく、
-  履歴のパーティションと混ざらない。
+push 通知を最後に送った時刻(room_push.py の間引き):
+- room_id を `notify#<room_id>`、event_id を受け手の user_id にする。仮の行と同じく、
+  履歴のパーティションと混ざらない。通知の種類(テキスト、話し始め、画像・動画)は分けない。
 - sent_at_epoch(UNIX 秒)に送った時刻を持つ。条件付きの UpdateItem で「前回が間隔より前
   (か、行がない)なら更新する」とし、更新できた受け手にだけ送る。同時に呼ばれても、
   更新に勝つのは1回だけなので二重に送らない。
@@ -55,10 +58,10 @@ PENDING_UPLOAD_TTL = timedelta(days=1)
 TTL_ATTRIBUTE = "expires_at_epoch"
 
 _PENDING_PREFIX = "media-upload#"
-_SPEAKING_NOTIFY_PREFIX = "notify-speaking#"
+_NOTIFY_PREFIX = "notify#"
 
 # 通知の時刻の行を、間隔が過ぎてからどれだけ残すか(TTL)
-_SPEAKING_NOTIFY_TTL_MARGIN = timedelta(hours=1)
+_NOTIFY_TTL_MARGIN = timedelta(hours=1)
 
 
 def _timeline() -> Any:
@@ -69,19 +72,26 @@ def make_event_id(occurred_at: str, source_id: str) -> str:
     return f"{occurred_at}#{source_id}"
 
 
+def _optional_int(value: Any) -> int | None:
+    # DynamoDB の数は Decimal で返る
+    return None if value is None else int(value)
+
+
 def _to_event(item: dict[str, Any]) -> TimelineEvent:
     media = item.get("media")
     deleted_at = item.get("deleted_at")
     if deleted_at is not None:
         return _to_tombstone(item, deleted_at)
+    is_media = item["kind"] == "media"
     return TimelineEvent(
         room_id=item["room_id"],
         event_id=item["event_id"],
         kind=item["kind"],
         sender_id=item["sender_id"],
         occurred_at=item["occurred_at"],
-        language=item.get("language"),
-        text=item.get("text", ""),
+        # 画像・動画に添えた文は返さない(前に保存した行も)
+        language=None if is_media else item.get("language"),
+        text="" if is_media else item.get("text", ""),
         translations=item.get("translations", {}),
         utterance_id=item.get("utterance_id"),
         segment_index=item.get("segment_index"),
@@ -97,6 +107,9 @@ def _to_event(item: dict[str, Any]) -> TimelineEvent:
             if media.get("has_thumbnail")
             else None,
             size_bytes=media["size_bytes"],
+            width=_optional_int(media.get("width")),
+            height=_optional_int(media.get("height")),
+            duration_ms=_optional_int(media.get("duration_ms")),
         ),
         message_id=item.get("message_id"),
     )
@@ -262,6 +275,9 @@ class PendingUpload:
     size_bytes: int
     has_thumbnail: bool
     completed_event_id: str | None
+    width: int | None = None
+    height: int | None = None
+    duration_ms: int | None = None
 
 
 def _pending_key(room_id: str, media_id: str) -> dict[str, str]:
@@ -276,18 +292,26 @@ def create_pending_upload(
     content_type: str,
     size_bytes: int,
     has_thumbnail: bool,
+    width: int | None = None,
+    height: int | None = None,
+    duration_ms: int | None = None,
 ) -> None:
     now = datetime.now(UTC)
     _timeline().put_item(
         Item=_pending_key(room_id, media_id)
-        | {
-            "uploader_id": uploader_id,
-            "content_type": content_type,
-            "size_bytes": size_bytes,
-            "has_thumbnail": has_thumbnail,
-            "created_at": store.now(),
-            TTL_ATTRIBUTE: int((now + PENDING_UPLOAD_TTL).timestamp()),
-        }
+        | _without_none(
+            {
+                "uploader_id": uploader_id,
+                "content_type": content_type,
+                "size_bytes": size_bytes,
+                "has_thumbnail": has_thumbnail,
+                "width": width,
+                "height": height,
+                "duration_ms": duration_ms,
+                "created_at": store.now(),
+                TTL_ATTRIBUTE: int((now + PENDING_UPLOAD_TTL).timestamp()),
+            }
+        )
     )
 
 
@@ -303,6 +327,9 @@ def get_pending_upload(room_id: str, media_id: str) -> PendingUpload | None:
         size_bytes=int(item["size_bytes"]),
         has_thumbnail=bool(item["has_thumbnail"]),
         completed_event_id=item.get("completed_event_id"),
+        width=_optional_int(item.get("width")),
+        height=_optional_int(item.get("height")),
+        duration_ms=_optional_int(item.get("duration_ms")),
     )
 
 
@@ -314,9 +341,7 @@ class AlreadyCompletedError(Exception):
         self.event_id = event_id
 
 
-def complete_upload(
-    pending: PendingUpload, *, sender_id: str, occurred_at: str, language: str | None, text: str
-) -> TimelineEvent:
+def complete_upload(pending: PendingUpload, *, sender_id: str, occurred_at: str) -> TimelineEvent:
     """メディアの履歴を書き、仮の行に completed_event_id を書く。
 
     2つを1つのトランザクションにし、同時に2回 complete されても履歴が2件にならないようにする。
@@ -331,15 +356,18 @@ def complete_upload(
             "kind": "media",
             "sender_id": sender_id,
             "occurred_at": occurred_at,
-            "language": language,
-            "text": text,
             "translations": {},
-            "media": {
-                "media_id": pending.media_id,
-                "content_type": pending.content_type,
-                "size_bytes": pending.size_bytes,
-                "has_thumbnail": pending.has_thumbnail,
-            },
+            "media": _without_none(
+                {
+                    "media_id": pending.media_id,
+                    "content_type": pending.content_type,
+                    "size_bytes": pending.size_bytes,
+                    "has_thumbnail": pending.has_thumbnail,
+                    "width": pending.width,
+                    "height": pending.height,
+                    "duration_ms": pending.duration_ms,
+                }
+            ),
         }
     )
     # リソースの meta.client は、Table と同じく Python の値を DynamoDB の型に直してくれる
@@ -370,52 +398,59 @@ def complete_upload(
     return _to_event(item)
 
 
-# 「話し始めた」通知を最後に送った時刻
+# push 通知を最後に送った時刻
 
 
-def _speaking_notify_key(room_id: str, recipient_id: str) -> dict[str, str]:
-    return {"room_id": _SPEAKING_NOTIFY_PREFIX + room_id, "event_id": recipient_id}
+def _notify_key(room_id: str, recipient_id: str) -> dict[str, str]:
+    return {"room_id": _NOTIFY_PREFIX + room_id, "event_id": recipient_id}
 
 
-def claim_speaking_notification(
-    room_id: str, recipient_id: str, *, now_epoch: int, interval_s: int
-) -> bool:
-    """前回の送信から interval_s 秒以上たっていれば、送信の時刻を now_epoch にして True を返す。
+def claim_notifications(
+    room_id: str, recipient_ids: list[str], *, now_epoch: int, interval_s: int
+) -> list[str]:
+    """前回の送信から interval_s 秒以上たっている受け手について、送信の時刻を now_epoch にする。
 
-    間隔の内側(か、同時に呼ばれた別のリクエストが先に更新した)なら False。
+    更新できた受け手を、渡した順に返す。間隔の内側(か、同時に呼ばれた別のリクエストが先に
+    更新した)受け手は返さない。受け手ごとに1回の UpdateItem で、テーブルの口は使い回す。
     """
-    expires_at = now_epoch + interval_s + int(_SPEAKING_NOTIFY_TTL_MARGIN.total_seconds())
-    try:
-        _timeline().update_item(
-            Key=_speaking_notify_key(room_id, recipient_id),
-            UpdateExpression="SET sent_at_epoch = :now, #ttl = :ttl",
-            ConditionExpression="attribute_not_exists(sent_at_epoch) "
-            "OR sent_at_epoch <= :threshold",
-            ExpressionAttributeNames={"#ttl": TTL_ATTRIBUTE},
-            ExpressionAttributeValues={
-                ":now": now_epoch,
-                ":ttl": expires_at,
-                ":threshold": now_epoch - interval_s,
-            },
-        )
-    except ClientError as e:
-        if store._is_conditional_check_failed(e):  # pyright: ignore[reportPrivateUsage]
-            return False
-        raise
-    return True
+    table = _timeline()
+    expires_at = now_epoch + interval_s + int(_NOTIFY_TTL_MARGIN.total_seconds())
+    claimed: list[str] = []
+    for recipient_id in recipient_ids:
+        try:
+            table.update_item(
+                Key=_notify_key(room_id, recipient_id),
+                UpdateExpression="SET sent_at_epoch = :now, #ttl = :ttl",
+                ConditionExpression="attribute_not_exists(sent_at_epoch) "
+                "OR sent_at_epoch <= :threshold",
+                ExpressionAttributeNames={"#ttl": TTL_ATTRIBUTE},
+                ExpressionAttributeValues={
+                    ":now": now_epoch,
+                    ":ttl": expires_at,
+                    ":threshold": now_epoch - interval_s,
+                },
+            )
+        except ClientError as e:
+            if store._is_conditional_check_failed(e):  # pyright: ignore[reportPrivateUsage]
+                continue
+            raise
+        claimed.append(recipient_id)
+    return claimed
 
 
-def release_speaking_notification(room_id: str, recipient_id: str, *, now_epoch: int) -> None:
+def release_notifications(room_id: str, recipient_ids: list[str], *, now_epoch: int) -> None:
     """claim を取り消す(送れなかったとき、次の呼び出しで送れるように)。
 
     別のリクエストが後から書き直していたら、そのままにする。
     """
-    try:
-        _timeline().delete_item(
-            Key=_speaking_notify_key(room_id, recipient_id),
-            ConditionExpression="sent_at_epoch = :now",
-            ExpressionAttributeValues={":now": now_epoch},
-        )
-    except ClientError as e:
-        if not store._is_conditional_check_failed(e):  # pyright: ignore[reportPrivateUsage]
-            raise
+    table = _timeline()
+    for recipient_id in recipient_ids:
+        try:
+            table.delete_item(
+                Key=_notify_key(room_id, recipient_id),
+                ConditionExpression="sent_at_epoch = :now",
+                ExpressionAttributeValues={":now": now_epoch},
+            )
+        except ClientError as e:
+            if not store._is_conditional_check_failed(e):  # pyright: ignore[reportPrivateUsage]
+                raise

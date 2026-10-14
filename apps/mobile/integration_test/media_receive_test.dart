@@ -76,9 +76,7 @@ void main() {
     final file = File(
       '${Directory.systemTemp.path}/media_receive_test_${DateTime.now().millisecondsSinceEpoch}.jpg',
     )..writeAsBytesSync(img.encodeJpg(image));
-    final caption = '受信の統合テスト ${DateTime.now().toIso8601String()}';
-
-    final item = uploader.submit(file.path, text: caption);
+    final item = uploader.submit(file.path);
     await pumpUntil(
       tester,
       () => !item.active,
@@ -87,11 +85,13 @@ void main() {
     );
     expect(item.error, isNull);
     final event = sent!;
+    // 画像・動画には文を添えられないので、表示は media_id のキーで探す
+    final card = find.byKey(Key('media-${event.media!.mediaId}'));
 
     // 配信で届き、履歴で確かめて出る(アプリは入り直しも、履歴の読み直しもしていない)
     await pumpUntil(
       tester,
-      () => shows(find.text(caption)),
+      () => shows(card),
       timeout: const Duration(seconds: 15),
       reason: '配信で届いた画像がルームの表示に出る',
     );
@@ -106,16 +106,12 @@ void main() {
     expect(find.textContaining('$testPeer(画像)'), findsOneWidget);
 
     // complete のやり直しで2回目が届いても、重ならない
-    await backend.complete(
-      roomId,
-      event.media!.mediaId,
-      client.CompleteMediaUploadRequest(text: caption),
-    );
+    await backend.complete(roomId, event.media!.mediaId);
     await tester.pump(const Duration(seconds: 3));
-    expect(find.text(caption), findsOneWidget);
+    expect(card, findsOneWidget);
 
     // タップで全画面に開く
-    await tester.tap(find.byKey(Key('media-${event.media!.mediaId}')));
+    await tester.tap(card);
     await pumpUntil(
       tester,
       () => shows(find.byType(MediaViewerScreen)),
