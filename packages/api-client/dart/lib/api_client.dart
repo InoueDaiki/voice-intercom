@@ -217,6 +217,8 @@ class ApiClient {
           return SpeakingNotificationRequest.fromJson(value);
         case 'SpeakingNotificationResult':
           return SpeakingNotificationResult.fromJson(value);
+        case 'TimelineDeletion':
+          return TimelineDeletion.fromJson(value);
         case 'TimelineEvent':
           return TimelineEvent.fromJson(value);
         case 'TimelineMedia':

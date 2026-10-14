@@ -352,6 +352,8 @@ def test_history_gets_original_and_translations() -> None:
             "occurred_at": NOW,
             "targets": ["en", "ko"],
             "kind": "text",
+            # アプリが自分のテキストの行を見つけて消せるよう、message_id も保存する
+            "message_id": "m1",
         }
     ]
     assert h.history.translations == [(segment_id, "en", "Yes."), (segment_id, "ko", "네.")]

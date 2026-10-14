@@ -68,6 +68,26 @@ SegmentIndex = Annotated[
     int | None,
     Field(ge=0, description="発話の中の区切りの番号(utterance のときだけ。字幕の proto と同じ)"),
 ]
+MessageId = Annotated[
+    str | None,
+    Field(
+        max_length=128,
+        description="テキスト入力のときだけ。送信者のアプリが振った TextMessage の message_id"
+        "(字幕の Caption の message_id と同じ)。アプリが自分の送ったテキストの行を見つけるのに使う",
+    ),
+]
+
+# 送った本人が消せる種類。音声の発話(utterance)は消せない
+DELETABLE_KINDS: frozenset[str] = frozenset({"text", "media"})
+
+
+class TimelineDeletion(BaseModel):
+    """消した行の印(墓石)。消した行は本文・訳・URL を返さず、これだけを持つ。"""
+
+    deleted_at: str = Field(description="消した時刻。ISO 8601(UTC、ミリ秒まで)")
+    media_type: Literal["image", "video"] | None = Field(
+        description="media のときだけ、画像か動画か(「削除された画像」「削除された動画」と出す)"
+    )
 
 
 class TimelineMedia(BaseModel):
@@ -97,7 +117,12 @@ class TimelineEvent(BaseModel):
     translations: Translations
     utterance_id: UtteranceId
     segment_index: SegmentIndex
-    media: TimelineMedia | None = Field(description="media のときだけ")
+    media: TimelineMedia | None = Field(description="media のときだけ。消した行では null")
+    message_id: MessageId = None
+    deleted: TimelineDeletion | None = Field(
+        default=None,
+        description="送った本人が消した行なら、その印。text、translations、media は空になる",
+    )
 
 
 class TimelinePage(BaseModel):
@@ -118,6 +143,7 @@ class PutTimelineEventRequest(BaseModel):
     translations: Translations
     utterance_id: UtteranceId = None
     segment_index: SegmentIndex = None
+    message_id: MessageId = None
 
     @model_validator(mode="after")
     def _utterance_fields_only_for_utterance(self) -> Self:
@@ -125,6 +151,8 @@ class PutTimelineEventRequest(BaseModel):
             self.utterance_id is not None or self.segment_index is not None
         ):
             raise ValueError("utterance_id と segment_index は utterance のときだけ")
+        if self.kind != "text" and self.message_id is not None:
+            raise ValueError("message_id は text のときだけ")
         return self
 
 

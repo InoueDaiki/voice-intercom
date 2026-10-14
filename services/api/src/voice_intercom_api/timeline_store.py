@@ -8,6 +8,11 @@
 - 項目の形は TimelineEvent とほぼ同じ。ただし media には URL を持たせず、media_id、content_type、
   size_bytes、has_thumbnail だけを持ち、読むときに URL を作る
   (CloudFront のドメインが変わっても困らない)。
+- テキスト入力の行は、Agent が原文と訳をそろえてから1件で書く(訳は translations に持つ)。
+  message_id にアプリが振った TextMessage の message_id を持つ。
+- 送った本人が消した行(墓石)は、行を残して deleted_at を書き、text と translations を消す。
+  media は、本体を消し直すときと「削除された画像・動画」を出すときのために、media_id と
+  content_type などを残す(URL は返さない)。墓石は Agent の PUT で上書きしない。
 
 アップロード中のメディアの仮の行(complete で本人かを確かめるため):
 - room_id を `media-upload#<room_id>`、event_id を media_id にする。
@@ -38,6 +43,7 @@ from voice_intercom_api import media_store, store
 from voice_intercom_api.config import get_timeline_settings
 from voice_intercom_api.timeline_models import (
     PutTimelineEventRequest,
+    TimelineDeletion,
     TimelineEvent,
     TimelineMedia,
 )
@@ -65,6 +71,9 @@ def make_event_id(occurred_at: str, source_id: str) -> str:
 
 def _to_event(item: dict[str, Any]) -> TimelineEvent:
     media = item.get("media")
+    deleted_at = item.get("deleted_at")
+    if deleted_at is not None:
+        return _to_tombstone(item, deleted_at)
     return TimelineEvent(
         room_id=item["room_id"],
         event_id=item["event_id"],
@@ -89,6 +98,30 @@ def _to_event(item: dict[str, Any]) -> TimelineEvent:
             else None,
             size_bytes=media["size_bytes"],
         ),
+        message_id=item.get("message_id"),
+    )
+
+
+def _to_tombstone(item: dict[str, Any], deleted_at: str) -> TimelineEvent:
+    """消した行。本文・訳・URL は返さない。"""
+    media = item.get("media")
+    media_type = None
+    if media is not None:
+        media_type = "video" if str(media.get("content_type", "")).startswith("video/") else "image"
+    return TimelineEvent(
+        room_id=item["room_id"],
+        event_id=item["event_id"],
+        kind=item["kind"],
+        sender_id=item["sender_id"],
+        occurred_at=item["occurred_at"],
+        language=item.get("language"),
+        text="",
+        translations={},
+        utterance_id=item.get("utterance_id"),
+        segment_index=item.get("segment_index"),
+        media=None,
+        message_id=item.get("message_id"),
+        deleted=TimelineDeletion(deleted_at=deleted_at, media_type=media_type),
     )
 
 
@@ -100,7 +133,11 @@ def _without_none(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def put_event(room_id: str, source_id: str, body: PutTimelineEventRequest) -> TimelineEvent:
-    """発話かテキスト入力を保存する。同じ room_id と event_id なら置き換える(冪等)。"""
+    """発話かテキスト入力を保存する。同じ room_id と event_id なら置き換える(冪等)。
+
+    送った本人が消した行(墓石)は置き換えず、墓石を返す。Agent の再送(5xx の後など)が
+    消した後に届いても、消したものを戻さないため。
+    """
     item = _without_none(
         {
             "room_id": room_id,
@@ -113,15 +150,75 @@ def put_event(room_id: str, source_id: str, body: PutTimelineEventRequest) -> Ti
             "translations": body.translations,
             "utterance_id": body.utterance_id,
             "segment_index": body.segment_index,
+            "message_id": body.message_id,
         }
     )
-    _timeline().put_item(Item=item)
+    try:
+        _timeline().put_item(Item=item, ConditionExpression="attribute_not_exists(deleted_at)")
+    except ClientError as e:
+        if not store._is_conditional_check_failed(e):  # pyright: ignore[reportPrivateUsage]
+            raise
+        deleted = get_event(room_id, item["event_id"], consistent=True)
+        if deleted is None:
+            raise
+        return deleted
     return _to_event(item)
 
 
-def get_event(room_id: str, event_id: str) -> TimelineEvent | None:
-    item = _timeline().get_item(Key={"room_id": room_id, "event_id": event_id}).get("Item")
+def get_event(room_id: str, event_id: str, *, consistent: bool = False) -> TimelineEvent | None:
+    item = _get_item(room_id, event_id, consistent=consistent)
     return None if item is None else _to_event(item)
+
+
+def _get_item(room_id: str, event_id: str, *, consistent: bool) -> dict[str, Any] | None:
+    return (
+        _timeline()
+        .get_item(Key={"room_id": room_id, "event_id": event_id}, ConsistentRead=consistent)
+        .get("Item")
+    )
+
+
+@dataclass(frozen=True)
+class DeletedMedia:
+    """消した行の画像・動画(S3 の本体とサムネイルを消すのに使う)。"""
+
+    media_id: str
+    has_thumbnail: bool
+
+
+def deleted_media(room_id: str, event_id: str) -> DeletedMedia | None:
+    """消した media の行の media_id。消していない行や media でない行なら None。"""
+    item = _get_item(room_id, event_id, consistent=True)
+    if item is None or "deleted_at" not in item or item.get("media") is None:
+        return None
+    media = item["media"]
+    return DeletedMedia(media_id=media["media_id"], has_thumbnail=bool(media.get("has_thumbnail")))
+
+
+def mark_deleted(room_id: str, event_id: str, *, sender_id: str, deleted_at: str) -> TimelineEvent:
+    """行を墓石にする(deleted_at を書き、text と translations を消す)。
+
+    送信者が sender_id で、まだ消していない行だけを変える。そうでなければ(同時に消された、など)
+    今の行を返す。行が無ければ None ではなく LookupError。
+    """
+    try:
+        res = _timeline().update_item(
+            Key={"room_id": room_id, "event_id": event_id},
+            UpdateExpression="SET deleted_at = :deleted_at REMOVE #text, translations",
+            ConditionExpression="attribute_exists(event_id) AND sender_id = :sender "
+            "AND attribute_not_exists(deleted_at)",
+            ExpressionAttributeNames={"#text": "text"},
+            ExpressionAttributeValues={":deleted_at": deleted_at, ":sender": sender_id},
+            ReturnValues="ALL_NEW",
+        )
+    except ClientError as e:
+        if not store._is_conditional_check_failed(e):  # pyright: ignore[reportPrivateUsage]
+            raise
+        current = get_event(room_id, event_id, consistent=True)
+        if current is None:
+            raise LookupError(event_id) from e
+        return current
+    return _to_event(res["Attributes"])
 
 
 def list_events(

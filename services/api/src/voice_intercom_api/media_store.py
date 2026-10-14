@@ -1,4 +1,4 @@
-"""画像・動画を置く S3 の操作(署名付き URL の発行と、置かれたかの確認)。
+"""画像・動画を置く S3 の操作(署名付き URL の発行、置かれたかの確認、消すこと)。
 
 バケット名は環境変数 MEDIA_BUCKET で受け取る。ローカルでは scripts/with-local-aws.sh が
 接続先(AWS_ENDPOINT_URL_S3)を SeaweedFS に向ける。
@@ -32,6 +32,11 @@ def media_key(room_id: str, media_id: str) -> str:
 
 def thumbnail_key(room_id: str, media_id: str) -> str:
     return f"rooms/{room_id}/{media_id}/thumbnail"
+
+
+def media_prefix(room_id: str, media_id: str) -> str:
+    """本体とサムネイルを含む、media_id ごとのキーの前置き(CloudFront の無効化に使う)。"""
+    return f"rooms/{room_id}/{media_id}/"
 
 
 def public_url(key: str) -> str:
@@ -86,3 +91,38 @@ def head(key: str) -> ObjectInfo | None:
             return None
         raise
     return ObjectInfo(content_type=res.get("ContentType", ""), size_bytes=res["ContentLength"])
+
+
+def delete(keys: list[str]) -> None:
+    """オブジェクトを消す。無いものを消しても失敗にならない(S3 の DeleteObject と同じ)。"""
+    bucket = get_timeline_settings().media_bucket
+    for key in keys:
+        _s3().delete_object(Bucket=bucket, Key=key)
+
+
+@cache
+def _cloudfront() -> Any:
+    # Lambda の timeout(15秒)に収まるよう、待ちを短くする
+    return boto3.client(
+        "cloudfront",
+        config=Config(connect_timeout=2, read_timeout=3, retries={"max_attempts": 2}),
+    )
+
+
+def invalidate(paths: list[str], *, caller_reference: str) -> bool:
+    """CloudFront のキャッシュを無効にする。ディストリビューションが無い(ローカル)なら False。
+
+    paths は / で始まるパス(末尾の * で前置きの一致)。同じ caller_reference の2回目は、
+    CloudFront が新しい無効化を作らずに前のものを返す。
+    """
+    distribution_id = get_timeline_settings().media_distribution_id
+    if not distribution_id:
+        return False
+    _cloudfront().create_invalidation(
+        DistributionId=distribution_id,
+        InvalidationBatch={
+            "Paths": {"Quantity": len(paths), "Items": paths},
+            "CallerReference": caller_reference,
+        },
+    )
+    return True

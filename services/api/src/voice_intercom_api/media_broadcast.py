@@ -98,7 +98,7 @@ async def _room_service() -> AsyncIterator[RoomService]:
         yield lk.room
 
 
-async def _list_and_send(room_id: str, payload: bytes) -> list[str] | None:
+async def _list_and_send(room_id: str, payload: bytes, topic: str = TOPIC) -> list[str] | None:
     """今ルームにいる人の identity を返し、人がいれば payload を送る。取れなければ None。"""
     async with _room_service() as room:
         try:
@@ -120,12 +120,24 @@ async def _list_and_send(room_id: str, payload: bytes) -> list[str] | None:
                     room=room_id,
                     data=payload,
                     kind=livekit.DataPacket.Kind.RELIABLE,
-                    topic=TOPIC,
+                    topic=topic,
                 )
             )
         except Exception:
-            logger.exception("画像・動画をルームに配信できなかった: room=%s", room_id)
+            logger.exception("ルームに配信できなかった: room=%s topic=%s", room_id, topic)
         return present
+
+
+def send_to_room(room_id: str, payload: bytes, *, topic: str) -> list[str] | None:
+    """今ルームに人がいれば payload を topic で送り、その人たちの identity を返す。
+
+    今ルームにいる人を取れなかったら None(送りもしない)。消した知らせ(deletion.py)も使う。
+    """
+    try:
+        return asyncio.run(_list_and_send(room_id, payload, topic))
+    except Exception:
+        logger.exception("ルームの参加者を取れなかった: room=%s", room_id)
+        return None
 
 
 def broadcast(event: TimelineEvent) -> list[str] | None:

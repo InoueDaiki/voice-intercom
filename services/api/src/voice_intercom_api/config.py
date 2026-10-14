@@ -82,6 +82,9 @@ class TimelineSettings:
     # 表示・再生の URL の元(本番は CloudFront、ローカルは SeaweedFS のバケットの URL)。
     # 末尾の / は除く
     media_base_url: str
+    # 配信の CloudFront のディストリビューションの ID。消した画像・動画のキャッシュを無効にする
+    # (deletion.py)。ローカル(CloudFront が無い)では空で、無効化を飛ばす
+    media_distribution_id: str = ""
 
 
 @cache
@@ -91,4 +94,5 @@ def get_timeline_settings() -> TimelineSettings:
         timeline_table=_require("TIMELINE_TABLE"),
         media_bucket=_require("MEDIA_BUCKET"),
         media_base_url=_require("MEDIA_BASE_URL").rstrip("/"),
+        media_distribution_id=os.environ.get("MEDIA_DISTRIBUTION_ID", ""),
     )

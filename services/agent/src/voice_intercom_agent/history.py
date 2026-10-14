@@ -36,6 +36,9 @@ AGENT_SCOPE = "voice-intercom/agent"
 # API が受け付ける source_id の形
 SOURCE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
+# 履歴の message_id の上限(API の PutTimelineEventRequest と揃える)
+MAX_MESSAGE_ID_CHARS = 128
+
 # トークンを期限のこれだけ前に取り直す(秒)
 TOKEN_REFRESH_MARGIN_S = 60.0
 
@@ -343,8 +346,13 @@ class HistoryRecorder:
         kind: str = "utterance",
         utterance_id: str | None = None,
         segment_index: int | None = None,
+        message_id: str | None = None,
     ) -> None:
-        """原文の確定。targets は訳を待つ言語。空の原文は保存しない。"""
+        """原文の確定。targets は訳を待つ言語。空の原文は保存しない。
+
+        message_id はテキスト入力のときだけ。アプリが振った TextMessage の message_id で、
+        アプリが自分の送ったテキストの行を見つけて消すのに使う(API の上限を超えるものは入れない)。
+        """
         if not self._accepts(segment_id):
             return
         if not text.strip():
@@ -361,6 +369,8 @@ class HistoryRecorder:
         if kind == "utterance":
             entry.original["utterance_id"] = utterance_id
             entry.original["segment_index"] = segment_index
+        elif kind == "text" and message_id and len(message_id) <= MAX_MESSAGE_ID_CHARS:
+            entry.original["message_id"] = message_id
         entry.targets = frozenset(targets)
         if entry.ready():
             self._send(entry)

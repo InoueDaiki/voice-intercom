@@ -40,6 +40,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rooms/{room_id}/timeline/event": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 履歴の1件を取る(管理者かメンバー)。消した行は墓石(deleted)で返す
+         * @description 強い整合の読み取りなので、保存や削除の直後でも反映されている。アプリは、データチャネル(topic deletion)で届いた知らせを、これで確かめる。
+         */
+        get: operations["getTimelineEvent"];
+        put?: never;
+        post?: never;
+        /**
+         * 送ったテキスト入力か画像・動画を消す(送った本人)
+         * @description 行は消さずに墓石(deleted)にし、本文・訳・URL を消す。2回目からは同じ墓石を返す(後始末はやり直す)。音声の発話と、他人の行は 403。消した後に、今ルームにいる人へデータチャネル(topic deletion、DeletionMessage)で知らせ、画像・動画なら S3 の本体とサムネイルを消して CloudFront のキャッシュを無効にする。これらが失敗しても墓石を 200 で返す。push 通知は取り消さない。
+         */
+        delete: operations["deleteTimelineEvent"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/rooms/{room_id}/timeline/{source_id}": {
         parameters: {
             query?: never;
@@ -50,7 +74,7 @@ export interface paths {
         get?: never;
         /**
          * 発話かテキスト入力を履歴に保存する(Agent)。同じ内容なら何度呼んでも同じ結果になる
-         * @description event_id は `<occurred_at>#<source_id>` で作る。同じ event_id があれば置き換える。
+         * @description event_id は `<occurred_at>#<source_id>` で作る。同じ event_id があれば置き換える。ただし送った本人が消した行(墓石)は置き換えず、墓石を返す。
          */
         put: operations["putTimelineEvent"];
         post?: never;
@@ -384,6 +408,11 @@ export interface components {
              * @description 発話の中の区切りの番号(utterance のときだけ。字幕の proto と同じ)
              */
             segment_index?: number | null;
+            /**
+             * Message Id
+             * @description テキスト入力のときだけ。送信者のアプリが振った TextMessage の message_id(字幕の Caption の message_id と同じ)。アプリが自分の送ったテキストの行を見つけるのに使う
+             */
+            message_id?: string | null;
         };
         /** PutUserRequest */
         PutUserRequest: {
@@ -473,6 +502,22 @@ export interface components {
             skipped: number;
         };
         /**
+         * TimelineDeletion
+         * @description 消した行の印(墓石)。消した行は本文・訳・URL を返さず、これだけを持つ。
+         */
+        TimelineDeletion: {
+            /**
+             * Deleted At
+             * @description 消した時刻。ISO 8601(UTC、ミリ秒まで)
+             */
+            deleted_at: string;
+            /**
+             * Media Type
+             * @description media のときだけ、画像か動画か(「削除された画像」「削除された動画」と出す)
+             */
+            media_type: ("image" | "video") | null;
+        };
+        /**
          * TimelineEvent
          * @description ルームの履歴の1件。
          */
@@ -527,8 +572,15 @@ export interface components {
              * @description 発話の中の区切りの番号(utterance のときだけ。字幕の proto と同じ)
              */
             segment_index: number | null;
-            /** @description media のときだけ */
+            /** @description media のときだけ。消した行では null */
             media: components["schemas"]["TimelineMedia"] | null;
+            /**
+             * Message Id
+             * @description テキスト入力のときだけ。送信者のアプリが振った TextMessage の message_id(字幕の Caption の message_id と同じ)。アプリが自分の送ったテキストの行を見つけるのに使う
+             */
+            message_id?: string | null;
+            /** @description 送った本人が消した行なら、その印。text、translations、media は空になる */
+            deleted?: components["schemas"]["TimelineDeletion"] | null;
         };
         /** TimelineMedia */
         TimelineMedia: {
@@ -859,6 +911,130 @@ export interface operations {
                 };
             };
             /** @description ルームがない */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    getTimelineEvent: {
+        parameters: {
+            query: {
+                /** @description 履歴の行の event_id */
+                event_id: string;
+            };
+            header?: never;
+            path: {
+                /** @description ルームの ID */
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TimelineEvent"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description ルームか、event_id の行がない */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deleteTimelineEvent: {
+        parameters: {
+            query: {
+                /** @description 履歴の行の event_id */
+                event_id: string;
+            };
+            header?: never;
+            path: {
+                /** @description ルームの ID */
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 消した(墓石) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TimelineEvent"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description ルームか、event_id の行がない */
             404: {
                 headers: {
                     [name: string]: unknown;
