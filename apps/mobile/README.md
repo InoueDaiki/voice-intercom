@@ -186,7 +186,7 @@ flutter test
 `integration_test/room_flow_test.dart` は、ローカルの環境(API、模擬 OIDC、LiveKit、Agent)につないで、プロフィールの登録、入室、入室直後のテキスト、PTT、英語の話者の字幕、履歴までを、シミュレーター(またはエミュレーター)の上の本物のアプリで通す。ログインだけは、ブラウザを操作できないので、模擬 OIDC のフォームを直接送ってトークンを取る。OpenAI を使うので課金される(1回で数セント)。
 
 1. ルーム `mobile-test`(名前「モバイル確認」、メンバーに `alice`)を作っておく。
-2. devContainer で相手役を待たせる。アプリが入室するのを待ってから、英語の話者として WAV を流す(ルームはアプリのトークンで作らせるため、先には入らない)。
+2. devContainer で相手役を待たせる。アプリが入室するのを待ってから、英語の話者として WAV を流す(ルームはアプリのトークンで作らせるため、先には入らない)。待つのは、スクリプトを起動した後に入った利用者(`joined_at` が起動より後)だけ。前の実行の利用者が残っていても(LiveKit が切断に気づくまで残る)早く話し始めないよう、テストより先に起動する。
 
    ```sh
    mise x -- apps/mobile/integration_test/speak_when_joined.sh
@@ -204,6 +204,13 @@ flutter test
    until adb shell pm list packages | grep -q jp.voiceintercom.voice_intercom; do sleep 0.2; done
    adb shell pm grant jp.voiceintercom.voice_intercom android.permission.RECORD_AUDIO
    adb shell pm grant jp.voiceintercom.voice_intercom android.permission.POST_NOTIFICATIONS
+   ```
+
+   iOS シミュレーターでは、実行のたびに、`flutter test` の直前に権限を与えておく(入れ直しで消えることがあり、マイクのダイアログで入室が止まる)。アプリが入っていなくても与えられる。通知は `simctl privacy` の対象になく、iOS のアプリはまだ通知を使わない。
+
+   ```sh
+   xcrun simctl privacy <シミュレーターの ID> grant microphone jp.voiceintercom.voiceIntercom
+   xcrun simctl privacy <シミュレーターの ID> grant photos jp.voiceintercom.voiceIntercom
    ```
 
 ### 画像・動画
@@ -236,7 +243,28 @@ flutter test integration_test/media_receive_test.dart -d <シミュレーター�
 
 ユーザーとルームの名前は `--dart-define=TEST_USER=...`、`TEST_ROOM_NAME=...` で変えられる。
 
-iOS シミュレーターで、音声を開いた時点で `SetProperty: RPC timeout. Apparently deadlocked. Aborting now.`(CoreAudio)と出てアプリが落ちることがある。iOS の WebRTC は再生だけでもマイクと一緒に開くので、ホスト Mac の音声の環境の影響を受ける。仮想オーディオのドライバー(`/Library/Audio/Plug-Ins/HAL/` の Teams など)が原因になりうる。
+### iOS シミュレーター
+
+手順は上と同じ(`-d` にシミュレーターの ID、権限は上の `simctl privacy`)。ID は `xcrun simctl list devices available` で見る。Xcode 27 には Simulator.app が無いので、`xcrun simctl boot <ID>` で起動し、画面は `xcrun simctl io <ID> screenshot <file>.png` で見る。アプリのログは `xcrun simctl spawn <ID> log stream --style compact --predicate 'process == "Runner"'` で見る(統合テストの print は `flutter test` の出力に出る)。
+
+**音声を開くとアプリが落ちる**。入室してマイクを publish した時点で `SetProperty: RPC timeout. Apparently deadlocked. Aborting now.`(または `Start: RPC timeout`)と出て、アプリが落ちる(`flutter test` は `did not complete` になる)。iOS の WebRTC は再生だけでもマイクと一緒に開くので、入室するテストはどれも当たる。ログでは、オーディオセッションを有効にしたときに、シミュレーターがホストの入出力をまとめた仮想のデバイス(aggregate)を2回続けて作り直し、作り直す前の古いデバイスで入出力が始まると(`AudioObjectPropertiesChanged: no such object` の後に)固まる。このとき同時に `CA_UISoundClientBase`(OS の効果音)が始まっている。アプリの設定(`setMicrophoneMuteMode` を呼ばない)では避けられなかった。ホストの仮想オーディオのドライバー(このMac では `/Library/Audio/Plug-Ins/HAL/` の `MSTeamsAudioDevice.driver` と `ParrotAudioPlugin.driver`)が原因になりうるが、外して確かめてはいない(管理者の権限が要る)。
+
+**確かめた結果**(2026-10-13、iPhone 17 の iOS 26.3 と 26.4、Xcode 27.0)。
+
+| テスト | 結果 |
+| --- | --- |
+| `media_upload_test` | マイクの権限を与えた11回のうち、通ったのは2回(1回は `setMicrophoneMuteMode` を呼ばない試し)。ほかは上の落ち方。通るときは約6〜9秒 |
+| `media_receive_test` | マイクの権限を与えた2回とも、入室で落ちる(権限を与えなかった2回は、マイクのダイアログで入室が止まる) |
+| `room_flow_test` | 入室で落ちるため流していない(Agent が OpenAI を使うので) |
+
+シミュレーターでは、`setMicrophoneMuteMode` が接続の前に `Audio engine returned error code: -1` で失敗し、publish の後の2回目も失敗する(既定のモードのまま動く)。実機で `inputMixer` になるかは下の「実機で確かめること」。
+
+**画像・動画の整え方**(入室しないので音声に当たらない)。
+
+- **HEIC → JPEG**: picker の画面はテストから操作できないので、`image_picker_ios` のソース(`FLTPHPickerSaveImageToPathOperation` の `processImage`)を読み、同じ処理(`FLTImagePickerImageUtil.m`、`FLTImagePickerMetaDataUtil.m`、`FLTImagePickerPhotoAssetUtil.m` をそのまま使う小さな確認用のコード)を iOS シミュレーター向けにビルドして `xcrun simctl spawn` で動かした。4032x3024、EXIF の向き 6 の HEIC(76KB)が、`maxWidth` / `maxHeight: 2048`、`imageQuality: 85` で JPEG(2048x1536、向き 6 のまま、156KB。品質 100 なら 241KB)になった。プラグインは先頭のバイトが JPEG・PNG・GIF でなければ JPEG にする(`imageQuality` を渡さなくても JPEG になる。HEIC のときに出る `compressing is not supported for type (null)` のログは誤りで、品質は効いている)。PHPicker が渡すのが HEIC のままか互換の JPEG かは実機で見るが、どちらでも JPEG になる。アプリの `DeviceMediaPreparer` は、その JPEG を `image/jpeg` でそのまま送り(1MB 以下なのでサムネイルなし)、HEIC のままのファイルは `image/heic` でサムネイルなしにした。
+- **動画の圧縮**: AVFoundation で作った HEVC の MOV(3840x2160、60fps、20秒、AAC の音声、縦向き(`preferredTransform` で 90 度)、78.3MB)を、シミュレーターの上で `DeviceMediaPreparer` に渡した。H.264 の MP4(720x1280、縦向きの画素で `preferredTransform` は回転なし、60fps、20秒)、26.9MB(10.7Mbps)、AAC の音声(48kHz、2ch)が残り、`moov` が `mdat` の前(先頭から 28 バイト目)にあった(読みながら再生できる)。圧縮は7.2秒、進み具合は70回届いた(0.09〜0.96)。サムネイルは 270x480 の縦。圧縮は Mac の符号化器を使うので、時間は実機で測る。60fps のまま 10.7Mbps なので、この調子だと 100MB は約75秒で、3分の動画は送れない(素材は動きと細かい模様が多いので、実際の動画ではもっと小さくなりうる。実機で確かめる)。
+
+**シミュレーターでは確かめられないもの**。バックグラウンドでの音声(入室で落ちるので、ホームに戻すところまで行けない。行けても、シミュレーターでは audio mode の停止や再開の振る舞いが実機と同じとは限らない)、実機のマイク・`inputMixer`・ミュート音、PushToTalk、電話の割り込み、Bluetooth とイヤホン、ロック画面、カメラ(シミュレーターにはカメラが無い)、圧縮の時間と発熱、機内モード。下の「実機で確かめること」に残す。
 
 ## 実機で確かめること
 
@@ -260,10 +288,10 @@ iOS シミュレーターで、音声を開いた時点で `SetProperty: RPC tim
 
 設計メモの「確かめること」のうち、アプリで確かめるもの。
 
-1. **HEIC**(iOS): iPhone で撮った HEIC の写真をライブラリから選ぶ。`imageQuality` を渡しているので JPEG になって届くか(管理コンソールの Chrome で表示できるか、履歴の `content_type` が `image/jpeg` か)。HEIC のまま届いたら、`image/heic` でサムネイルなしになる。そのとき、アプリ(iOS と Android)で表示できるか。
+1. **HEIC**(iOS。プラグインの変換はシミュレーターで確かめた。上の「iOS シミュレーター」): iPhone で撮った HEIC の写真をライブラリから選ぶ。`imageQuality` を渡しているので JPEG になって届くか(管理コンソールの Chrome で表示できるか、履歴の `content_type` が `image/jpeg` か)。HEIC のまま届いたら、`image/heic` でサムネイルなしになる。そのとき、アプリ(iOS と Android)で表示できるか。
 2. **大きな画像**: 4000px 級の写真が、長い辺 2048px の JPEG に縮むか。1MB を超えたらサムネイルが付くか。向き(EXIF)がサムネイルと全画面で合っているか。PNG のスクリーンショットも。
-3. **動画の圧縮**: iPhone の HEVC の MOV(4K、60fps)と Android の動画を選び、H.264 の MP4(1280x720 まで)になるか。圧縮の時間、進み具合、圧縮後の大きさ、音声が残るか。縦の動画の向き。3分を超える動画が「3分まで」で止まるか。
-4. **読みながらの再生**: 送った動画を、もう1台で開き、全部を読む前に再生が始まるか。iOS は `shouldOptimizeForNetworkUse` で `moov` が先頭に来るはず。Android の出力(Transcoder、MediaMuxer)は `moov` が末尾になる見込み(未確認)で、そうなら全部を読むまで始まらない。`ffprobe -v trace` か `AtomicParsley -T` で確かめる。
+3. **動画の圧縮**(iOS の出力の形式・向き・音声はシミュレーターで確かめた。時間と大きさは実機で): iPhone の HEVC の MOV(4K、60fps)と Android の動画を選び、H.264 の MP4(1280x720 まで)になるか。圧縮の時間、進み具合、圧縮後の大きさ、音声が残るか。縦の動画の向き。3分を超える動画が「3分まで」で止まるか。
+4. **読みながらの再生**: 送った動画を、もう1台で開き、全部を読む前に再生が始まるか。iOS は `shouldOptimizeForNetworkUse` で `moov` が先頭に来る(シミュレーターで確かめた)。Android の出力(Transcoder、MediaMuxer)は `moov` が末尾になる見込み(未確認)で、そうなら全部を読むまで始まらない。`ffprobe -v trace` か `AtomicParsley -T` で確かめる。
 5. **カメラ**: 写真と動画を撮って送れるか。権限のダイアログ(iOS のカメラとマイク)。
 6. **失敗とやり直し**: 送信中に機内モードにして「送れなかった」が出るか、戻して「やり直す」で続きから送れるか(圧縮をやり直さない)。
 7. **裏に回したとき**: 圧縮・アップロードの途中でホームに戻ると止まるか(今は裏での続きを考えていない)。
