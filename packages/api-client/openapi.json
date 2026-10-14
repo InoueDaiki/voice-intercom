@@ -659,7 +659,7 @@
           "media"
         ],
         "summary": "画像・動画をアップロードする署名付き URL を発行する(管理者かメンバー)",
-        "description": "PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。width・height・duration_ms は、送信者が測った値をそのまま履歴に入れる(API は確かめない)。",
+        "description": "PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。size_bytes が 16MB 以上なら、upload_url は null で、multipart(パートの大きさと数)を返す。パートの署名付き URL は parts で取る。width・height・duration_ms は、送信者が測った値をそのまま履歴に入れる(API は確かめない)。",
         "operationId": "createMediaUpload",
         "parameters": [
           {
@@ -744,13 +744,126 @@
         ]
       }
     },
+    "/rooms/{room_id}/media/{media_id}/parts": {
+      "post": {
+        "tags": [
+          "media"
+        ],
+        "summary": "マルチパートのパートを PUT する署名付き URL を発行する(アップロードした本人)",
+        "description": "1回で 100 個まで。期限は1時間なので、送る少し前に取る。期限が近づいたら、同じパートの URL を取り直してよい。thumbnail が true なら、サムネイルの署名付き URL も取り直す。マルチパートでないアップロードと、保存した後は 409。part_count より大きい番号は 422。",
+        "operationId": "createUploadPartUrls",
+        "parameters": [
+          {
+            "description": "ルームの ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Room Id",
+              "description": "ルームの ID"
+            },
+            "name": "room_id",
+            "in": "path"
+          },
+          {
+            "description": "uploads が返した media_id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$",
+              "title": "Media Id",
+              "description": "uploads が返した media_id"
+            },
+            "name": "media_id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUploadPartUrlsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadPartUrls"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ルームか、アップロード(media_id)がない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "マルチパートではない、またはもう保存した",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/rooms/{room_id}/media/{media_id}/complete": {
       "post": {
         "tags": [
           "media"
         ],
         "summary": "アップロードした画像・動画を履歴に保存する(アップロードした本人)",
-        "description": "本体(とサムネイル)が置かれていなければ 409。2回目からは、最初に保存した履歴を返す。保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。本文は要らない(画像・動画には文を添えられない)。前のクライアントが送る本文(text など)は無視する。",
+        "description": "本体(とサムネイル)が置かれていなければ 409。置かれた本体の大きさが uploads の size_bytes と違えば 409(マルチパートでは 410)。マルチパートなら、本文の parts に全パートの番号と ETag を入れる(完了させてから確かめる)。完了できない(ETag が合わない、アップロードが取りやめられた・期限で消えた)なら 410 で、uploads からやり直す。2回目からは、最初に保存した履歴を返す。保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。1回の PUT なら本文は要らない(画像・動画には文を添えられない)。前のクライアントが送る本文(text など)は無視する。",
         "operationId": "completeMediaUpload",
         "parameters": [
           {
@@ -778,13 +891,30 @@
             "in": "path"
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/CompleteMediaUploadRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "422": {
-            "description": "Validation Error",
+            "description": "マルチパートなのに parts がそろっていない",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -830,7 +960,17 @@
             }
           },
           "409": {
-            "description": "本体かサムネイルがまだ置かれていない、または上限より大きい",
+            "description": "本体かサムネイルがまだ置かれていない、または大きさが違う",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "マルチパートを完了できない。uploads からやり直す",
             "content": {
               "application/json": {
                 "schema": {
@@ -1583,6 +1723,52 @@
   },
   "components": {
     "schemas": {
+      "CompleteMediaUploadRequest": {
+        "properties": {
+          "parts": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CompletedPart"
+                },
+                "type": "array",
+                "maxItems": 10000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parts",
+            "description": "マルチパートなら、全パートの番号と ETag(1 から part_count まで1つずつ)。1回の PUT なら送らない"
+          }
+        },
+        "type": "object",
+        "title": "CompleteMediaUploadRequest"
+      },
+      "CompletedPart": {
+        "properties": {
+          "part_number": {
+            "type": "integer",
+            "maximum": 10000.0,
+            "minimum": 1.0,
+            "title": "Part Number",
+            "description": "パートの番号(1 から)"
+          },
+          "etag": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Etag",
+            "description": "パートの PUT の応答の ETag ヘッダー(そのまま)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "part_number",
+          "etag"
+        ],
+        "title": "CompletedPart"
+      },
       "CreateMediaUploadRequest": {
         "properties": {
           "content_type": {
@@ -1598,10 +1784,10 @@
           },
           "size_bytes": {
             "type": "integer",
-            "maximum": 104857600.0,
+            "maximum": 10737418240.0,
             "exclusiveMinimum": 0.0,
             "title": "Size Bytes",
-            "description": "本体のバイト数(上限 100MB。マルチパートは未対応)"
+            "description": "本体のバイト数(上限 10GB)。16MB 以上ならマルチパートになる。complete で、置かれた大きさがこれと違えば失敗にする"
           },
           "has_thumbnail": {
             "type": "boolean",
@@ -1691,6 +1877,30 @@
         ],
         "title": "CreateRoomRequest"
       },
+      "CreateUploadPartUrlsRequest": {
+        "properties": {
+          "part_numbers": {
+            "items": {
+              "type": "integer",
+              "maximum": 10000.0,
+              "minimum": 1.0,
+              "description": "パートの番号(1 から)"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Part Numbers",
+            "description": "署名付き URL が要るパートの番号(1回で 100 個まで)"
+          },
+          "thumbnail": {
+            "type": "boolean",
+            "title": "Thumbnail",
+            "description": "サムネイルの署名付き URL も取り直すなら true",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "CreateUploadPartUrlsRequest"
+      },
       "ErrorResponse": {
         "properties": {
           "statusCode": {
@@ -1778,9 +1988,16 @@
             "title": "Media Id"
           },
           "upload_url": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Upload Url",
-            "description": "本体を PUT する署名付き URL。Content-Type ヘッダーを content_type と同じにする"
+            "description": "本体を1回で PUT する署名付き URL。Content-Type ヘッダーを content_type と同じにする。マルチパート(multipart がある)なら null"
           },
           "thumbnail_upload_url": {
             "anyOf": [
@@ -1798,6 +2015,17 @@
             "type": "string",
             "title": "Expires At",
             "description": "署名付き URL の期限(ISO 8601、UTC)"
+          },
+          "multipart": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MultipartUpload"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "本体をマルチパートで上げるなら、その分け方。パートの署名付き URL は POST .../media/{media_id}/parts で取る"
           }
         },
         "type": "object",
@@ -1808,6 +2036,27 @@
           "expires_at"
         ],
         "title": "MediaUpload"
+      },
+      "MultipartUpload": {
+        "properties": {
+          "part_size": {
+            "type": "integer",
+            "title": "Part Size",
+            "description": "パートのバイト数。最後のパートだけは残り(これ以下)。パート n はファイルの (n-1)*part_size バイト目から"
+          },
+          "part_count": {
+            "type": "integer",
+            "title": "Part Count",
+            "description": "パートの数。番号は 1 から part_count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "part_size",
+          "part_count"
+        ],
+        "title": "MultipartUpload",
+        "description": "本体をパートに分けて PUT する(マルチパート)ときの分け方。"
       },
       "NotificationResult": {
         "properties": {
@@ -2483,6 +2732,60 @@
         },
         "type": "object",
         "title": "UpdateRoomRequest"
+      },
+      "UploadPartUrl": {
+        "properties": {
+          "part_number": {
+            "type": "integer",
+            "title": "Part Number"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "パートを PUT する署名付き URL。Content-Type は要らない(付けても署名に入らない)。応答の ETag ヘッダーを complete に渡す"
+          }
+        },
+        "type": "object",
+        "required": [
+          "part_number",
+          "url"
+        ],
+        "title": "UploadPartUrl"
+      },
+      "UploadPartUrls": {
+        "properties": {
+          "parts": {
+            "items": {
+              "$ref": "#/components/schemas/UploadPartUrl"
+            },
+            "type": "array",
+            "title": "Parts"
+          },
+          "thumbnail_upload_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thumbnail Upload Url",
+            "description": "thumbnail が true で、サムネイルを上げるアップロードなら、その署名付き URL"
+          },
+          "expires_at": {
+            "type": "string",
+            "title": "Expires At",
+            "description": "署名付き URL の期限(ISO 8601、UTC)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "parts",
+          "thumbnail_upload_url",
+          "expires_at"
+        ],
+        "title": "UploadPartUrls"
       },
       "User": {
         "properties": {

@@ -183,10 +183,16 @@ class ApiClient {
           return valueString == 'true' || valueString == '1';
         case 'DateTime':
           return value is DateTime ? value : DateTime.tryParse(value);
+        case 'CompleteMediaUploadRequest':
+          return CompleteMediaUploadRequest.fromJson(value);
+        case 'CompletedPart':
+          return CompletedPart.fromJson(value);
         case 'CreateMediaUploadRequest':
           return CreateMediaUploadRequest.fromJson(value);
         case 'CreateRoomRequest':
           return CreateRoomRequest.fromJson(value);
+        case 'CreateUploadPartUrlsRequest':
+          return CreateUploadPartUrlsRequest.fromJson(value);
         case 'ErrorResponse':
           return ErrorResponse.fromJson(value);
         case 'HTTPValidationError':
@@ -199,6 +205,8 @@ class ApiClient {
           return LiveKitTokenResponse.fromJson(value);
         case 'MediaUpload':
           return MediaUpload.fromJson(value);
+        case 'MultipartUpload':
+          return MultipartUpload.fromJson(value);
         case 'NotificationResult':
           return NotificationResult.fromJson(value);
         case 'PutTimelineEventRequest':
@@ -229,6 +237,10 @@ class ApiClient {
           return UnregisterDeviceRequest.fromJson(value);
         case 'UpdateRoomRequest':
           return UpdateRoomRequest.fromJson(value);
+        case 'UploadPartUrl':
+          return UploadPartUrl.fromJson(value);
+        case 'UploadPartUrls':
+          return UploadPartUrls.fromJson(value);
         case 'User':
           return User.fromJson(value);
         case 'UserList':

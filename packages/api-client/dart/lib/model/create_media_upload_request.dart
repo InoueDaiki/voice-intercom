@@ -23,10 +23,10 @@ class CreateMediaUploadRequest {
 
   CreateMediaUploadRequestContentTypeEnum contentType;
 
-  /// 本体のバイト数(上限 100MB。マルチパートは未対応)
+  /// 本体のバイト数(上限 10GB)。16MB 以上ならマルチパートになる。complete で、置かれた大きさがこれと違えば失敗にする
   ///
   /// Minimum value: 0
-  /// Maximum value: 104857600
+  /// Maximum value: 10737418240
   int sizeBytes;
 
   /// サムネイル(image/jpeg)も上げるなら true

@@ -1,8 +1,10 @@
 """画像・動画のアップロードの API。
 
 1. アプリ(か管理コンソール)が uploads で署名付き URL をもらい、S3 に本体(とサムネイル)を
-   直接 PUT する。
-2. complete を呼ぶと、置かれたことを確かめてから、履歴(kind media)に保存する。
+   直接 PUT する。本体が 16MB 以上ならマルチパートにし、パートの署名付き URL を parts で取って、
+   パートを並べて PUT する(下の「マルチパート」)。
+2. complete を呼ぶと、(マルチパートなら完了させてから)置かれたことを確かめ、履歴(kind media)に
+   保存する。
 3. 保存した後に、今ルームにいる人へデータチャネル(topic "media")で知らせ、いない人には
    push 通知を送る(media_broadcast.py)。2回目からは、知らせ直すだけで push 通知は送らない。
 4. 受け取った側は、履歴の media.url(CloudFront)で表示・再生する。
@@ -15,11 +17,17 @@ complete を呼べるのはアップロードした本人だけ。uploads のと
   「本人ではない」(403)と「まだ置かれていない」(409)を見分けられない。
 仮の行には Content-Type や大きさも持たせるので、complete でクライアントに送り直させずに済む。
 
-上限は 100MB で、単一の PUT だけにする。マルチパートは後回し(README)。
+マルチパート(docs/設計メモ.md の「画像・動画のアップロード」):
+- 分けるかと、パートの大きさは API が決める(16MB 以上、パートは 8MB。10,000 個を超えるなら
+  大きくする)。uploads で CreateMultipartUpload を呼び、UploadId は仮の行にだけ持つ。
+- パートの署名付き URL は、parts で 100 個ずつ取る(期限は1時間。10GB で 1,280 個あり、
+  全部を先に出すと、送り終わる前に切れうる)。
+- complete では、クライアントが集めたパートの番号と ETag で CompleteMultipartUpload を呼ぶ。
+  完了できない(パートが合わない、アップロードが無い)なら 410 にし、取りやめる。クライアントは
+  uploads からやり直す。
 """
 
 import uuid
-from dataclasses import replace
 from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import Annotated
@@ -32,17 +40,23 @@ from aws_lambda_powertools.event_handler.exceptions import (
 )
 from aws_lambda_powertools.event_handler.openapi.params import Body, Path
 
-from voice_intercom_api import media_broadcast, media_store, store, timeline_store
+from voice_intercom_api import deletion, media_broadcast, media_store, store, timeline_store
 from voice_intercom_api.auth import CurrentUser
 from voice_intercom_api.models import Room
 from voice_intercom_api.routing import AUTH, ROOM_NOT_FOUND, RoomIdPath, responses, visible_room
 from voice_intercom_api.timeline_models import (
     MAX_MEDIA_BYTES,
+    MAX_UPLOAD_PARTS,
     MEDIA_ID_PATTERN,
     THUMBNAIL_CONTENT_TYPE,
+    CompleteMediaUploadRequest,
     CreateMediaUploadRequest,
+    CreateUploadPartUrlsRequest,
     MediaUpload,
+    MultipartUpload,
     TimelineEvent,
+    UploadPartUrl,
+    UploadPartUrls,
     format_timestamp,
 )
 
@@ -51,12 +65,65 @@ router = Router()
 # サムネイルの上限。署名付き URL では大きさを縛れないので、complete で確かめる
 MAX_THUMBNAIL_BYTES = 10 * 1024 * 1024
 
+_MIB = 1024 * 1024
+
+# これ以上の本体はマルチパートにする。小さいものは1回の PUT のほうが、往復が少なく作りも簡単
+MULTIPART_THRESHOLD = 16 * _MIB
+
+# パートの大きさ(最小)。S3 の下限(最後以外 5MB)より大きくし、失敗したパートの送り直しが
+# 小さく済むようにする(AWS CLI の既定と同じ 8MB)
+MIN_PART_SIZE = 8 * _MIB
+
+MediaIdPath = Annotated[
+    str, Path(pattern=MEDIA_ID_PATTERN, description="uploads が返した media_id")
+]
+
+
+def part_size_for(size_bytes: int) -> int | None:
+    """マルチパートのパートの大きさ。1回の PUT にするなら None。
+
+    パートの数が 10,000 を超えないよう、超えるなら 1MB 単位で大きくする(10GB では超えない)。
+    """
+    if size_bytes < MULTIPART_THRESHOLD:
+        return None
+    needed = -(-size_bytes // MAX_UPLOAD_PARTS)
+    return max(MIN_PART_SIZE, -(-needed // _MIB) * _MIB)
+
+
+def _conflict(message: str) -> ServiceError:
+    return ServiceError(HTTPStatus.CONFLICT, message)
+
+
+def _gone(message: str) -> ServiceError:
+    return ServiceError(HTTPStatus.GONE, message)
+
+
+def _unprocessable(message: str) -> ServiceError:
+    return ServiceError(HTTPStatus.UNPROCESSABLE_ENTITY, message)
+
+
+def _thumbnail_url(room_id: str, media_id: str) -> str:
+    return media_store.presign_put(
+        media_store.thumbnail_key(room_id, media_id), THUMBNAIL_CONTENT_TYPE
+    )
+
+
+def _own_pending(room_id: str, media_id: str, user_sub: str) -> timeline_store.PendingUpload:
+    pending = timeline_store.get_pending_upload(room_id, media_id)
+    if pending is None:
+        raise NotFoundError("アップロードがない")
+    if pending.uploader_id != user_sub:
+        raise ForbiddenError("アップロードした本人ではない")
+    return pending
+
 
 @router.post(
     "/rooms/<room_id>/media/uploads",
     summary="画像・動画をアップロードする署名付き URL を発行する(管理者かメンバー)",
     description="PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と"
     "同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。"
+    "size_bytes が 16MB 以上なら、upload_url は null で、multipart(パートの大きさと数)を返す。"
+    "パートの署名付き URL は parts で取る。"
     "width・height・duration_ms は、送信者が測った値をそのまま履歴に入れる(API は確かめない)。",
     operation_id="createMediaUpload",
     tags=["media"],
@@ -69,6 +136,10 @@ def create_media_upload(
     visible_room(room_id, user)
     media_id = uuid.uuid4().hex
     expires_at = datetime.now(UTC) + media_store.UPLOAD_URL_TTL
+    key = media_store.media_key(room_id, media_id)
+    part_size = part_size_for(body.size_bytes)
+    # Content-Type はマルチパートを始めるときに決まる(パートの PUT には要らない)
+    upload_id = None if part_size is None else media_store.create_multipart(key, body.content_type)
     timeline_store.create_pending_upload(
         room_id,
         media_id,
@@ -79,34 +150,80 @@ def create_media_upload(
         width=body.width,
         height=body.height,
         duration_ms=body.duration_ms,
+        upload_id=upload_id,
+        part_size=part_size,
     )
     return MediaUpload(
         media_id=media_id,
-        upload_url=media_store.presign_put(
-            media_store.media_key(room_id, media_id), body.content_type
-        ),
-        thumbnail_upload_url=media_store.presign_put(
-            media_store.thumbnail_key(room_id, media_id), THUMBNAIL_CONTENT_TYPE
-        )
-        if body.has_thumbnail
-        else None,
+        upload_url=media_store.presign_put(key, body.content_type) if part_size is None else None,
+        thumbnail_upload_url=_thumbnail_url(room_id, media_id) if body.has_thumbnail else None,
         expires_at=format_timestamp(expires_at),
+        multipart=None
+        if part_size is None
+        else MultipartUpload(part_size=part_size, part_count=-(-body.size_bytes // part_size)),
     )
 
 
-def _conflict(message: str) -> ServiceError:
-    return ServiceError(HTTPStatus.CONFLICT, message)
+@router.post(
+    "/rooms/<room_id>/media/<media_id>/parts",
+    summary="マルチパートのパートを PUT する署名付き URL を発行する(アップロードした本人)",
+    description="1回で 100 個まで。期限は1時間なので、送る少し前に取る。"
+    "期限が近づいたら、同じパートの URL を取り直してよい。"
+    "thumbnail が true なら、サムネイルの署名付き URL も取り直す。"
+    "マルチパートでないアップロードと、保存した後は 409。part_count より大きい番号は 422。",
+    operation_id="createUploadPartUrls",
+    tags=["media"],
+    security=AUTH,
+    responses=responses(
+        UploadPartUrls,
+        errors={
+            404: "ルームか、アップロード(media_id)がない",
+            409: "マルチパートではない、またはもう保存した",
+        },
+    ),
+)
+def create_upload_part_urls(
+    room_id: RoomIdPath,
+    media_id: MediaIdPath,
+    body: Annotated[CreateUploadPartUrlsRequest, Body()],
+    user: CurrentUser,
+) -> UploadPartUrls:
+    visible_room(room_id, user)
+    pending = _own_pending(room_id, media_id, user.sub)
+    if pending.completed_event_id is not None:
+        raise _conflict("もう保存した")
+    upload_id, part_count = pending.upload_id, pending.part_count
+    if upload_id is None or part_count is None:
+        raise _conflict("マルチパートではない")
+    if any(n > part_count for n in body.part_numbers):
+        raise _unprocessable(f"パートの番号は {part_count} まで")
+    expires_at = datetime.now(UTC) + media_store.UPLOAD_URL_TTL
+    key = media_store.media_key(room_id, media_id)
+    return UploadPartUrls(
+        parts=[
+            UploadPartUrl(part_number=n, url=media_store.presign_upload_part(key, upload_id, n))
+            for n in body.part_numbers
+        ],
+        thumbnail_upload_url=_thumbnail_url(room_id, media_id)
+        if body.thumbnail and pending.has_thumbnail
+        else None,
+        expires_at=format_timestamp(expires_at),
+    )
 
 
 @router.post(
     "/rooms/<room_id>/media/<media_id>/complete",
     summary="アップロードした画像・動画を履歴に保存する(アップロードした本人)",
     description="本体(とサムネイル)が置かれていなければ 409。"
+    "置かれた本体の大きさが uploads の size_bytes と違えば 409(マルチパートでは 410)。"
+    "マルチパートなら、本文の parts に全パートの番号と ETag を入れる(完了させてから確かめる)。"
+    "完了できない(ETag が合わない、アップロードが取りやめられた・期限で消えた)なら 410 で、"
+    "uploads からやり直す。"
     "2回目からは、最初に保存した履歴を返す。"
     "保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、"
     "最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。"
     "配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。"
-    "本文は要らない(画像・動画には文を添えられない)。"
+    "1回の PUT なら本文は要らない(画像・動画には文を添えられない)。"
     "前のクライアントが送る本文(text など)は無視する。",
     operation_id="completeMediaUpload",
     tags=["media"],
@@ -115,40 +232,48 @@ def _conflict(message: str) -> ServiceError:
         TimelineEvent,
         errors={
             404: "ルームか、アップロード(media_id)がない",
-            409: "本体かサムネイルがまだ置かれていない、または上限より大きい",
+            409: "本体かサムネイルがまだ置かれていない、または大きさが違う",
+            410: "マルチパートを完了できない。uploads からやり直す",
+            422: "マルチパートなのに parts がそろっていない",
         },
     ),
 )
 def complete_media_upload(
     room_id: RoomIdPath,
-    media_id: Annotated[
-        str, Path(pattern=MEDIA_ID_PATTERN, description="uploads が返した media_id")
-    ],
+    media_id: MediaIdPath,
     user: CurrentUser,
+    body: Annotated[CompleteMediaUploadRequest | None, Body()] = None,
 ) -> TimelineEvent:
     room = visible_room(room_id, user)
-    pending = timeline_store.get_pending_upload(room_id, media_id)
-    if pending is None:
-        raise NotFoundError("アップロードがない")
-    if pending.uploader_id != user.sub:
-        raise ForbiddenError("アップロードした本人ではない")
+    pending = _own_pending(room_id, media_id, user.sub)
     if pending.completed_event_id is not None:
         return _announce_again(room, _completed_event(room_id, pending.completed_event_id))
 
-    original = media_store.head(media_store.media_key(room_id, media_id))
-    if original is None:
-        raise _conflict("本体がまだ置かれていない")
-    if original.size_bytes > MAX_MEDIA_BYTES:
-        raise _conflict("本体が上限(100MB)より大きい")
     if pending.has_thumbnail:
+        # マルチパートの完了は取り消せないので、サムネイルを先に確かめる
         thumbnail = media_store.head(media_store.thumbnail_key(room_id, media_id))
         if thumbnail is None:
             raise _conflict("サムネイルがまだ置かれていない")
         if thumbnail.size_bytes > MAX_THUMBNAIL_BYTES:
             raise _conflict("サムネイルが上限(10MB)より大きい")
+    multipart = pending.upload_id is not None
+    if multipart:
+        _complete_multipart(pending, body)
 
-    # 宣言された大きさではなく、実際に置かれた大きさを履歴に書く
-    pending = replace(pending, size_bytes=original.size_bytes)
+    key = media_store.media_key(room_id, media_id)
+    original = media_store.head(key)
+    if original is None:
+        if multipart:
+            raise _gone("マルチパートのアップロードが無い(取りやめた、期限で消えた)")
+        raise _conflict("本体がまだ置かれていない")
+    # 署名付き URL では大きさを縛れないので、申告どおりかを確かめる(上限は uploads で確かめた)
+    if original.size_bytes != pending.size_bytes or original.size_bytes > MAX_MEDIA_BYTES:
+        if multipart:
+            # 完了した後なので、同じアップロードには置き直せない。消して uploads からやり直させる
+            media_store.delete([key])
+            raise _gone("本体の大きさが uploads の size_bytes と違う")
+        raise _conflict("本体の大きさが uploads の size_bytes と違う")
+
     # push 通知の本文に表示名を使う
     profile = store.get_user(user.sub)
     try:
@@ -162,13 +287,43 @@ def complete_media_upload(
     return event
 
 
+def _complete_multipart(
+    pending: timeline_store.PendingUpload, body: CompleteMediaUploadRequest | None
+) -> None:
+    """クライアントが集めたパートの ETag で、マルチパートを完了する。
+
+    もう完了していた(前の complete が完了させた後に応答を失った、同時に呼ばれた)なら、
+    S3 は NoSuchUpload を返すことがある。そのときは本体があるかで決める(呼び出し元の HeadObject)。
+    """
+    upload_id, part_count = pending.upload_id, pending.part_count
+    if upload_id is None or part_count is None:
+        raise ValueError("マルチパートではない")
+    given = body.parts if body is not None and body.parts is not None else []
+    parts = sorted((p.part_number, p.etag.strip()) for p in given)
+    if [n for n, _ in parts] != list(range(1, part_count + 1)):
+        raise _unprocessable(f"parts に 1 から {part_count} までのパートを1つずつ入れる")
+    key = media_store.media_key(pending.room_id, pending.media_id)
+    try:
+        media_store.complete_multipart(key, upload_id, parts)
+    except media_store.MultipartGoneError:
+        return
+    except media_store.InvalidPartsError as e:
+        media_store.abort_multipart(key, upload_id)
+        raise _gone(f"パートが合わないので完了できない({e})") from e
+
+
 def _announce_again(room: Room, event: TimelineEvent) -> TimelineEvent:
     """2回目からの complete。配信だけをやり直す(push 通知は送らない)。
 
-    送った本人が消した後なら、配信もせず墓石を返す。
+    送った本人が消した後なら、配信もせず墓石を返す。このとき S3 の後始末(本体とサムネイルを消す、
+    マルチパートを取りやめる)もやり直す。同時に呼ばれた complete が、削除の後に
+    CompleteMultipartUpload で本体を置き直したかもしれないため。CloudFront の無効化は DELETE で
+    済んでいるので、やり直さない。
     """
     if event.deleted is None:
         media_broadcast.announce(room, event, None, first=False)
+    else:
+        deletion.purge_media(event, invalidate=False)
     return event
 
 

@@ -1,4 +1,4 @@
-"""画像・動画を置く S3 の操作(署名付き URL の発行、置かれたかの確認、消すこと)。
+"""画像・動画を置く S3 の操作(署名付き URL の発行、マルチパート、置かれたかの確認、消すこと)。
 
 バケット名は環境変数 MEDIA_BUCKET で受け取る。ローカルでは scripts/with-local-aws.sh が
 接続先(AWS_ENDPOINT_URL_S3)を SeaweedFS に向ける。
@@ -70,6 +70,70 @@ def presign_put(key: str, content_type: str) -> str:
         },
         ExpiresIn=int(UPLOAD_URL_TTL.total_seconds()),
     )
+
+
+def create_multipart(key: str, content_type: str) -> str:
+    """マルチパートアップロードを始め、UploadId を返す。
+
+    Content-Type はここで決まる(パートの PUT には要らない)。
+    """
+    res = _s3().create_multipart_upload(
+        Bucket=get_timeline_settings().media_bucket, Key=key, ContentType=content_type
+    )
+    return res["UploadId"]
+
+
+def presign_upload_part(key: str, upload_id: str, part_number: int) -> str:
+    """パートの PUT(UploadPart)の署名付き URL。署名に入るヘッダーは host だけ。"""
+    return _s3().generate_presigned_url(
+        "upload_part",
+        Params={
+            "Bucket": get_timeline_settings().media_bucket,
+            "Key": key,
+            "UploadId": upload_id,
+            "PartNumber": part_number,
+        },
+        ExpiresIn=int(UPLOAD_URL_TTL.total_seconds()),
+    )
+
+
+class MultipartGoneError(Exception):
+    """マルチパートアップロードが無い(完了した、消した、期限で消えた)。"""
+
+
+class InvalidPartsError(Exception):
+    """渡したパートでは完了できない(ETag が合わない、最後でないパートが 5MB 未満など)。"""
+
+
+def complete_multipart(key: str, upload_id: str, parts: list[tuple[int, str]]) -> None:
+    """パートの番号と ETag の並び(番号の順)で、マルチパートアップロードを完了する。"""
+    try:
+        _s3().complete_multipart_upload(
+            Bucket=get_timeline_settings().media_bucket,
+            Key=key,
+            UploadId=upload_id,
+            MultipartUpload={
+                "Parts": [{"PartNumber": number, "ETag": etag} for number, etag in parts]
+            },
+        )
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code")
+        if code == "NoSuchUpload":
+            raise MultipartGoneError(upload_id) from e
+        if code in ("InvalidPart", "InvalidPartOrder", "EntityTooSmall"):
+            raise InvalidPartsError(code) from e
+        raise
+
+
+def abort_multipart(key: str, upload_id: str) -> None:
+    """マルチパートアップロードを取りやめ、上げたパートを消す。無ければ何もしない。"""
+    try:
+        _s3().abort_multipart_upload(
+            Bucket=get_timeline_settings().media_bucket, Key=key, UploadId=upload_id
+        )
+    except ClientError as e:
+        if e.response.get("Error", {}).get("Code") != "NoSuchUpload":
+            raise
 
 
 @dataclass(frozen=True)
