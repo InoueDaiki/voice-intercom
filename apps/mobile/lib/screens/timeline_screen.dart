@@ -101,8 +101,11 @@ class _TimelineScreenState extends State<TimelineScreen> {
           if (e.kind == TimelineEventKindEnum.media && media != null) {
             return ListTile(
               leading: MediaThumbnail(event: e, width: 56, height: 56),
+              // 画像・動画には文を添えられない。動画は長さを出す(分かれば)
               title: Text(
-                e.text.isEmpty ? (isVideoMedia(media) ? '動画' : '画像') : e.text,
+                isVideoMedia(media)
+                    ? ['動画', ?durationLabel(media)].join(' ')
+                    : '画像',
               ),
               subtitle: Text(
                 '${e.senderId == myId ? '自分' : e.senderId} ・ $kind ・ ${formatTime(e.occurredAt)}',

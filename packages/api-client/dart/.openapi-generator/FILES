@@ -16,7 +16,6 @@ lib/auth/authentication.dart
 lib/auth/http_basic_auth.dart
 lib/auth/http_bearer_auth.dart
 lib/auth/oauth.dart
-lib/model/complete_media_upload_request.dart
 lib/model/create_media_upload_request.dart
 lib/model/create_room_request.dart
 lib/model/error_response.dart

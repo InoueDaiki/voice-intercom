@@ -18,6 +18,9 @@ class TimelineMedia {
     required this.url,
     required this.thumbnailUrl,
     required this.sizeBytes,
+    this.width,
+    this.height,
+    this.durationMs,
   });
 
   String mediaId;
@@ -32,13 +35,34 @@ class TimelineMedia {
 
   int sizeBytes;
 
+  /// 表示の幅(ピクセル。向きを反映した後。height と一緒に送る)。分からなければ null
+  ///
+  /// Minimum value: 1
+  /// Maximum value: 65535
+  int? width;
+
+  /// 表示の高さ(ピクセル。向きを反映した後。width と一緒に送る)。分からなければ null
+  ///
+  /// Minimum value: 1
+  /// Maximum value: 65535
+  int? height;
+
+  /// 動画の長さ(ミリ秒。動画のときだけ)。画像と、分からないときは null
+  ///
+  /// Minimum value: 1
+  /// Maximum value: 86400000
+  int? durationMs;
+
   @override
   bool operator ==(Object other) => identical(this, other) || other is TimelineMedia &&
     other.mediaId == mediaId &&
     other.contentType == contentType &&
     other.url == url &&
     other.thumbnailUrl == thumbnailUrl &&
-    other.sizeBytes == sizeBytes;
+    other.sizeBytes == sizeBytes &&
+    other.width == width &&
+    other.height == height &&
+    other.durationMs == durationMs;
 
   @override
   int get hashCode =>
@@ -47,10 +71,13 @@ class TimelineMedia {
     (contentType.hashCode) +
     (url.hashCode) +
     (thumbnailUrl == null ? 0 : thumbnailUrl!.hashCode) +
-    (sizeBytes.hashCode);
+    (sizeBytes.hashCode) +
+    (width == null ? 0 : width!.hashCode) +
+    (height == null ? 0 : height!.hashCode) +
+    (durationMs == null ? 0 : durationMs!.hashCode);
 
   @override
-  String toString() => 'TimelineMedia[mediaId=$mediaId, contentType=$contentType, url=$url, thumbnailUrl=$thumbnailUrl, sizeBytes=$sizeBytes]';
+  String toString() => 'TimelineMedia[mediaId=$mediaId, contentType=$contentType, url=$url, thumbnailUrl=$thumbnailUrl, sizeBytes=$sizeBytes, width=$width, height=$height, durationMs=$durationMs]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
@@ -63,6 +90,21 @@ class TimelineMedia {
       json[r'thumbnail_url'] = null;
     }
       json[r'size_bytes'] = this.sizeBytes;
+    if (this.width != null) {
+      json[r'width'] = this.width;
+    } else {
+      json[r'width'] = null;
+    }
+    if (this.height != null) {
+      json[r'height'] = this.height;
+    } else {
+      json[r'height'] = null;
+    }
+    if (this.durationMs != null) {
+      json[r'duration_ms'] = this.durationMs;
+    } else {
+      json[r'duration_ms'] = null;
+    }
     return json;
   }
 
@@ -95,6 +137,9 @@ class TimelineMedia {
         url: mapValueOfType<String>(json, r'url')!,
         thumbnailUrl: mapValueOfType<String>(json, r'thumbnail_url'),
         sizeBytes: mapValueOfType<int>(json, r'size_bytes')!,
+        width: mapValueOfType<int>(json, r'width'),
+        height: mapValueOfType<int>(json, r'height'),
+        durationMs: mapValueOfType<int>(json, r'duration_ms'),
       );
     }
     return null;

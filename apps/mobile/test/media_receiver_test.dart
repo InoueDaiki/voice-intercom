@@ -11,7 +11,7 @@ import 'package:voice_intercom_schema/gen/voiceintercom/v1/media.pb.dart';
 import 'support/media_fixtures.dart';
 
 /// 履歴の行と同じ中身の MediaMessage(API が送るもの)
-List<int> messageFor(TimelineEvent e, {bool truncated = false}) => MediaMessage(
+List<int> messageFor(TimelineEvent e) => MediaMessage(
   eventId: e.eventId,
   senderIdentity: e.senderId,
   occurredAt: e.occurredAt,
@@ -20,8 +20,9 @@ List<int> messageFor(TimelineEvent e, {bool truncated = false}) => MediaMessage(
   url: e.media!.url,
   thumbnailUrl: e.media!.thumbnailUrl ?? '',
   sizeBytes: Int64(e.media!.sizeBytes),
-  text: truncated ? e.text.substring(0, 2) : e.text,
-  textTruncated: truncated,
+  width: e.media!.width ?? 0,
+  height: e.media!.height ?? 0,
+  durationMs: e.media!.durationMs ?? 0,
 ).writeToBuffer();
 
 /// 履歴の代わり。rows を返し、呼ばれた回数を数える
@@ -81,21 +82,22 @@ void main() {
       final row = mediaEvent(
         '2026-10-13T00:00:01.000Z',
         senderId: 'bob',
-        text: '長い文の全文',
+        video: true,
+        width: 720,
+        height: 1280,
+        durationMs: 15500,
       );
       timeline.rows = [textEvent('2026-10-13T00:00:02.000Z'), row];
-      // text_truncated でも、表示は履歴の行(全文)になる
       expect(
-        receiver.receive(
-          messageFor(row, truncated: true),
-          fromParticipant: false,
-        ),
+        receiver.receive(messageFor(row), fromParticipant: false),
         MediaReceiveResult.checking,
       );
       async.flushMicrotasks();
       expect(timeline.calls, 1);
       expect(feed.items, hasLength(1));
-      expect(feed.items.single.text, '長い文の全文');
+      // 幅・高さ・長さも履歴の行のもの
+      expect(feed.items.single.media!.width, 720);
+      expect(feed.items.single.media!.durationMs, 15500);
       expect(feed.items.single.senderId, 'bob');
       expect(receiver.pendingCount, 0);
     });

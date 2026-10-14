@@ -81,15 +81,17 @@ def upload(
     token: str,
     *,
     content_type: str = "image/png",
-    text: str = "",
     room_id: str = "room-m",
     has_thumbnail: bool = False,
+    complete_body: Any = None,
+    **dimensions: int,
 ) -> tuple[int, Any]:
     _, created = call(
         "POST",
         f"/rooms/{room_id}/media/uploads",
         token,
-        {"content_type": content_type, "size_bytes": 3, "has_thumbnail": has_thumbnail},
+        {"content_type": content_type, "size_bytes": 3, "has_thumbnail": has_thumbnail}
+        | dimensions,
     )
     media_id = created["media_id"]
     s3 = boto3.client("s3")
@@ -106,11 +108,13 @@ def upload(
             Body=b"t",
             ContentType="image/jpeg",
         )
-    return complete(token, media_id, text, room_id)
+    return complete(token, media_id, room_id, complete_body)
 
 
-def complete(token: str, media_id: str, text: str = "", room_id: str = "room-m") -> tuple[int, Any]:
-    return call("POST", f"/rooms/{room_id}/media/{media_id}/complete", token, {"text": text})
+def complete(
+    token: str, media_id: str, room_id: str = "room-m", body: Any = None
+) -> tuple[int, Any]:
+    return call("POST", f"/rooms/{room_id}/media/{media_id}/complete", token, body or {})
 
 
 def decode(req: livekit.SendDataRequest) -> MediaMessage:
@@ -123,7 +127,7 @@ def decode(req: livekit.SendDataRequest) -> MediaMessage:
 def test_sends_media_message_to_room(member: str, lk: FakeLiveKit, push: FakeNotify) -> None:
     lk.participants = [("member-1", STANDARD), ("member-2", STANDARD), ("agent-1", AGENT)]
 
-    status, event = upload(member, text="現場の写真", has_thumbnail=True)
+    status, event = upload(member, has_thumbnail=True, width=1080, height=1920)
 
     assert status == 200
     assert lk.listed == ["room-m"]
@@ -144,10 +148,12 @@ def test_sends_media_message_to_room(member: str, lk: FakeLiveKit, push: FakeNot
         url=media["url"],
         thumbnail_url=media["thumbnail_url"],
         size_bytes=3,
-        text="現場の写真",
-        text_truncated=False,
-        language="ja",
+        width=1080,
+        height=1920,
     )
+    # 文を添えられないので、text・text_truncated・language は入れない(プロフィールに言語があっても)
+    assert decode(req).text == ""
+    assert decode(req).language == ""
 
 
 def test_message_without_thumbnail_and_profile(
@@ -163,20 +169,31 @@ def test_message_without_thumbnail_and_profile(
     assert message.thumbnail_url == ""
     assert message.language == ""
     assert message.text == ""
+    # 幅・高さ・長さを送らなかったら 0
+    assert (message.width, message.height, message.duration_ms) == (0, 0, 0)
 
 
-def test_long_text_is_truncated(member: str, lk: FakeLiveKit, push: FakeNotify) -> None:
+def test_message_has_video_duration(member: str, lk: FakeLiveKit, push: FakeNotify) -> None:
     lk.participants = [("member-2", STANDARD)]
-    text = "あ" * 10000  # UTF-8 で 30,000 バイト
 
-    _, event = upload(member, text=text)
+    upload(member, content_type="video/mp4", width=720, height=1280, duration_ms=15_500)
 
     message = decode(lk.sent[0])
-    assert message.text_truncated is True
-    assert message.text == "あ" * (media_broadcast.MAX_TEXT_BYTES // 3)
-    assert len(message.SerializeToString()) < 5000
-    # 履歴には全文が残る
-    assert event["text"] == text
+    assert (message.width, message.height, message.duration_ms) == (720, 1280, 15_500)
+
+
+def test_text_from_old_client_is_ignored(member: str, lk: FakeLiveKit, push: FakeNotify) -> None:
+    # 前のクライアントが complete に text を送っても、履歴・配信・push 通知のどれにも出さない
+    lk.participants = [("member-2", STANDARD)]
+
+    status, event = upload(member, complete_body={"text": "現場の写真"})
+
+    assert status == 200
+    assert event["text"] == ""
+    assert event["language"] is None
+    message = decode(lk.sent[0])
+    assert (message.text, message.text_truncated, message.language) == ("", False, "")
+    assert push.calls[0]["body"] == "太郎さんが画像を送りました"
 
 
 def test_nobody_in_room_skips_send(member: str, lk: FakeLiveKit, push: FakeNotify) -> None:
@@ -282,13 +299,13 @@ def test_rejected_complete_does_not_send(
 def test_push_to_members_not_in_room(member: str, lk: FakeLiveKit, push: FakeNotify) -> None:
     lk.participants = [("member-1", STANDARD), ("member-2", STANDARD), ("agent-1", AGENT)]
 
-    _, event = upload(member, text="現場の写真")
+    _, event = upload(member)
 
     assert push.calls == [
         {
             "user_ids": ["member-3", "member-4"],
             "title": "現場M",
-            "body": "太郎さんが画像を送りました: 現場の写真",
+            "body": "太郎さんが画像を送りました",
             "data": {"type": "media", "room_id": "room-m", "event_id": event["event_id"]},
         }
     ]
@@ -303,12 +320,6 @@ def test_push_body_for_video_and_unknown_sender(
 
     assert push.calls[0]["body"] == "誰かが動画を送りました"
     assert push.calls[0]["user_ids"] == ["member-1", "member-3", "member-4"]
-
-
-def test_push_body_shortens_text(member: str, lk: FakeLiveKit, push: FakeNotify) -> None:
-    upload(member, text="い" * 60)
-
-    assert push.calls[0]["body"] == "太郎さんが画像を送りました: " + "い" * 50 + "…"
 
 
 def test_admin_upload_pushes_to_all_members(
@@ -397,21 +408,3 @@ def test_slow_push_returns_in_time(
 
     assert status == 200
     assert time.monotonic() - started < 2
-
-
-# 切り詰め
-
-
-@pytest.mark.parametrize(
-    ("text", "max_bytes", "expected"),
-    [
-        ("abc", 3, ("abc", False)),
-        ("abcd", 3, ("abc", True)),
-        # 3バイトの文字の途中では切らない
-        ("ああ", 4, ("あ", True)),
-        ("ああ", 6, ("ああ", False)),
-        ("", 0, ("", False)),
-    ],
-)
-def test_truncate_utf8(text: str, max_bytes: int, expected: tuple[str, bool]) -> None:
-    assert media_broadcast.truncate_utf8(text, max_bytes) == expected

@@ -130,6 +130,18 @@ def test_upload_unknown_room(admin: str) -> None:
         pytest.param({"content_type": "video/quicktime"}, id="mov"),
         pytest.param({"size_bytes": 0}, id="empty"),
         pytest.param({"size_bytes": 100 * 1024 * 1024 + 1}, id="too-large"),
+        pytest.param({"width": 0, "height": 100}, id="width-zero"),
+        pytest.param({"width": 100, "height": 65536}, id="height-too-large"),
+        pytest.param({"width": 100}, id="width-only"),
+        pytest.param({"height": 100}, id="height-only"),
+        pytest.param({"width": 1.5, "height": 100}, id="width-not-int"),
+        # 長さは動画のときだけ
+        pytest.param({"duration_ms": 1000}, id="duration-for-image"),
+        pytest.param({"content_type": "video/mp4", "duration_ms": 0}, id="duration-zero"),
+        pytest.param(
+            {"content_type": "video/mp4", "duration_ms": 24 * 60 * 60 * 1000 + 1},
+            id="duration-too-long",
+        ),
     ],
 )
 def test_upload_validates(member: str, overrides: dict[str, Any]) -> None:
@@ -138,6 +150,13 @@ def test_upload_validates(member: str, overrides: dict[str, Any]) -> None:
 
 def test_upload_accepts_limit(member: str) -> None:
     assert create_upload(member, size_bytes=100 * 1024 * 1024)[0] == 200
+    assert create_upload(member, width=65535, height=1)[0] == 200
+    assert (
+        create_upload(
+            member, content_type="video/mp4", width=1, height=1, duration_ms=24 * 60 * 60 * 1000
+        )[0]
+        == 200
+    )
 
 
 # complete
@@ -150,7 +169,7 @@ def test_complete(member: str, other_member: str) -> None:
     put_object(f"rooms/room-a/{media_id}/original", "image/png", b"abcd")
     put_object(f"rooms/room-a/{media_id}/thumbnail", "image/jpeg")
 
-    status, event = complete(member, media_id, {"text": "現場の写真"})
+    status, event = complete(member, media_id)
 
     assert status == 200
     assert event["kind"] == "media"
@@ -158,8 +177,9 @@ def test_complete(member: str, other_member: str) -> None:
     assert event["sender_id"] == "member-1"
     assert event["event_id"] == f"{event['occurred_at']}#{media_id}"
     assert event["occurred_at"].endswith("Z")
-    assert event["text"] == "現場の写真"
-    assert event["language"] == "ja"
+    # 画像・動画には文を添えられない。プロフィールに言語があっても、言語は入れない
+    assert event["text"] == ""
+    assert event["language"] is None
     assert event["translations"] == {}
     assert event["utterance_id"] is None
     assert event["segment_index"] is None
@@ -170,6 +190,10 @@ def test_complete(member: str, other_member: str) -> None:
         "thumbnail_url": f"{MEDIA_BASE_URL}/rooms/room-a/{media_id}/thumbnail",
         # 宣言した大きさではなく、置かれた大きさ
         "size_bytes": 4,
+        # 送らなければ null
+        "width": None,
+        "height": None,
+        "duration_ms": None,
     }
 
     # ルームの他のメンバーにも履歴として見える
@@ -186,9 +210,66 @@ def test_complete_without_thumbnail(member: str) -> None:
 
     assert status == 200
     assert event["text"] == ""
-    # プロフィールがなければ言語は分からない
     assert event["language"] is None
     assert event["media"]["thumbnail_url"] is None
+
+
+def test_complete_keeps_dimensions(member: str, other_member: str) -> None:
+    _, upload = create_upload(
+        member, content_type="video/mp4", width=720, height=1280, duration_ms=15_500
+    )
+    media_id = upload["media_id"]
+    put_object(f"rooms/room-a/{media_id}/original", "video/mp4")
+
+    status, event = complete(member, media_id)
+
+    assert status == 200
+    media = event["media"]
+    assert (media["width"], media["height"], media["duration_ms"]) == (720, 1280, 15_500)
+    _, page = call("GET", "/rooms/room-a/timeline", other_member)
+    assert page["items"] == [event]
+
+
+def test_complete_ignores_text(member: str) -> None:
+    # 前のクライアントが送る text は受け取っても無視する(422 にしない)
+    _, upload = create_upload(member)
+    media_id = upload["media_id"]
+    put_object(f"rooms/room-a/{media_id}/original", "image/png")
+
+    status, event = complete(member, media_id, {"text": "現場の写真"})
+
+    assert status == 200
+    assert event["text"] == ""
+
+
+def test_old_media_row_hides_text_and_has_no_dimensions(member: str) -> None:
+    # 文を添えられたころに保存した行(幅・高さ・長さも無い)。読むときに文を空にする
+    timeline_store._timeline().put_item(  # pyright: ignore[reportPrivateUsage]
+        Item={
+            "room_id": "room-a",
+            "event_id": "2026-10-10T00:00:00.000Z#" + "a" * 32,
+            "kind": "media",
+            "sender_id": "member-1",
+            "occurred_at": "2026-10-10T00:00:00.000Z",
+            "language": "ja",
+            "text": "現場の写真",
+            "translations": {},
+            "media": {
+                "media_id": "a" * 32,
+                "content_type": "image/png",
+                "size_bytes": 3,
+                "has_thumbnail": False,
+            },
+        }
+    )
+
+    _, page = call("GET", "/rooms/room-a/timeline", member)
+
+    [event] = page["items"]
+    assert event["text"] == ""
+    assert event["language"] is None
+    media = event["media"]
+    assert (media["width"], media["height"], media["duration_ms"]) == (None, None, None)
 
 
 def test_complete_is_idempotent(member: str, admin: str) -> None:
@@ -196,8 +277,8 @@ def test_complete_is_idempotent(member: str, admin: str) -> None:
     media_id = upload["media_id"]
     put_object(f"rooms/room-a/{media_id}/original", "image/png")
 
-    first = complete(member, media_id, {"text": "a"})
-    second = complete(member, media_id, {"text": "a"})
+    first = complete(member, media_id)
+    second = complete(member, media_id)
 
     assert first[0] == 200
     assert first == second
@@ -214,19 +295,11 @@ def test_concurrent_complete_returns_first_event(member: str) -> None:
 
     # 仮の行を読んだ後に、別の complete が先に書いた場合
     first = timeline_store.complete_upload(
-        pending,
-        sender_id="member-1",
-        occurred_at="2026-10-10T00:00:00.000Z",
-        language=None,
-        text="",
+        pending, sender_id="member-1", occurred_at="2026-10-10T00:00:00.000Z"
     )
     with pytest.raises(timeline_store.AlreadyCompletedError) as e:
         timeline_store.complete_upload(
-            pending,
-            sender_id="member-1",
-            occurred_at="2026-10-10T00:00:01.000Z",
-            language=None,
-            text="",
+            pending, sender_id="member-1", occurred_at="2026-10-10T00:00:01.000Z"
         )
 
     assert e.value.event_id == first.event_id

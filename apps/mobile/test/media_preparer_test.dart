@@ -40,6 +40,16 @@ void main() {
     expect(media.thumbnail, isNull);
     expect(media.isVideo, isFalse);
     expect(media.temporary, isFalse);
+    expect(media.size, (width: 64, height: 48));
+    expect(media.durationMs, isNull);
+  });
+
+  test('JPEG の幅・高さは EXIF の向きを反映する(縦向きで撮った写真)', () async {
+    // 画素は横長(64x48)で、EXIF で 90 度回して見せる
+    final image = noise(64, 48)..exif.imageIfd.orientation = 6;
+    final path = write('rotated.jpg', img.encodeJpg(image));
+    final media = await prepareImage(path, SniffedType.jpeg);
+    expect(media.size, (width: 48, height: 64));
   });
 
   test('1MB を超える画像にはサムネイル(JPEG、長い辺 480)を作る', () async {
@@ -53,6 +63,7 @@ void main() {
     final decoded = img.decodeJpg(thumbnail)!;
     expect(decoded.width, thumbnailMaxSide);
     expect(decoded.height, 320);
+    expect(media.size, (width: 900, height: 600));
   });
 
   test('HEIC はこのアプリで読めないので、サムネイルなしでそのまま送る', () async {
@@ -64,6 +75,8 @@ void main() {
     final media = await prepareImage(path, SniffedType.heic);
     expect(media.contentType, 'image/heic');
     expect(media.thumbnail, isNull);
+    // 読めないので幅・高さも送らない
+    expect(media.size, isNull);
   });
 
   test('GIF は JPEG にして送る', () async {
@@ -75,6 +88,7 @@ void main() {
     final out = File(media.path).readAsBytesSync();
     expect(sniffMediaType(out), SniffedType.jpeg);
     expect(media.sizeBytes, out.length);
+    expect(media.size, (width: 40, height: 30));
     await deleteTemporary(media);
     expect(File(media.path).existsSync(), isFalse);
   });
@@ -100,6 +114,43 @@ void main() {
     final decoded = img.decodeJpg(thumbnail)!;
     expect(decoded.height, thumbnailMaxSide);
     expect(decoded.width, 150);
+  });
+
+  test('読めない画像の大きさは null', () {
+    expect(measureImage(Uint8List.fromList('GIF89a broken'.codeUnits)), isNull);
+    expect(measureImage(Uint8List(0)), isNull);
+  });
+
+  test('API が受け付けない幅・高さ・長さは送らない', () {
+    expect(validSize(1, maxMediaSide), (width: 1, height: maxMediaSide));
+    expect(validSize(0, 10), isNull);
+    expect(validSize(10, maxMediaSide + 1), isNull);
+    expect(validSize(null, 10), isNull);
+    expect(validDurationMs(15499.6), 15500);
+    expect(validDurationMs(0), isNull);
+    expect(validDurationMs(0.4), isNull);
+    expect(validDurationMs(double.nan), isNull);
+    expect(validDurationMs(maxMediaDurationMs + 1), isNull);
+    expect(validDurationMs(null), isNull);
+  });
+
+  test('動画の縦横は、向きを反映したフレームで決める', () {
+    // video_compress が幅と高さを入れ替えて返しても、フレームが縦長なら縦長
+    expect(orientVideoSize(1280, 720, frame: (width: 360, height: 640)), (
+      width: 720,
+      height: 1280,
+    ));
+    expect(orientVideoSize(720, 1280, frame: (width: 640, height: 360)), (
+      width: 1280,
+      height: 720,
+    ));
+    // フレームが無ければ返った値のまま、幅・高さが無ければフレームの大きさ
+    expect(orientVideoSize(1280, 720), (width: 1280, height: 720));
+    expect(orientVideoSize(null, null, frame: (width: 360, height: 640)), (
+      width: 360,
+      height: 640,
+    ));
+    expect(orientVideoSize(0, 720), isNull);
   });
 
   test('小さい画像のサムネイルは拡大しない', () {

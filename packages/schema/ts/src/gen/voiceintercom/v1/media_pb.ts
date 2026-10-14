@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file voiceintercom/v1/media.proto.
  */
 export const file_voiceintercom_v1_media: GenFile = /*@__PURE__*/
-  fileDesc("Chx2b2ljZWludGVyY29tL3YxL21lZGlhLnByb3RvEhB2b2ljZWludGVyY29tLnYxIuYBCgxNZWRpYU1lc3NhZ2USEAoIZXZlbnRfaWQYASABKAkSFwoPc2VuZGVyX2lkZW50aXR5GAIgASgJEhMKC29jY3VycmVkX2F0GAMgASgJEhAKCG1lZGlhX2lkGAQgASgJEhQKDGNvbnRlbnRfdHlwZRgFIAEoCRILCgN1cmwYBiABKAkSFQoNdGh1bWJuYWlsX3VybBgHIAEoCRISCgpzaXplX2J5dGVzGAggASgEEgwKBHRleHQYCSABKAkSFgoOdGV4dF90cnVuY2F0ZWQYCiABKAgSEAoIbGFuZ3VhZ2UYCyABKAliBnByb3RvMw");
+  fileDesc("Chx2b2ljZWludGVyY29tL3YxL21lZGlhLnByb3RvEhB2b2ljZWludGVyY29tLnYxIqYCCgxNZWRpYU1lc3NhZ2USEAoIZXZlbnRfaWQYASABKAkSFwoPc2VuZGVyX2lkZW50aXR5GAIgASgJEhMKC29jY3VycmVkX2F0GAMgASgJEhAKCG1lZGlhX2lkGAQgASgJEhQKDGNvbnRlbnRfdHlwZRgFIAEoCRILCgN1cmwYBiABKAkSFQoNdGh1bWJuYWlsX3VybBgHIAEoCRISCgpzaXplX2J5dGVzGAggASgEEhAKBHRleHQYCSABKAlCAhgBEhoKDnRleHRfdHJ1bmNhdGVkGAogASgIQgIYARIUCghsYW5ndWFnZRgLIAEoCUICGAESDQoFd2lkdGgYDCABKA0SDgoGaGVpZ2h0GA0gASgNEhMKC2R1cmF0aW9uX21zGA4gASgNYgZwcm90bzM");
 
 /**
  * 画像・動画。API が complete(POST /rooms/{room_id}/media/{media_id}/complete)で履歴に
@@ -84,26 +84,50 @@ export type MediaMessage = Message<"voiceintercom.v1.MediaMessage"> & {
   sizeBytes: bigint;
 
   /**
-   * 添えた文。UTF-8 で 4096 バイトを超えるときは先頭だけを入れ(文字の途中では切らない)、
-   * text_truncated を true にする
+   * 使わない(常に空)。画像・動画には文を添えられない(2026-10-13 に決めた。設計メモの
+   * 「画像・動画のルームへの配信」)。古いアプリが読むので項目は残す
    *
-   * @generated from field: string text = 9;
+   * @generated from field: string text = 9 [deprecated = true];
+   * @deprecated
    */
   text: string;
 
   /**
-   * text が切り詰められていれば true。全文は履歴で読む
+   * 使わない(常に false)。text と同じ
    *
-   * @generated from field: bool text_truncated = 10;
+   * @generated from field: bool text_truncated = 10 [deprecated = true];
+   * @deprecated
    */
   textTruncated: boolean;
 
   /**
-   * 添えた文の言語(送信者のプロフィールの言語。BCP 47)。分からなければ空
+   * 使わない(常に空)。添えた文の言語だったもの。text と同じ
    *
-   * @generated from field: string language = 11;
+   * @generated from field: string language = 11 [deprecated = true];
+   * @deprecated
    */
   language: string;
+
+  /**
+   * 表示の幅と高さ(ピクセル。向きを反映した後の値。縦向きなら height が大きい)。
+   * 送信者のアプリが整えた後の本体で測った値。分からなければ 0(古いアプリが上げたもの、
+   * 管理コンソールから上げたものなど)。受け手は 0 なら決まった枠で表示する
+   *
+   * @generated from field: uint32 width = 12;
+   */
+  width: number;
+
+  /**
+   * @generated from field: uint32 height = 13;
+   */
+  height: number;
+
+  /**
+   * 動画の長さ(ミリ秒)。画像と、分からないときは 0
+   *
+   * @generated from field: uint32 duration_ms = 14;
+   */
+  durationMs: number;
 };
 
 /**
