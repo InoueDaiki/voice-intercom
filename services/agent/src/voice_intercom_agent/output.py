@@ -11,9 +11,11 @@ import logging
 from livekit import rtc
 
 from voiceintercom.v1.caption_pb2 import Caption
+from voiceintercom.v1.text_status_pb2 import TextStatus
 
 from .captions import CAPTION_TOPIC
 from .mixer import Mixer
+from .text_input import TEXT_STATUS_TOPIC
 
 logger = logging.getLogger(__name__)
 
@@ -126,26 +128,39 @@ class AudioInput:
 
 
 class CaptionPublisher:
-    """字幕をデータチャネルで送る。送る順番を保つため、1つのタスクから順に送る。"""
+    """字幕をデータチャネルで送る。送る順番を保つため、1つのタスクから順に送る。
+
+    テキスト入力の送信者だけに宛てるもの(送り直しへの字幕と、受け付け・結果の TextStatus)も、
+    同じ順番で送る(destination_identities)。
+    """
 
     def __init__(self, room: rtc.Room) -> None:
         self._room = room
-        self._queue: asyncio.Queue[Caption] = asyncio.Queue()
+        # (中身, topic, 宛先)。宛先が空ならルームの全員
+        self._queue: asyncio.Queue[tuple[bytes, str, list[str]]] = asyncio.Queue()
         self._task = asyncio.create_task(self._run())
 
     def send(self, caption: Caption | None) -> None:
         if caption is not None:
-            self._queue.put_nowait(caption)
+            self._queue.put_nowait((caption.SerializeToString(), CAPTION_TOPIC, []))
+
+    def send_to(self, identity: str, caption: Caption) -> None:
+        """字幕を1人にだけ送る(送り直されたテキストの字幕)。"""
+        self._queue.put_nowait((caption.SerializeToString(), CAPTION_TOPIC, [identity]))
+
+    def send_status(self, identity: str, status: TextStatus) -> None:
+        """テキスト入力の受け付け・結果を、送信者にだけ送る。"""
+        self._queue.put_nowait((status.SerializeToString(), TEXT_STATUS_TOPIC, [identity]))
 
     async def _run(self) -> None:
         while True:
-            caption = await self._queue.get()
+            data, topic, destinations = await self._queue.get()
             try:
                 await self._room.local_participant.publish_data(
-                    caption.SerializeToString(), reliable=True, topic=CAPTION_TOPIC
+                    data, reliable=True, topic=topic, destination_identities=destinations
                 )
             except Exception:
-                logger.exception("字幕を送れなかった")
+                logger.exception("データを送れなかった(%s)", topic)
 
     async def aclose(self) -> None:
         self._task.cancel()

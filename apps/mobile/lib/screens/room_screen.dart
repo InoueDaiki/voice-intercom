@@ -330,7 +330,7 @@ class _CaptionTile extends StatelessWidget {
   }
 }
 
-/// 送ったテキストのうち、まだ字幕が返ってこないもの
+/// 送ったテキストのうち、まだ処理を終えていないもの、断られた・失敗したもの
 class _PendingTexts extends StatelessWidget {
   const _PendingTexts({required this.session});
 
@@ -338,23 +338,21 @@ class _PendingTexts extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final pending = session.textSender.items
-        .where((t) => t.state != OutgoingTextState.delivered)
-        .toList();
+    final pending = [
+      for (final t in session.textSender.items)
+        if (outgoingTextLabel(t) case final label?) (t, label),
+    ];
     if (pending.isEmpty) {
       return const SizedBox.shrink();
     }
     return Column(
       children: [
-        for (final t in pending)
+        for (final (t, label) in pending)
           ListTile(
             dense: true,
             title: Text(t.text),
-            trailing: Text(
-              t.state == OutgoingTextState.failed
-                  ? '届かなかった'
-                  : '送信中(${t.attempts}回目)',
-            ),
+            // 失敗した言語などで長くなるので、下の行に出す
+            subtitle: Text(label),
           ),
       ],
     );

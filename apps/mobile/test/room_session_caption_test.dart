@@ -3,6 +3,7 @@ import 'package:livekit_client/livekit_client.dart';
 import 'package:voice_intercom/room/room_session.dart';
 import 'package:voice_intercom/room/text_sender.dart';
 import 'package:voice_intercom_schema/gen/voiceintercom/v1/caption.pb.dart';
+import 'package:voice_intercom_schema/gen/voiceintercom/v1/text_status.pb.dart';
 
 /// 送信元の参加者(kind と identity だけを持つ)
 class _FakeParticipant extends Fake implements RemoteParticipant {
@@ -88,6 +89,30 @@ void main() {
       ),
     );
     expect(session.textSender.find(id)!.state, OutgoingTextState.delivered);
+    session.dispose();
+  });
+
+  test('Agent の参加者からの TextStatus だけで、送信中の表示を変える', () {
+    final session = newSession();
+    final id = session.textSender.submit('長い')!.messageId;
+    DataReceivedEvent status(RemoteParticipant? sender) => DataReceivedEvent(
+      participant: sender,
+      data: TextStatus(
+        messageId: id,
+        state: TextStatus_State.STATE_REJECTED,
+        reason: TextStatus_Reason.REASON_TOO_LONG,
+      ).writeToBuffer(),
+      topic: textStatusTopic,
+    );
+
+    session.handleData(status(null));
+    session.handleData(
+      status(_FakeParticipant(ParticipantKind.STANDARD, 'mallory')),
+    );
+    expect(session.textSender.find(id)!.state, OutgoingTextState.sending);
+
+    session.handleData(status(_FakeParticipant(ParticipantKind.AGENT, 'a')));
+    expect(session.textSender.find(id)!.state, OutgoingTextState.rejected);
     session.dispose();
   });
 }
