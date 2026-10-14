@@ -134,25 +134,6 @@ void main() {
     expect(validDurationMs(null), isNull);
   });
 
-  test('動画の縦横は、向きを反映したフレームで決める', () {
-    // video_compress が幅と高さを入れ替えて返しても、フレームが縦長なら縦長
-    expect(orientVideoSize(1280, 720, frame: (width: 360, height: 640)), (
-      width: 720,
-      height: 1280,
-    ));
-    expect(orientVideoSize(720, 1280, frame: (width: 640, height: 360)), (
-      width: 1280,
-      height: 720,
-    ));
-    // フレームが無ければ返った値のまま、幅・高さが無ければフレームの大きさ
-    expect(orientVideoSize(1280, 720), (width: 1280, height: 720));
-    expect(orientVideoSize(null, null, frame: (width: 360, height: 640)), (
-      width: 360,
-      height: 640,
-    ));
-    expect(orientVideoSize(0, 720), isNull);
-  });
-
   test('小さい画像のサムネイルは拡大しない', () {
     final decoded = img.decodeJpg(
       makeThumbnail(img.encodePng(noise(100, 80)))!,

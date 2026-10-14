@@ -1,7 +1,5 @@
 import 'package:image_picker/image_picker.dart';
 
-import 'media_preparer.dart';
-
 /// どこから選ぶか
 enum MediaPickSource {
   /// 写真ライブラリ(画像か動画)
@@ -39,11 +37,8 @@ Future<String?> pickMediaFile(
       maxHeight: pickMaxImageSide,
       imageQuality: pickImageQuality,
     ),
-    // maxDuration はカメラで撮るときだけ効く。ライブラリから選んだ動画は整えるときに確かめる
-    MediaPickSource.video => await picker.pickVideo(
-      source: ImageSource.camera,
-      maxDuration: maxVideoDuration,
-    ),
+    // 動画の長さには上限を設けない(大きさの上限は整えるときに確かめる)
+    MediaPickSource.video => await picker.pickVideo(source: ImageSource.camera),
   };
   return file?.path;
 }

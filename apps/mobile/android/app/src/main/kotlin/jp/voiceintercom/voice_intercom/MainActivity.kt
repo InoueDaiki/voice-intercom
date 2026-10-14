@@ -8,8 +8,12 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+    private var videoTranscoder: VideoTranscoder? = null
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        // 動画の測定と H.264 への符号化(lib/media/video_transcoder.dart)
+        videoTranscoder = VideoTranscoder(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
         // 入室中のフォアグラウンドサービス(lib/room/background_audio.dart)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "voiceintercom/in_room")
             .setMethodCallHandler { call, result ->
@@ -37,6 +41,8 @@ class MainActivity : FlutterActivity() {
         // アプリの終了でエンジンが外れると、ルームの接続(Dart)も flutter_webrtc の音声も破棄される。
         // サービスだけが残らないよう、ここでも止める
         InRoomService.stop(this)
+        videoTranscoder?.dispose()
+        videoTranscoder = null
         super.cleanUpFlutterEngine(flutterEngine)
     }
 

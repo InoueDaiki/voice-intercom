@@ -1,20 +1,17 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
-import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
-import 'package:video_compress/video_compress.dart';
 
 import 'media_type.dart';
+import 'video_plan.dart';
+import 'video_transcoder.dart';
 
-/// 本体の上限(API の CreateMediaUploadRequest の size_bytes の上限。マルチパートは未対応)
-const maxUploadBytes = 100 * 1024 * 1024;
-
-/// 動画の長さの上限(案。設計メモの「端末での圧縮」で値は未定)。
-/// image_picker の maxDuration はカメラで撮るときにしか効かないので、選んだ後にも確かめる。
-const maxVideoDuration = Duration(minutes: 3);
+/// 本体の上限(10GB。API の CreateMediaUploadRequest の size_bytes の上限と合わせる。
+/// 大きなものはマルチパートで上げる)。動画の長さには上限を設けない
+const maxUploadBytes = 10 * 1024 * 1024 * 1024;
 
 /// 画像のサムネイルを作る大きさの境目(設計メモの「サムネイル」の例)
 const imageThumbnailThreshold = 1024 * 1024;
@@ -111,12 +108,15 @@ abstract interface class MediaPreparer {
 ///   実機で確かめる)。届いた中身の形式で content_type を決め、API が受け付けない形式
 ///   (GIF など)は JPEG にする。1MB を超えたらサムネイルを作る。HEIC はこのアプリでは
 ///   読めないので、サムネイルなしでそのまま送る(幅・高さも送らない)。
-/// - 動画: video_compress で H.264 の MP4(1280x720 まで)にし、サムネイルを作る。
-///   圧縮は同時に1つしかできない(video_compress の制約)ので、呼ぶ側で順に呼ぶ。
+/// - 動画: 解像度とフレームレートを保ったまま、それに見合ったビットレートの H.264 の MP4 にし
+///   (`planVideo`。元が既にそうならそのまま送る)、サムネイルを作る。
+///   符号化は同時に1つしかしないので、呼ぶ側で順に呼ぶ。
 /// - 幅・高さ: 整えた後の本体の、向きを反映した後の大きさ(画像は EXIF の向き、動画は
 ///   回転のメタデータ)。受け手が表示の枠(縦横比)を先に取るのに使う。動画は長さも測る。
 class DeviceMediaPreparer implements MediaPreparer {
-  const DeviceMediaPreparer();
+  const DeviceMediaPreparer({this.transcoder = const VideoTranscoder()});
+
+  final VideoTranscoder transcoder;
 
   @override
   Future<PreparedMedia> prepare(
@@ -137,84 +137,75 @@ class DeviceMediaPreparer implements MediaPreparer {
     String path,
     void Function(double progress)? onProgress,
   ) async {
-    final info = await VideoCompress.getMediaInfo(path);
-    final durationMs = info.duration;
-    if (durationMs != null &&
-        durationMs > maxVideoDuration.inMilliseconds + 500) {
-      throw UnsupportedMediaException('動画は${maxVideoDuration.inMinutes}分までにする');
+    final source = await transcoder.probe(path);
+    final plan = planVideo(source, await readMp4Layout(path));
+    final String outPath;
+    final bool temporary;
+    switch (plan) {
+      case SendAsIs():
+        if (await File(path).length() > maxUploadBytes) {
+          throw UnsupportedMediaException(_tooLargeMessage);
+        }
+        outPath = path;
+        temporary = false;
+        onProgress?.call(1);
+      case Remux():
+        outPath = _tempVideoPath();
+        temporary = true;
+        await transcoder.transcode(path, outPath, onProgress: onProgress);
+      case Transcode(:final videoBitrate):
+        final estimate = estimateTranscodedBytes(source, videoBitrate);
+        if (estimate != null && estimate > maxUploadBytes) {
+          throw UnsupportedMediaException(_tooLargeMessage);
+        }
+        outPath = _tempVideoPath();
+        temporary = true;
+        await transcoder.transcode(
+          path,
+          outPath,
+          videoBitrate: videoBitrate,
+          onProgress: onProgress,
+        );
     }
-    final subscription = VideoCompress.compressProgress$.subscribe(
-      (percent) => onProgress?.call((percent / 100).clamp(0, 1)),
-    );
-    final MediaInfo? compressed;
     try {
-      compressed = await VideoCompress.compressVideo(
-        path,
-        quality: VideoQuality.Res1280x720Quality,
-        includeAudio: true,
+      final size = await File(outPath).length();
+      if (size > maxUploadBytes) {
+        throw UnsupportedMediaException(_tooLargeMessage);
+      }
+      final result = temporary ? await transcoder.probe(outPath) : source;
+      // 動画のサムネイルは必ず作って上げる(設計メモの「サムネイル」)
+      final frame = await transcoder.frame(outPath);
+      final thumbnail = frame == null
+          ? null
+          : await Isolate.run(() => makeThumbnailWithSize(frame));
+      if (thumbnail == null) {
+        throw StateError('動画のサムネイルを作れなかった');
+      }
+      final display = result.displaySize;
+      return PreparedMedia(
+        path: outPath,
+        contentType: 'video/mp4',
+        sizeBytes: size,
+        isVideo: true,
+        thumbnail: thumbnail.thumbnail,
+        temporary: temporary,
+        // 幅・高さは回転のメタデータを反映した後のもの。測れなければフレームの大きさ
+        size: validSize(display.width, display.height) ?? thumbnail.size,
+        durationMs: validDurationMs(result.durationMs ?? source.durationMs),
       );
-    } finally {
-      subscription.unsubscribe();
+    } on Object {
+      if (temporary) {
+        await _deleteQuietly(outPath);
+      }
+      rethrow;
     }
-    final outPath = compressed?.path;
-    if (compressed == null || outPath == null || compressed.isCancel == true) {
-      throw StateError('動画を圧縮できなかった');
-    }
-    final size = await File(outPath).length();
-    if (size > maxUploadBytes) {
-      await _deleteQuietly(outPath);
-      throw UnsupportedMediaException('圧縮しても 100MB を超えるので送れない');
-    }
-    // 動画のサムネイルは必ず作って上げる(設計メモの「サムネイル」)
-    final frame = await VideoCompress.getByteThumbnail(outPath, quality: 70);
-    if (frame == null) {
-      await _deleteQuietly(outPath);
-      throw StateError('動画のサムネイルを作れなかった');
-    }
-    final thumbnail = await Isolate.run(() => makeThumbnailWithSize(frame));
-    if (thumbnail == null) {
-      await _deleteQuietly(outPath);
-      throw StateError('動画のサムネイルを作れなかった');
-    }
-    return PreparedMedia(
-      path: outPath,
-      contentType: 'video/mp4',
-      sizeBytes: size,
-      isVideo: true,
-      thumbnail: thumbnail.thumbnail,
-      temporary: true,
-      size: orientVideoSize(
-        compressed.width,
-        compressed.height,
-        frame: thumbnail.size,
-      ),
-      durationMs: validDurationMs(compressed.duration ?? durationMs),
-    );
   }
 }
 
-/// 動画の表示の大きさ。
-///
-/// video_compress の幅・高さは、回転(縦向きで撮った動画)の扱いが当てにならない。
-/// 3.1.4 の Android は、回転が 0・180 のときに幅と高さを入れ替え、90・270 では入れ替えない
-/// (逆に見える)。iOS は preferredTransform を反映した値を返す。そこで、長い辺と短い辺は
-/// [width]・[height] から取り、縦か横かは、向きを反映して取り出したフレーム([frame]。
-/// Android の MediaMetadataRetriever.getFrameAtTime、iOS の appliesPreferredTrackTransform)
-/// で決める。幅・高さが無ければフレームの大きさを使う。実機で確かめる。
-MediaSize? orientVideoSize(int? width, int? height, {MediaSize? frame}) {
-  final reported = validSize(width, height);
-  if (reported == null) {
-    return frame == null ? null : validSize(frame.width, frame.height);
-  }
-  if (frame == null) {
-    return reported;
-  }
-  final long = max(reported.width, reported.height);
-  final short = min(reported.width, reported.height);
-  return frame.width >= frame.height
-      ? (width: long, height: short)
-      : (width: short, height: long);
-}
+const _tooLargeMessage = '10GB を超える動画は送れない';
+
+String _tempVideoPath() =>
+    '${Directory.systemTemp.path}/vi_${DateTime.now().microsecondsSinceEpoch}.mp4';
 
 /// 画像を送る形に整える。画像のデコードは重いので別の isolate で行う。
 Future<PreparedMedia> prepareImage(String path, SniffedType type) async {
@@ -222,7 +213,7 @@ Future<PreparedMedia> prepareImage(String path, SniffedType type) async {
   if (type.uploadableAsIs) {
     final size = await file.length();
     if (size > maxUploadBytes) {
-      throw UnsupportedMediaException('100MB を超える画像は送れない');
+      throw UnsupportedMediaException('10GB を超える画像は送れない');
     }
     if (type == SniffedType.heic) {
       // このアプリでは読めないので、サムネイルも幅・高さも無しで送る

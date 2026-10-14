@@ -21,8 +21,6 @@ dependencies:
   protobuf: ^6.1.0
   # 画像・動画(README の「画像・動画」と「パッケージを選んだ理由」)
   image_picker: ^1.2.4
-  # H.264 の MP4 への圧縮とサムネイル。Swift Package Manager に未対応なので iOS は CocoaPods も使う
-  video_compress: ^3.1.4
   video_player: ^2.14.1
   image: ^4.12.0
   # 署名付き URL への PUT。統合テスト(integration_test/)でも模擬 OIDC からトークンを取るのに使う
