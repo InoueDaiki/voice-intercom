@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlparse
 
 import boto3
 import pytest
+from conftest import auth_headers, http_event
 from timeline_env import (
     MEDIA_BUCKET,
     FakeLiveKit,
@@ -19,6 +20,7 @@ from timeline_env import (
 )
 
 from voice_intercom_api import media_store, timeline_store
+from voice_intercom_api.app import handler
 from voice_intercom_api.media import part_size_for
 
 MIB = 1024 * 1024
@@ -213,6 +215,25 @@ def test_complete(member: str, other_member: str) -> None:
     assert complete(member, media_id) == (200, event)
     assert complete(member, media_id, {"parts": parts}) == (200, event)
     assert part_urls(member, media_id, [1])[0] == 409
+
+
+@pytest.mark.parametrize("raw", [None, ""], ids=["no-body", "empty-body"])
+def test_complete_single_put_without_body(member: str, raw: str | None) -> None:
+    # 生成した Dart のクライアントは、本文を渡さなければ空の本文で送る
+    media_id = create_upload(member, content_type="image/png", size_bytes=3)["media_id"]
+    boto3.client("s3").put_object(
+        Bucket=MEDIA_BUCKET, Key=key(media_id), Body=b"abc", ContentType="image/png"
+    )
+    event = http_event(
+        "POST",
+        f"/rooms/room-a/media/{media_id}/complete",
+        headers=auth_headers(member),
+    )
+    event["body"] = raw
+
+    res = handler(event, None)  # pyright: ignore[reportArgumentType]
+
+    assert res["statusCode"] == 200
 
 
 def test_complete_after_lost_response(member: str) -> None:
