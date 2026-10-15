@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:livekit_client/livekit_client.dart';
 import 'package:voice_intercom_api_client/api.dart'
     show TimelineEvent, TimelineEventKindEnum;
@@ -88,7 +89,22 @@ class RoomSession extends ChangeNotifier {
   final Set<String> _appliedDeletions = {};
 
   // WebRTC の初期化はアプリで1回だけ
-  static final Future<void> _webrtcReady = LiveKitClient.initialize();
+  static final Future<void> _webrtcReady = _initWebrtc();
+
+  static Future<void> _initWebrtc() async {
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      // iOS シミュレーターでは音声を開くと固まるので、デバイスの音声につながない
+      // (README の「iOS シミュレーター」)。実機では何もしない
+      try {
+        await const MethodChannel(
+          'voice_intercom/simulator_audio',
+        ).invokeMethod<bool>('detachFromDevice');
+      } catch (e) {
+        debugPrint('シミュレーターの音声の設定に失敗した: $e');
+      }
+    }
+    await LiveKitClient.initialize();
+  }
 
   /// 自分の LiveKit identity(Cognito の sub。API がトークンに入れる)
   final String myIdentity;

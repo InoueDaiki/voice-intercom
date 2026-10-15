@@ -271,11 +271,14 @@ flutter test
    adb shell pm grant jp.voiceintercom.voice_intercom android.permission.POST_NOTIFICATIONS
    ```
 
-   iOS シミュレーターでは、実行のたびに、`flutter test` の直前に権限を与えておく(入れ直しで消えることがあり、マイクのダイアログで入室が止まる)。アプリが入っていなくても与えられる。通知は `simctl privacy` の対象になく、iOS のアプリはまだ通知を使わない。
+   iOS シミュレーターでは、`flutter test` が終わるとアプリを消し、権限も消える(次の実行でマイクのダイアログが出て、入室が止まる)。一度ビルドして入れ、権限を与えてから、`--no-uninstall` を付けて流す。入れ直し(上書き)では権限は残る。`flutter test` の実行中に `simctl privacy` で権限を変えると、起動したばかりのアプリが終了させられ、`No tests ran` になる。通知は `simctl privacy` の対象になく、iOS のアプリはまだ通知を使わない。
 
    ```sh
+   flutter build ios --simulator --debug
+   xcrun simctl install <シミュレーターの ID> build/ios/iphonesimulator/Runner.app
    xcrun simctl privacy <シミュレーターの ID> grant microphone jp.voiceintercom.voiceIntercom
    xcrun simctl privacy <シミュレーターの ID> grant photos jp.voiceintercom.voiceIntercom
+   flutter test integration_test/room_flow_test.dart -d <シミュレーターの ID> --no-uninstall --dart-define=DEV_HOST=<DEV_HOST>
    ```
 
 ### 画像・動画
@@ -312,24 +315,26 @@ flutter test integration_test/media_receive_test.dart -d <シミュレーター�
 
 手順は上と同じ(`-d` にシミュレーターの ID、権限は上の `simctl privacy`)。ID は `xcrun simctl list devices available` で見る。Xcode 27 には Simulator.app が無いので、`xcrun simctl boot <ID>` で起動し、画面は `xcrun simctl io <ID> screenshot <file>.png` で見る。アプリのログは `xcrun simctl spawn <ID> log stream --style compact --predicate 'process == "Runner"'` で見る(統合テストの print は `flutter test` の出力に出る)。
 
-**音声を開くとアプリが落ちる**。入室してマイクを publish した時点で `SetProperty: RPC timeout. Apparently deadlocked. Aborting now.`(または `Start: RPC timeout`)と出て、アプリが落ちる(`flutter test` は `did not complete` になる)。iOS の WebRTC は再生だけでもマイクと一緒に開くので、入室するテストはどれも当たる。ログでは、オーディオセッションを有効にしたときに、シミュレーターがホストの入出力をまとめた仮想のデバイス(aggregate)を2回続けて作り直し、作り直す前の古いデバイスで入出力が始まると(`AudioObjectPropertiesChanged: no such object` の後に)固まる。このとき同時に `CA_UISoundClientBase`(OS の効果音)が始まっている。アプリの設定(`setMicrophoneMuteMode` を呼ばない)では避けられなかった。ホストの仮想オーディオのドライバー(このMac では `/Library/Audio/Plug-Ins/HAL/` の `MSTeamsAudioDevice.driver` と `ParrotAudioPlugin.driver`)を外し、`coreaudiod` を再起動して、ホストの音声のデバイスを内蔵のマイクとスピーカーだけにしても落ちた(2026-10-14。`media_upload_test` は3回のうち2回通り、`media_receive_test` は3回とも同じ `RPC timeout` で落ちた)。DeviceHub(Xcode 27 の Simulator.app の代わり)で画面を出して起動しても、`media_receive_test` は3回とも同じく落ちた。ドライバーも画面の有無も原因ではなく、シミュレーターの側の問題とみて、入室する確認は実機で行う。同じシミュレーターの Safari で録音のサイトを開くと、マイクの許可は出るが、音量は上がらず、録音は無音だった(macOS の「プライバシーとセキュリティ → マイク」には Xcode・DeviceHub・Simulator のどれも無く、許可を求められもしなかった)。アプリに限らず、シミュレーターでマイクが使えていない。Apple の開発者フォーラムに、iOS 17 以降のシミュレーターで同じ `AudioObjectPropertiesChanged: no such object` の後の `SetProperty: RPC timeout` の報告がある(https://developer.apple.com/forums/thread/738346 。16.4 以前と実機では起きない)。2026-10-14 には、同じ Mac で、Apple Silicon の Mac で iOS のアプリをそのまま動かす形(Mac (Designed for iPad))でも、入室で同じく `AURemoteIO::Initialize` の `RPC timeout` で落ちた。iOS 27.0 のシミュレーターでも、`LiveKitClient.initialize(bypassVoiceProcessing: true)` でエコーキャンセルを切っても同じだった。一方、Mac のふつうのプログラム(AVAudioEngine。エコーキャンセルありでも)ではマイクを使えた。iOS のアプリの音声を Mac で中継するところ(シミュレーターと Designed for iPad で共通)で固まっているとみる。シミュレーターの音声の入出力を「System」から「MacBook Air のマイク・スピーカー」に決めると、`media_receive_test` で音声の初期化を越えたのは8回のうち2回になった(System では9回のうち0回)。良くはなるが、確認には使えない。
+**音声はデバイスにつながない**。シミュレーターでは、アプリは WebRTC の音声をデバイスにつながず、マイクも再生も無音で動く(`ios/Runner/AppDelegate.swift` の `SimulatorAudioPlugin`。実機では何もしない)。入室、トラックの publish と購読、データチャネル(テキスト、字幕、画像の配信)、PTT の画面の切り替えは本物どおりに動くので、入室する統合テストはシミュレーターで通る。自分の声を Agent に届けることと、翻訳音声を聞くことは確かめられない(下の「実機で確かめること」)。
 
-**確かめた結果**(2026-10-13、iPhone 17 の iOS 26.3 と 26.4、Xcode 27.0)。
+- 理由: flutter_webrtc はシミュレーターでだけ、AVAudioEngine の ADM ではなく従来の ADM(AudioUnit の `AURemoteIO`)を使う(`FlutterWebRTCPlugin.m`)。その初期化が、シミュレーターがホストの音声を中継するところで `SetProperty: RPC timeout. Apparently deadlocked. Aborting now.`(または `Start: RPC timeout`)になり、アプリが落ちていた。ADM の前に `RTCAudioSession` を `useManualAudio = true`、`isAudioEnabled = false` にすると、ADM は音声ユニットを初期化しない(WebRTC の `AudioDeviceIOS::InitPlayOrRecord` は `canPlayOrRecord` のときだけ初期化する)。アプリは WebRTC を初期化する前に、これを呼ぶ(`lib/room/room_session.dart` の `_initWebrtc`)。
+- AVAudioEngine の ADM の機能(`setMicrophoneMuteMode`、manual rendering)は、シミュレーターでは ADM が違うので `Audio engine returned error code: -1` で失敗する。`setMicrophoneMuteMode` の失敗はログに出るだけで、既定のモードのまま動く。
+- これまでに試して効かなかったこと(2026-10-13〜15): iOS 26.3・26.4・27.0 のシミュレーター、DeviceHub で画面を出す、ホストの仮想オーディオのドライバーを外して `coreaudiod` を再起動する、`LiveKitClient.initialize(bypassVoiceProcessing: true)`、Mac (Designed for iPad)、シミュレーターの音声の入出力を MacBook Air のマイク・スピーカーに決める(8回のうち2回だけ越えた)。Apple の開発者フォーラムに、iOS 17 以降のシミュレーターで同じ `AudioObjectPropertiesChanged: no such object` の後の `RPC timeout` の報告がある(https://developer.apple.com/forums/thread/738346)。
+
+**確かめた結果**(2026-10-15、iPhone 17 の iOS 27.0、Xcode 27.0。音声をデバイスにつながない形で)。
 
 | テスト | 結果 |
 | --- | --- |
-| `media_upload_test` | マイクの権限を与えた11回のうち、通ったのは2回(1回は `setMicrophoneMuteMode` を呼ばない試し)。ほかは上の落ち方。通るときは約6〜9秒 |
-| `media_receive_test` | マイクの権限を与えた2回とも、入室で落ちる(権限を与えなかった2回は、マイクのダイアログで入室が止まる) |
-| `room_flow_test` | 入室で落ちるため流していない(Agent が OpenAI を使うので) |
-
-シミュレーターでは、`setMicrophoneMuteMode` が接続の前に `Audio engine returned error code: -1` で失敗し、publish の後の2回目も失敗する(既定のモードのまま動く)。実機で `inputMixer` になるかは下の「実機で確かめること」。
+| `media_receive_test` | 6回とも通った(約8秒) |
+| `media_upload_test` | 3回とも通った(2つで約7秒) |
+| `room_flow_test` | 通った(約32秒)。英語の話者の字幕と訳、履歴まで |
 
 **画像・動画の整え方**(入室しないので音声に当たらない)。
 
 - **HEIC → JPEG**: picker の画面はテストから操作できないので、`image_picker_ios` のソース(`FLTPHPickerSaveImageToPathOperation` の `processImage`)を読み、同じ処理(`FLTImagePickerImageUtil.m`、`FLTImagePickerMetaDataUtil.m`、`FLTImagePickerPhotoAssetUtil.m` をそのまま使う小さな確認用のコード)を iOS シミュレーター向けにビルドして `xcrun simctl spawn` で動かした。4032x3024、EXIF の向き 6 の HEIC(76KB)が、`maxWidth` / `maxHeight: 2048`、`imageQuality: 85` で JPEG(2048x1536、向き 6 のまま、156KB。品質 100 なら 241KB)になった。プラグインは先頭のバイトが JPEG・PNG・GIF でなければ JPEG にする(`imageQuality` を渡さなくても JPEG になる。HEIC のときに出る `compressing is not supported for type (null)` のログは誤りで、品質は効いている)。PHPicker が渡すのが HEIC のままか互換の JPEG かは実機で見るが、どちらでも JPEG になる。アプリの `DeviceMediaPreparer` は、その JPEG を `image/jpeg` でそのまま送り(1MB 以下なのでサムネイルなし)、HEIC のままのファイルは `image/heic` でサムネイルなしにした。
 - **動画の圧縮**(`video_compress` を使っていたころ。今の結果は上の「動画の整え方」): AVFoundation で作った HEVC の MOV(3840x2160、60fps、20秒、AAC の音声、縦向き(`preferredTransform` で 90 度)、78.3MB)を、シミュレーターの上で `DeviceMediaPreparer` に渡した。H.264 の MP4(720x1280、縦向きの画素で `preferredTransform` は回転なし、60fps、20秒)、26.9MB(10.7Mbps)、AAC の音声(48kHz、2ch)が残り、`moov` が `mdat` の前(先頭から 28 バイト目)にあった(読みながら再生できる)。圧縮は7.2秒、進み具合は70回届いた(0.09〜0.96)。サムネイルは 270x480 の縦。圧縮は Mac の符号化器を使うので、時間は実機で測る。60fps のまま 10.7Mbps なので、この調子だと 100MB は約75秒で、3分の動画は送れない(素材は動きと細かい模様が多いので、実際の動画ではもっと小さくなりうる。実機で確かめる)。
 
-**シミュレーターでは確かめられないもの**。バックグラウンドでの音声(入室で落ちるので、ホームに戻すところまで行けない。行けても、シミュレーターでは audio mode の停止や再開の振る舞いが実機と同じとは限らない)、実機のマイク・`inputMixer`・ミュート音、PushToTalk、電話の割り込み、Bluetooth とイヤホン、ロック画面、カメラ(シミュレーターにはカメラが無い)、圧縮の時間と発熱、機内モード。下の「実機で確かめること」に残す。
+**シミュレーターでは確かめられないもの**。バックグラウンドでの音声(音声をデバイスにつながないので、audio mode で裏で動き続けるかは確かめられない)、実機のマイク・`inputMixer`・ミュート音、PushToTalk、電話の割り込み、Bluetooth とイヤホン、ロック画面、カメラ(シミュレーターにはカメラが無い)、圧縮の時間と発熱、機内モード。下の「実機で確かめること」に残す。
 
 ## 実機で確かめること
 
@@ -341,7 +346,7 @@ flutter test integration_test/media_receive_test.dart -d <シミュレーター�
 - イヤホンとスピーカーの切り替え、Bluetooth のヘッドセット。
 - 画像・動画(下の「画像・動画(実機)」)。
 - 削除(統合テストはまだ無い)。2台で同じルームに入り、片方が自分のテキスト・画像・動画を長押しで消す。もう片方の表示がその場所で「削除された…」に変わるか。消した直後(訳がそろう前)のテキストは「まだ履歴に保存されていない」になり、少し待てば消せるか。片方が退室している間に消し、入り直したときに「削除された…」になっているか。消した画像の URL を開くと読めない(403)か(dev 環境で、CloudFront の無効化の後)。
-- バックグラウンドでの音声(iOS はシミュレーターの音声が落ちるので、実機で確かめる。Android も実機で一度確かめる)。2台で同じルームに入り、片方(確かめる側)を次の状態にして、もう片方が話す。
+- バックグラウンドでの音声(iOS はシミュレーターでは音声をデバイスにつながないので、実機で確かめる。Android も実機で一度確かめる)。2台で同じルームに入り、片方(確かめる側)を次の状態にして、もう片方が話す。
   1. ホームに戻す。元の音声と翻訳音声が聞こえ続けるか。前面に戻すと、裏にいた間の字幕が出ているか。
   2. 画面をロックする。1. と同じ。iOS ではロック画面に再生中の表示が出るか、Android では「入室中」の通知が出ているか。
   3. 裏に回したまま5分以上置く。切れずに聞こえ続けるか(iOS は audio mode でも、音声が途絶えるとアプリが停止されることがある)。

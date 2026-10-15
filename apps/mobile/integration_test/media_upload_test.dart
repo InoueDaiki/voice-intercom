@@ -3,6 +3,7 @@
 //
 // image_picker の画面は操作できないので、作った JPEG を RoomScreenState.uploader に直接渡す
 // (整える → uploads → 本体とサムネイルの PUT → complete は本物を通る)。
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
@@ -93,18 +94,29 @@ void main() {
     )..writeAsBytesSync(bytes);
     final progress = <double>[];
     final item = room.uploader.submit(file.path);
+    // 速い回線(シミュレーターから Mac の上の S3 など)では、ポンプの間隔の間に送り終えるので、
+    // 別のタイマーで細かく拾う
+    void sample() {
+      final p = item.progress;
+      if (item.state == OutgoingMediaState.uploading && p != null) {
+        progress.add(p);
+      }
+    }
+
+    final sampler = Timer.periodic(
+      const Duration(milliseconds: 1),
+      (_) => sample(),
+    );
     await pumpUntil(
       tester,
       () {
-        final p = item.progress;
-        if (item.state == OutgoingMediaState.uploading && p != null) {
-          progress.add(p);
-        }
+        sample();
         return !item.active;
       },
       timeout: const Duration(minutes: 3),
       reason: 'マルチパートで送り終える',
     );
+    sampler.cancel();
     expect(item.error, isNull);
     expect(item.ticket!.multipart!.partCount, 6);
     expect(item.partEtags.length, 6);
