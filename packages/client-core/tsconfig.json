@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    // DOM の型は入れない(React Native でも動くよう、ブラウザの API を直接使わない)。
+    // ブラウザと React Native の両方にあるものだけを src/host.d.ts で宣言する
+    "lib": ["ES2023"],
+    "types": [],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src", "vitest.config.ts"]
+}
