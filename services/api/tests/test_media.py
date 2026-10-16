@@ -126,8 +126,18 @@ def test_upload_unknown_room(admin: str) -> None:
 @pytest.mark.parametrize(
     "overrides",
     [
-        pytest.param({"content_type": "image/gif"}, id="content_type"),
-        pytest.param({"content_type": "video/quicktime"}, id="mov"),
+        # 形式は問わないが、MIME タイプの形でないものは断る
+        pytest.param({"content_type": "png"}, id="content_type-not-mime"),
+        pytest.param({"content_type": "text/plain; charset=utf-8"}, id="content_type-params"),
+        pytest.param({"content_type": ""}, id="content_type-empty"),
+        # ファイルにサムネイルと幅・高さは無い
+        pytest.param(
+            {"content_type": "application/pdf", "has_thumbnail": True}, id="file-thumbnail"
+        ),
+        pytest.param(
+            {"content_type": "application/pdf", "width": 10, "height": 10}, id="file-size"
+        ),
+        pytest.param({"content_type": "application/pdf", "file_name": "a" * 256}, id="name-long"),
         pytest.param({"size_bytes": 0}, id="empty"),
         pytest.param({"size_bytes": 10 * 1024**3 + 1}, id="too-large"),
         pytest.param({"width": 0, "height": 100}, id="width-zero"),
@@ -188,11 +198,13 @@ def test_complete(member: str, other_member: str) -> None:
         "content_type": "image/png",
         "url": f"{MEDIA_BASE_URL}/rooms/room-a/{media_id}/original",
         "thumbnail_url": f"{MEDIA_BASE_URL}/rooms/room-a/{media_id}/thumbnail",
+        "media_type": "image",
         "size_bytes": 4,
         # 送らなければ null
         "width": None,
         "height": None,
         "duration_ms": None,
+        "file_name": None,
     }
 
     # ルームの他のメンバーにも履歴として見える
@@ -366,3 +378,78 @@ def test_pending_upload_is_hidden_from_timeline(member: str) -> None:
     create_upload(member)
 
     assert call("GET", "/rooms/room-a/timeline", member)[1] == {"items": [], "next_before": None}
+
+
+# ファイル(画像・動画でないもの)
+
+
+def test_file_upload_is_download_only(member: str) -> None:
+    status, body = create_upload(
+        member, content_type="Application/PDF", file_name='C:\\資料\\見積 "1".pdf'
+    )
+
+    assert status == 200
+    # パスは除き、ASCII でない名前は filename* に入れる。filename の " は _ にする
+    disposition = body["content_disposition"]
+    assert disposition == (
+        "attachment; filename=\"__ _1_.pdf\"; filename*=UTF-8''%E8%A6%8B%E7%A9%8D%20%221%22.pdf"
+    )
+    # Content-Disposition も署名に含める(違うヘッダーの PUT は S3 が 403 にする)
+    _, query = signed(body["upload_url"])
+    assert "content-disposition" in query["X-Amz-SignedHeaders"][0].split(";")
+
+
+def test_image_and_video_have_no_disposition(member: str) -> None:
+    assert create_upload(member)[1]["content_disposition"] is None
+    # ブラウザが送る MOV なども動画として扱う(表示・再生する)
+    assert create_upload(member, content_type="video/quicktime")[1]["content_disposition"] is None
+
+
+def test_complete_file(member: str, other_member: str) -> None:
+    store.put_user("member-1", display_name="Taro", language="ja")
+    _, upload = create_upload(
+        member, content_type="application/zip", size_bytes=3, file_name="logs.zip"
+    )
+    media_id = upload["media_id"]
+    key = f"rooms/room-a/{media_id}/original"
+    boto3.client("s3").put_object(
+        Bucket=MEDIA_BUCKET,
+        Key=key,
+        Body=b"abc",
+        ContentType="application/zip",
+        ContentDisposition=upload["content_disposition"],
+    )
+
+    status, event = complete(member, media_id)
+
+    assert status == 200
+    assert event["media"]["media_type"] == "file"
+    assert event["media"]["content_type"] == "application/zip"
+    assert event["media"]["file_name"] == "logs.zip"
+    assert event["media"]["thumbnail_url"] is None
+    _, page = call("GET", "/rooms/room-a/timeline", other_member)
+    assert page["items"] == [event]
+
+    # 消した行は「削除されたファイル」と出せるよう、media_type を file にする
+    status, tombstone = call(
+        "DELETE", "/rooms/room-a/timeline/event", member, query={"event_id": event["event_id"]}
+    )
+    assert status == 200
+    assert tombstone["deleted"]["media_type"] == "file"
+
+
+def test_multipart_file_sets_disposition(member: str) -> None:
+    _, upload = create_upload(
+        member, content_type="application/octet-stream", size_bytes=20 * 1024**2, file_name="a.bin"
+    )
+    # マルチパートでは API が CreateMultipartUpload で付けるので、クライアントは付けない
+    assert upload["multipart"] is not None
+    assert upload["content_disposition"] is None
+
+    # CreateMultipartUpload で付けた Content-Disposition が、完了したオブジェクトに残る
+    s3 = boto3.client("s3")
+    key = "rooms/room-a/x/original"
+    upload_id = media_store.create_multipart(key, "application/octet-stream", "attachment")
+    part = s3.upload_part(Bucket=MEDIA_BUCKET, Key=key, UploadId=upload_id, PartNumber=1, Body=b"x")
+    media_store.complete_multipart(key, upload_id, [(1, part["ETag"])])
+    assert s3.head_object(Bucket=MEDIA_BUCKET, Key=key)["ContentDisposition"] == "attachment"

@@ -52,7 +52,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
   }
 }
 
-# 管理コンソール(ブラウザ)から署名付き URL で PUT するため。アプリ(ネイティブ)には CORS は効かない。
+# 管理コンソールと Web 版(ブラウザ)から署名付き URL で PUT するため。アプリ(ネイティブ)には CORS は効かない。
+# ファイルは Content-Disposition も付けて PUT する(署名に入っている)。
 # マルチパートでは、パートの PUT の応答の ETag を complete に渡すので、ブラウザから読めるようにする
 resource "aws_s3_bucket_cors_configuration" "this" {
   count  = length(var.cors_allowed_origins) > 0 ? 1 : 0
@@ -61,7 +62,7 @@ resource "aws_s3_bucket_cors_configuration" "this" {
   cors_rule {
     allowed_methods = ["PUT"]
     allowed_origins = var.cors_allowed_origins
-    allowed_headers = ["Content-Type"]
+    allowed_headers = ["Content-Type", "Content-Disposition"]
     expose_headers  = ["ETag"]
     max_age_seconds = 3600
   }

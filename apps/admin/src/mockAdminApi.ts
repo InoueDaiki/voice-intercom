@@ -78,9 +78,23 @@ function media(
   url: string,
   thumbnailUrl: string | null,
   sizeBytes: number,
+  fileName: string | null = null,
 ): TimelineMedia {
-  // API が受け付ける種類だけを content_type にする(モックの画像の中身は SVG の blob だが、表示には影響しない)
-  return { media_id: id, content_type: contentType, url, thumbnail_url: thumbnailUrl, size_bytes: sizeBytes };
+  // 種類は API と同じ決め方にする(モックの画像の中身は SVG の blob だが、表示には影響しない)
+  const mediaType = ["image/jpeg", "image/png", "image/webp", "image/heic"].includes(contentType)
+    ? "image"
+    : contentType.startsWith("video/")
+      ? "video"
+      : "file";
+  return {
+    media_id: id,
+    content_type: contentType,
+    media_type: mediaType,
+    url,
+    thumbnail_url: thumbnailUrl,
+    size_bytes: sizeBytes,
+    file_name: fileName,
+  };
 }
 
 const secondsAgo = (s: number) => new Date(Date.now() - s * 1000).toISOString();
@@ -162,7 +176,7 @@ function warehouseTimeline(): TimelineEvent[] {
       utterance_id: "utt-2", segment_index: 1, sourceId: "utt-2-1", secondsAgo: 33,
     }),
   );
-  // 画像(縮小画像あり / なし)と動画
+  // 画像(縮小画像あり / なし)、動画、ファイル
   const shelf = svgImage("#3b82f6", "B列の棚", 640, 480);
   events.push(
     event({
@@ -182,6 +196,11 @@ function warehouseTimeline(): TimelineEvent[] {
       // 再生できない空の動画。画面は「プレビューなし」になる
       media: media("media-truck", "video/mp4", blobUrl("", "video/mp4"), null, 3_481_920),
       sourceId: "media-truck", secondsAgo: 10,
+    }),
+    event({
+      room_id, kind: "media", sender_id: yamada, language: null, text: "",
+      media: media("media-doc", "application/pdf", blobUrl("%PDF-1.7", "application/pdf"), null, 254_120, "出荷指示書.pdf"),
+      sourceId: "media-doc", secondsAgo: 8,
     }),
     // 言語がわからず、訳もない発話
     event({

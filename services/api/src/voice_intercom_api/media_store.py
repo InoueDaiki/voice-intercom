@@ -56,29 +56,34 @@ def _s3() -> Any:
     )
 
 
-def presign_put(key: str, content_type: str) -> str:
+def presign_put(key: str, content_type: str, content_disposition: str | None = None) -> str:
     """PUT の署名付き URL。
 
     Content-Type を署名に含める(X-Amz-SignedHeaders に content-type が入る)。
+    content_disposition を渡せば、それも署名に含め、オブジェクトに持たせる(配信の応答に付く)。
     """
+    params = {
+        "Bucket": get_timeline_settings().media_bucket,
+        "Key": key,
+        "ContentType": content_type,
+    }
+    if content_disposition is not None:
+        params["ContentDisposition"] = content_disposition
     return _s3().generate_presigned_url(
         "put_object",
-        Params={
-            "Bucket": get_timeline_settings().media_bucket,
-            "Key": key,
-            "ContentType": content_type,
-        },
+        Params=params,
         ExpiresIn=int(UPLOAD_URL_TTL.total_seconds()),
     )
 
 
-def create_multipart(key: str, content_type: str) -> str:
+def create_multipart(key: str, content_type: str, content_disposition: str | None = None) -> str:
     """マルチパートアップロードを始め、UploadId を返す。
 
-    Content-Type はここで決まる(パートの PUT には要らない)。
+    Content-Type と Content-Disposition はここで決まる(パートの PUT には要らない)。
     """
+    extra = {} if content_disposition is None else {"ContentDisposition": content_disposition}
     res = _s3().create_multipart_upload(
-        Bucket=get_timeline_settings().media_bucket, Key=key, ContentType=content_type
+        Bucket=get_timeline_settings().media_bucket, Key=key, ContentType=content_type, **extra
     )
     return res["UploadId"]
 

@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1cvoiceintercom/v1/media.proto\x12\x10voiceintercom.v1\"\xb9\x03\n\x0cMediaMessage\x12\x19\n\x08\x65vent_id\x18\x01 \x01(\tR\x07\x65ventId\x12\'\n\x0fsender_identity\x18\x02 \x01(\tR\x0esenderIdentity\x12\x1f\n\x0boccurred_at\x18\x03 \x01(\tR\noccurredAt\x12\x19\n\x08media_id\x18\x04 \x01(\tR\x07mediaId\x12!\n\x0c\x63ontent_type\x18\x05 \x01(\tR\x0b\x63ontentType\x12\x10\n\x03url\x18\x06 \x01(\tR\x03url\x12#\n\rthumbnail_url\x18\x07 \x01(\tR\x0cthumbnailUrl\x12\x1d\n\nsize_bytes\x18\x08 \x01(\x04R\tsizeBytes\x12\x16\n\x04text\x18\t \x01(\tB\x02\x18\x01R\x04text\x12)\n\x0etext_truncated\x18\n \x01(\x08\x42\x02\x18\x01R\rtextTruncated\x12\x1e\n\x08language\x18\x0b \x01(\tB\x02\x18\x01R\x08language\x12\x14\n\x05width\x18\x0c \x01(\rR\x05width\x12\x16\n\x06height\x18\r \x01(\rR\x06height\x12\x1f\n\x0b\x64uration_ms\x18\x0e \x01(\rR\ndurationMsb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1cvoiceintercom/v1/media.proto\x12\x10voiceintercom.v1\"\xd6\x03\n\x0cMediaMessage\x12\x19\n\x08\x65vent_id\x18\x01 \x01(\tR\x07\x65ventId\x12\'\n\x0fsender_identity\x18\x02 \x01(\tR\x0esenderIdentity\x12\x1f\n\x0boccurred_at\x18\x03 \x01(\tR\noccurredAt\x12\x19\n\x08media_id\x18\x04 \x01(\tR\x07mediaId\x12!\n\x0c\x63ontent_type\x18\x05 \x01(\tR\x0b\x63ontentType\x12\x10\n\x03url\x18\x06 \x01(\tR\x03url\x12#\n\rthumbnail_url\x18\x07 \x01(\tR\x0cthumbnailUrl\x12\x1d\n\nsize_bytes\x18\x08 \x01(\x04R\tsizeBytes\x12\x16\n\x04text\x18\t \x01(\tB\x02\x18\x01R\x04text\x12)\n\x0etext_truncated\x18\n \x01(\x08\x42\x02\x18\x01R\rtextTruncated\x12\x1e\n\x08language\x18\x0b \x01(\tB\x02\x18\x01R\x08language\x12\x14\n\x05width\x18\x0c \x01(\rR\x05width\x12\x16\n\x06height\x18\r \x01(\rR\x06height\x12\x1f\n\x0b\x64uration_ms\x18\x0e \x01(\rR\ndurationMs\x12\x1b\n\tfile_name\x18\x0f \x01(\tR\x08\x66ileNameb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -38,5 +38,5 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_MEDIAMESSAGE'].fields_by_name['language']._loaded_options = None
   _globals['_MEDIAMESSAGE'].fields_by_name['language']._serialized_options = b'\030\001'
   _globals['_MEDIAMESSAGE']._serialized_start=51
-  _globals['_MEDIAMESSAGE']._serialized_end=492
+  _globals['_MEDIAMESSAGE']._serialized_end=521
 # @@protoc_insertion_point(module_scope)

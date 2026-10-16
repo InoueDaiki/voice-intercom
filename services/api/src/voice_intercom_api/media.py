@@ -1,4 +1,10 @@
-"""画像・動画のアップロードの API。
+"""画像・動画・ファイルのアップロードの API。
+
+画像(IMAGE_CONTENT_TYPES)と動画(video/*)は表示・再生し、それ以外の形式はファイルとして
+受け付ける(形式は問わない。上限は同じ 10GB)。ファイルはダウンロードだけにするため、
+Content-Disposition: attachment(元のファイル名つき)でオブジェクトを置く。署名なしの
+CloudFront の URL で配信するので、HTML や SVG をブラウザで開かせると、配信のドメインで
+任意のページを見せられてしまうため(設計メモの「ファイルの送信」)。
 
 1. アプリ(か管理コンソール)が uploads で署名付き URL をもらい、S3 に本体(とサムネイル)を
    直接 PUT する。本体が 16MB 以上ならマルチパートにし、パートの署名付き URL を parts で取って、
@@ -27,6 +33,7 @@ complete を呼べるのはアップロードした本人だけ。uploads のと
   uploads からやり直す。
 """
 
+import urllib.parse
 import uuid
 from datetime import UTC, datetime
 from http import HTTPStatus
@@ -58,6 +65,7 @@ from voice_intercom_api.timeline_models import (
     UploadPartUrl,
     UploadPartUrls,
     format_timestamp,
+    media_type_of,
 )
 
 router = Router()
@@ -90,6 +98,17 @@ def part_size_for(size_bytes: int) -> int | None:
     return max(MIN_PART_SIZE, -(-needed // _MIB) * _MIB)
 
 
+def content_disposition(file_name: str | None) -> str:
+    """ファイルをダウンロードさせる Content-Disposition。
+
+    filename は ASCII だけの代わりの名前、filename* は UTF-8 の元の名前(RFC 6266)。
+    """
+    name = file_name or "file"
+    fallback = "".join(c if 0x20 <= ord(c) < 0x7F and c not in '"\\;' else "_" for c in name)
+    encoded = urllib.parse.quote(name, safe="")
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}"
+
+
 def _conflict(message: str) -> ServiceError:
     return ServiceError(HTTPStatus.CONFLICT, message)
 
@@ -119,9 +138,11 @@ def _own_pending(room_id: str, media_id: str, user_sub: str) -> timeline_store.P
 
 @router.post(
     "/rooms/<room_id>/media/uploads",
-    summary="画像・動画をアップロードする署名付き URL を発行する(管理者かメンバー)",
+    summary="画像・動画・ファイルをアップロードする署名付き URL を発行する(管理者かメンバー)",
     description="PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と"
-    "同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。"
+    "同じにする。違うと S3 が 403 を返す。ファイル(画像・動画でないもの)は、応答の "
+    "content_disposition を Content-Disposition ヘッダーに付ける。"
+    "アップロードしたら complete を呼ぶ。"
     "size_bytes が 16MB 以上なら、upload_url は null で、multipart(パートの大きさと数)を返す。"
     "パートの署名付き URL は parts で取る。"
     "width・height・duration_ms は、送信者が測った値をそのまま履歴に入れる(API は確かめない)。",
@@ -138,8 +159,16 @@ def create_media_upload(
     expires_at = datetime.now(UTC) + media_store.UPLOAD_URL_TTL
     key = media_store.media_key(room_id, media_id)
     part_size = part_size_for(body.size_bytes)
-    # Content-Type はマルチパートを始めるときに決まる(パートの PUT には要らない)
-    upload_id = None if part_size is None else media_store.create_multipart(key, body.content_type)
+    disposition = (
+        content_disposition(body.file_name) if media_type_of(body.content_type) == "file" else None
+    )
+    # Content-Type と Content-Disposition は、マルチパートを始めるときに決まる
+    # (パートの PUT には要らない)
+    upload_id = (
+        None
+        if part_size is None
+        else media_store.create_multipart(key, body.content_type, disposition)
+    )
     timeline_store.create_pending_upload(
         room_id,
         media_id,
@@ -152,10 +181,14 @@ def create_media_upload(
         duration_ms=body.duration_ms,
         upload_id=upload_id,
         part_size=part_size,
+        file_name=body.file_name,
     )
     return MediaUpload(
         media_id=media_id,
-        upload_url=media_store.presign_put(key, body.content_type) if part_size is None else None,
+        upload_url=media_store.presign_put(key, body.content_type, disposition)
+        if part_size is None
+        else None,
+        content_disposition=disposition if part_size is None else None,
         thumbnail_upload_url=_thumbnail_url(room_id, media_id) if body.has_thumbnail else None,
         expires_at=format_timestamp(expires_at),
         multipart=None
@@ -213,7 +246,7 @@ def create_upload_part_urls(
 
 @router.post(
     "/rooms/<room_id>/media/<media_id>/complete",
-    summary="アップロードした画像・動画を履歴に保存する(アップロードした本人)",
+    summary="アップロードした画像・動画・ファイルを履歴に保存する(アップロードした本人)",
     description="本体(とサムネイル)が置かれていなければ 409。"
     "置かれた本体の大きさが uploads の size_bytes と違えば 409(マルチパートでは 410)。"
     "マルチパートなら、本文の parts に全パートの番号と ETag を入れる(完了させてから確かめる)。"

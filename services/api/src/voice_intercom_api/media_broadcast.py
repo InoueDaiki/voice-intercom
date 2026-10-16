@@ -1,4 +1,4 @@
-"""complete で履歴に保存した画像・動画を、ルームに知らせる。
+"""complete で履歴に保存した画像・動画・ファイルを、ルームに知らせる。
 
 docs/設計メモ.md の「画像・動画のルームへの配信」の B(API が送る)。
 
@@ -70,6 +70,7 @@ def build_message(event: TimelineEvent) -> MediaMessage:
         width=media.width or 0,
         height=media.height or 0,
         duration_ms=media.duration_ms or 0,
+        file_name=media.file_name or "",
     )
 
 
@@ -142,9 +143,11 @@ def broadcast(event: TimelineEvent) -> list[str] | None:
 
 
 def push_body(event: TimelineEvent, sender: User | None) -> str:
-    """push 通知の本文。「<表示名>さんが画像を送りました」(動画なら「動画を送りました」)。"""
+    """push 通知の本文。「<表示名>さんが画像を送りました」(動画、ファイルも同じ形)。"""
     media = event.media
-    what = "動画" if media is not None and media.content_type.startswith("video/") else "画像"
+    what = {"image": "画像", "video": "動画", "file": "ファイル"}[
+        media.media_type if media is not None else "image"
+    ]
     who = "誰か" if sender is None else f"{sender.display_name}さん"
     return f"{who}が{what}を送りました"
 
@@ -162,7 +165,7 @@ def notify_absent(
         body=push_body(event, sender),
         data={"type": NOTIFICATION_TYPE, "room_id": room.room_id, "event_id": event.event_id},
         timeout_s=PUSH_TIMEOUT_S,
-        label="画像・動画",
+        label="画像・動画・ファイル",
     )
 
 

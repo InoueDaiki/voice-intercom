@@ -34,6 +34,7 @@ export function mediaEvent(
     media: {
       media_id: sourceId,
       content_type: options.video ? "video/mp4" : "image/jpeg",
+      media_type: options.video ? "video" : "image",
       url: `https://media.example/rooms/r1/${sourceId}/original`,
       thumbnail_url: options.thumbnailUrl ?? null,
       size_bytes: 1234,

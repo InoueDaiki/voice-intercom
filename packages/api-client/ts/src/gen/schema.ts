@@ -94,8 +94,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 画像・動画をアップロードする署名付き URL を発行する(管理者かメンバー)
-         * @description PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。アップロードしたら complete を呼ぶ。size_bytes が 16MB 以上なら、upload_url は null で、multipart(パートの大きさと数)を返す。パートの署名付き URL は parts で取る。width・height・duration_ms は、送信者が測った値をそのまま履歴に入れる(API は確かめない)。
+         * 画像・動画・ファイルをアップロードする署名付き URL を発行する(管理者かメンバー)
+         * @description PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。ファイル(画像・動画でないもの)は、応答の content_disposition を Content-Disposition ヘッダーに付ける。アップロードしたら complete を呼ぶ。size_bytes が 16MB 以上なら、upload_url は null で、multipart(パートの大きさと数)を返す。パートの署名付き URL は parts で取る。width・height・duration_ms は、送信者が測った値をそのまま履歴に入れる(API は確かめない)。
          */
         post: operations["createMediaUpload"];
         delete?: never;
@@ -134,7 +134,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * アップロードした画像・動画を履歴に保存する(アップロードした本人)
+         * アップロードした画像・動画・ファイルを履歴に保存する(アップロードした本人)
          * @description 本体(とサムネイル)が置かれていなければ 409。置かれた本体の大きさが uploads の size_bytes と違えば 409(マルチパートでは 410)。マルチパートなら、本文の parts に全パートの番号と ETag を入れる(完了させてから確かめる)。完了できない(ETag が合わない、アップロードが取りやめられた・期限で消えた)なら 410 で、uploads からやり直す。2回目からは、最初に保存した履歴を返す。保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。1回の PUT なら本文は要らない(画像・動画には文を添えられない)。前のクライアントが送る本文(text など)は無視する。
          */
         post: operations["completeMediaUpload"];
@@ -318,9 +318,14 @@ export interface components {
         CreateMediaUploadRequest: {
             /**
              * Content Type
-             * @enum {string}
+             * @description MIME タイプ(type/subtype。小文字にそろえる)。image/jpeg、image/png、image/webp、image/heic は画像、video/* は動画、それ以外はファイルとして扱う
              */
-            content_type: "image/jpeg" | "image/png" | "image/webp" | "image/heic" | "video/mp4";
+            content_type: string;
+            /**
+             * File Name
+             * @description 元のファイル名(パスは除く)。ファイルのダウンロードの名前と表示に使う。分からなければ null
+             */
+            file_name?: string | null;
             /**
              * Size Bytes
              * @description 本体のバイト数(上限 10GB)。16MB 以上ならマルチパートになる。complete で、置かれた大きさがこれと違えば失敗にする
@@ -428,9 +433,14 @@ export interface components {
             media_id: string;
             /**
              * Upload Url
-             * @description 本体を1回で PUT する署名付き URL。Content-Type ヘッダーを content_type と同じにする。マルチパート(multipart がある)なら null
+             * @description 本体を1回で PUT する署名付き URL。Content-Type ヘッダーを content_type と同じにする(content_disposition があれば、Content-Disposition ヘッダーもその値にする)。マルチパート(multipart がある)なら null
              */
             upload_url: string | null;
+            /**
+             * Content Disposition
+             * @description ファイル(画像・動画でないもの)を upload_url に PUT するとき、Content-Disposition ヘッダーに付ける値(署名に含めてあり、違うと 403)。ダウンロードだけにするため。画像・動画とマルチパートでは null
+             */
+            content_disposition?: string | null;
             /**
              * Thumbnail Upload Url
              * @description サムネイルを PUT する署名付き URL(Content-Type は image/jpeg)。has_thumbnail が false なら null
@@ -631,9 +641,9 @@ export interface components {
             deleted_at: string;
             /**
              * Media Type
-             * @description media のときだけ、画像か動画か(「削除された画像」「削除された動画」と出す)
+             * @description media のときだけ、画像・動画・ファイルのどれか(「削除された画像」「削除された動画」「削除されたファイル」と出す)
              */
-            media_type: ("image" | "video") | null;
+            media_type: ("image" | "video" | "file") | null;
         };
         /**
          * TimelineEvent
@@ -649,7 +659,7 @@ export interface components {
             event_id: string;
             /**
              * Kind
-             * @description utterance は音声の発話(字幕の区切りごとに1件)、text はテキスト入力、media は画像・動画
+             * @description utterance は音声の発話(字幕の区切りごとに1件)、text はテキスト入力、media は画像・動画・ファイル
              * @enum {string}
              */
             kind: "utterance" | "text" | "media";
@@ -706,12 +716,18 @@ export interface components {
             media_id: string;
             /**
              * Content Type
+             * @description MIME タイプ(uploads で送られたもの)
+             */
+            content_type: string;
+            /**
+             * Media Type
+             * @description content_type から決めた種類。image と video は表示・再生し、file はダウンロードだけにする
              * @enum {string}
              */
-            content_type: "image/jpeg" | "image/png" | "image/webp" | "image/heic" | "video/mp4";
+            media_type: "image" | "video" | "file";
             /**
              * Url
-             * @description 表示・再生の URL(CloudFront)
+             * @description 表示・再生の URL(CloudFront)。file はダウンロードになる(Content-Disposition: attachment で置いてある)
              */
             url: string;
             /**
@@ -736,6 +752,11 @@ export interface components {
              * @description 動画の長さ(ミリ秒。動画のときだけ)。画像と、分からないときは null
              */
             duration_ms?: number | null;
+            /**
+             * File Name
+             * @description 元のファイル名。送られなかった行(足す前の行など)は null
+             */
+            file_name?: string | null;
         };
         /** TimelinePage */
         TimelinePage: {

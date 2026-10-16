@@ -60,12 +60,13 @@ create_bucket "$MEDIA_BUCKET"
 # 録音(Agent が書く)。匿名では読めない(.devcontainer/seaweedfs-s3.json は media だけを許している)
 create_bucket "$RECORDING_BUCKET"
 
-# 管理コンソール(ブラウザ)から署名付き URL で PUT するため。infra/modules/media と揃える
+# 管理コンソールと Web 版(ブラウザ)から署名付き URL で PUT するため。infra/modules/media と揃える
 aws s3api put-bucket-cors --bucket "$MEDIA_BUCKET" --cors-configuration '{
   "CORSRules": [{
     "AllowedMethods": ["PUT"],
-    "AllowedOrigins": ["http://localhost:5173"],
-    "AllowedHeaders": ["Content-Type"],
+    "AllowedOrigins": ["http://localhost:5173", "http://localhost:5174"],
+    "AllowedHeaders": ["Content-Type", "Content-Disposition"],
+    "ExposeHeaders": ["ETag"],
     "MaxAgeSeconds": 3600
   }]
 }'

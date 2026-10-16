@@ -84,13 +84,19 @@ def upload(
     room_id: str = "room-m",
     has_thumbnail: bool = False,
     complete_body: Any = None,
+    file_name: str | None = None,
     **dimensions: int,
 ) -> tuple[int, Any]:
     _, created = call(
         "POST",
         f"/rooms/{room_id}/media/uploads",
         token,
-        {"content_type": content_type, "size_bytes": 3, "has_thumbnail": has_thumbnail}
+        {
+            "content_type": content_type,
+            "size_bytes": 3,
+            "has_thumbnail": has_thumbnail,
+            "file_name": file_name,
+        }
         | dimensions,
     )
     media_id = created["media_id"]
@@ -320,6 +326,19 @@ def test_push_body_for_video_and_unknown_sender(
 
     assert push.calls[0]["body"] == "誰かが動画を送りました"
     assert push.calls[0]["user_ids"] == ["member-1", "member-3", "member-4"]
+
+
+def test_file_message_and_push(make_token: Token, lk: FakeLiveKit, push: FakeNotify) -> None:
+    store.put_user("member-1", display_name="太郎", language="ja")
+    token = make_token(sub="member-1", **{"cognito:groups": []})
+    lk.participants = [("member-2", STANDARD)]
+
+    upload(token, content_type="application/pdf", file_name="図面.pdf")
+
+    message = decode(lk.sent[0])
+    assert message.content_type == "application/pdf"
+    assert message.file_name == "図面.pdf"
+    assert push.calls[0]["body"] == "太郎さんがファイルを送りました"
 
 
 def test_admin_upload_pushes_to_all_members(

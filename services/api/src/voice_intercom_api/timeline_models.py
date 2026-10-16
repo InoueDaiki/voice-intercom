@@ -3,6 +3,8 @@
 ルームとユーザーのモデル(models.py)と分けてある。
 """
 
+import re
+import unicodedata
 from datetime import UTC, datetime
 from typing import Annotated, Literal, Self
 
@@ -10,9 +12,72 @@ from pydantic import AfterValidator, BaseModel, Field, model_validator
 
 from voice_intercom_api.models import Language
 
-# 画像・動画の Content-Type。サムネイルは image/jpeg に決めてある
-MediaContentType = Literal["image/jpeg", "image/png", "image/webp", "image/heic", "video/mp4"]
+# 画像として扱う Content-Type(アプリが表示できる形式)。サムネイルは image/jpeg に決めてある
+IMAGE_CONTENT_TYPES: frozenset[str] = frozenset(
+    {"image/jpeg", "image/png", "image/webp", "image/heic"}
+)
 THUMBNAIL_CONTENT_TYPE = "image/jpeg"
+
+# 送られたものの種類。image は IMAGE_CONTENT_TYPES、video は video/*、それ以外はすべて file
+# (形式を問わず受け付け、ダウンロードだけにする。設計メモの「ファイルの送信」)
+MediaType = Literal["image", "video", "file"]
+
+
+def media_type_of(content_type: str) -> MediaType:
+    if content_type in IMAGE_CONTENT_TYPES:
+        return "image"
+    if content_type.startswith("video/"):
+        return "video"
+    return "file"
+
+
+# MIME タイプ(type/subtype。パラメーターは付けない)。RFC 6838 の名前に使える文字だけ
+_MIME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$")
+
+
+def _normalize_content_type(value: str) -> str:
+    lowered = value.strip().lower()
+    if not _MIME_PATTERN.fullmatch(lowered):
+        raise ValueError("MIME タイプ(type/subtype)ではない")
+    return lowered
+
+
+MediaContentType = Annotated[
+    str,
+    AfterValidator(_normalize_content_type),
+    Field(
+        max_length=255,
+        description="MIME タイプ(type/subtype。小文字にそろえる)。image/jpeg、image/png、"
+        "image/webp、image/heic は画像、video/* は動画、それ以外はファイルとして扱う",
+    ),
+]
+
+# ファイル名の上限(文字数)。多くのファイルシステムの上限(255 バイト)より緩いが、表示と
+# Content-Disposition に使うだけなので文字数で数える
+MAX_FILE_NAME_LENGTH = 255
+
+
+def _normalize_file_name(value: str | None) -> str | None:
+    """パスを除いた名前だけにし、制御文字を除く。空になれば None。"""
+    if value is None:
+        return None
+    name = re.split(r"[/\\]", value)[-1]
+    name = "".join(c for c in name if unicodedata.category(c)[0] != "C").strip()
+    if name in ("", ".", ".."):
+        return None
+    if len(name) > MAX_FILE_NAME_LENGTH:
+        raise ValueError(f"ファイル名は {MAX_FILE_NAME_LENGTH} 文字まで")
+    return name
+
+
+FileName = Annotated[
+    str | None,
+    AfterValidator(_normalize_file_name),
+    Field(
+        description="元のファイル名(パスは除く)。ファイルのダウンロードの名前と表示に使う。"
+        "分からなければ null"
+    ),
+]
 
 # 本体の上限(10GB)。大きいものはマルチパートで上げる(media.py)
 MAX_MEDIA_BYTES = 10 * 1024 * 1024 * 1024
@@ -97,8 +162,9 @@ class TimelineDeletion(BaseModel):
     """消した行の印(墓石)。消した行は本文・訳・URL を返さず、これだけを持つ。"""
 
     deleted_at: str = Field(description="消した時刻。ISO 8601(UTC、ミリ秒まで)")
-    media_type: Literal["image", "video"] | None = Field(
-        description="media のときだけ、画像か動画か(「削除された画像」「削除された動画」と出す)"
+    media_type: MediaType | None = Field(
+        description="media のときだけ、画像・動画・ファイルのどれか"
+        "(「削除された画像」「削除された動画」「削除されたファイル」と出す)"
     )
 
 
@@ -132,14 +198,24 @@ MediaDurationMs = Annotated[
 
 class TimelineMedia(BaseModel):
     media_id: str
-    content_type: MediaContentType
-    url: str = Field(description="表示・再生の URL(CloudFront)")
+    content_type: str = Field(description="MIME タイプ(uploads で送られたもの)")
+    media_type: MediaType = Field(
+        description="content_type から決めた種類。image と video は表示・再生し、"
+        "file はダウンロードだけにする"
+    )
+    url: str = Field(
+        description="表示・再生の URL(CloudFront)。file はダウンロードになる"
+        "(Content-Disposition: attachment で置いてある)"
+    )
     thumbnail_url: str | None = Field(description="サムネイルの URL。なければ null")
     size_bytes: int
     # 足す前に保存した履歴には無いので、どれも null がありうる
     width: MediaWidth = None
     height: MediaHeight = None
     duration_ms: MediaDurationMs = None
+    file_name: str | None = Field(
+        default=None, description="元のファイル名。送られなかった行(足す前の行など)は null"
+    )
 
 
 class TimelineEvent(BaseModel):
@@ -152,7 +228,7 @@ class TimelineEvent(BaseModel):
     )
     kind: TimelineKind = Field(
         description="utterance は音声の発話(字幕の区切りごとに1件)、text はテキスト入力、"
-        "media は画像・動画"
+        "media は画像・動画・ファイル"
     )
     sender_id: SenderId
     occurred_at: str = Field(description="ISO 8601(UTC、ミリ秒まで。例 2026-10-10T00:00:00.000Z)")
@@ -202,6 +278,7 @@ class PutTimelineEventRequest(BaseModel):
 
 class CreateMediaUploadRequest(BaseModel):
     content_type: MediaContentType
+    file_name: FileName = None
     size_bytes: int = Field(
         gt=0,
         le=MAX_MEDIA_BYTES,
@@ -221,8 +298,11 @@ class CreateMediaUploadRequest(BaseModel):
     def _check_dimensions(self) -> Self:
         if (self.width is None) != (self.height is None):
             raise ValueError("width と height は両方送るか、両方送らない")
-        if self.duration_ms is not None and not self.content_type.startswith("video/"):
+        media_type = media_type_of(self.content_type)
+        if self.duration_ms is not None and media_type != "video":
             raise ValueError("duration_ms は動画のときだけ")
+        if media_type == "file" and (self.has_thumbnail or self.width is not None):
+            raise ValueError("サムネイルと width・height は画像・動画のときだけ")
         return self
 
 
@@ -240,7 +320,14 @@ class MediaUpload(BaseModel):
     media_id: str
     upload_url: str | None = Field(
         description="本体を1回で PUT する署名付き URL。Content-Type ヘッダーを content_type と"
-        "同じにする。マルチパート(multipart がある)なら null"
+        "同じにする(content_disposition があれば、Content-Disposition ヘッダーもその値にする)。"
+        "マルチパート(multipart がある)なら null"
+    )
+    content_disposition: str | None = Field(
+        default=None,
+        description="ファイル(画像・動画でないもの)を upload_url に PUT するとき、"
+        "Content-Disposition ヘッダーに付ける値(署名に含めてあり、違うと 403)。"
+        "ダウンロードだけにするため。画像・動画とマルチパートでは null",
     )
     thumbnail_upload_url: str | None = Field(
         description="サムネイルを PUT する署名付き URL(Content-Type は image/jpeg)。"

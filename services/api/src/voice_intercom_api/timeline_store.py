@@ -51,6 +51,7 @@ from voice_intercom_api.timeline_models import (
     TimelineDeletion,
     TimelineEvent,
     TimelineMedia,
+    media_type_of,
 )
 
 # 仮の行を残す長さ。署名付き URL の期限(1時間)より十分長くする。マルチパートの complete も
@@ -103,6 +104,7 @@ def _to_event(item: dict[str, Any]) -> TimelineEvent:
         else TimelineMedia(
             media_id=media["media_id"],
             content_type=media["content_type"],
+            media_type=media_type_of(media["content_type"]),
             url=media_store.public_url(media_store.media_key(item["room_id"], media["media_id"])),
             thumbnail_url=media_store.public_url(
                 media_store.thumbnail_key(item["room_id"], media["media_id"])
@@ -113,6 +115,7 @@ def _to_event(item: dict[str, Any]) -> TimelineEvent:
             width=_optional_int(media.get("width")),
             height=_optional_int(media.get("height")),
             duration_ms=_optional_int(media.get("duration_ms")),
+            file_name=media.get("file_name"),
         ),
         message_id=item.get("message_id"),
     )
@@ -123,7 +126,7 @@ def _to_tombstone(item: dict[str, Any], deleted_at: str) -> TimelineEvent:
     media = item.get("media")
     media_type = None
     if media is not None:
-        media_type = "video" if str(media.get("content_type", "")).startswith("video/") else "image"
+        media_type = media_type_of(str(media.get("content_type", "")))
     return TimelineEvent(
         room_id=item["room_id"],
         event_id=item["event_id"],
@@ -284,6 +287,7 @@ class PendingUpload:
     # マルチパートのときだけ
     upload_id: str | None = None
     part_size: int | None = None
+    file_name: str | None = None
 
     @property
     def part_count(self) -> int | None:
@@ -309,6 +313,7 @@ def create_pending_upload(
     duration_ms: int | None = None,
     upload_id: str | None = None,
     part_size: int | None = None,
+    file_name: str | None = None,
 ) -> None:
     now = datetime.now(UTC)
     _timeline().put_item(
@@ -324,6 +329,7 @@ def create_pending_upload(
                 "duration_ms": duration_ms,
                 "upload_id": upload_id,
                 "part_size": part_size,
+                "file_name": file_name,
                 "created_at": store.now(),
                 TTL_ATTRIBUTE: int((now + PENDING_UPLOAD_TTL).timestamp()),
             }
@@ -348,6 +354,7 @@ def get_pending_upload(room_id: str, media_id: str) -> PendingUpload | None:
         duration_ms=_optional_int(item.get("duration_ms")),
         upload_id=item.get("upload_id"),
         part_size=_optional_int(item.get("part_size")),
+        file_name=item.get("file_name"),
     )
 
 
@@ -384,6 +391,7 @@ def complete_upload(pending: PendingUpload, *, sender_id: str, occurred_at: str)
                     "width": pending.width,
                     "height": pending.height,
                     "duration_ms": pending.duration_ms,
+                    "file_name": pending.file_name,
                 }
             ),
         }

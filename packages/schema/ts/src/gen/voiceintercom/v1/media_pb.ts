@@ -10,10 +10,10 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file voiceintercom/v1/media.proto.
  */
 export const file_voiceintercom_v1_media: GenFile = /*@__PURE__*/
-  fileDesc("Chx2b2ljZWludGVyY29tL3YxL21lZGlhLnByb3RvEhB2b2ljZWludGVyY29tLnYxIqYCCgxNZWRpYU1lc3NhZ2USEAoIZXZlbnRfaWQYASABKAkSFwoPc2VuZGVyX2lkZW50aXR5GAIgASgJEhMKC29jY3VycmVkX2F0GAMgASgJEhAKCG1lZGlhX2lkGAQgASgJEhQKDGNvbnRlbnRfdHlwZRgFIAEoCRILCgN1cmwYBiABKAkSFQoNdGh1bWJuYWlsX3VybBgHIAEoCRISCgpzaXplX2J5dGVzGAggASgEEhAKBHRleHQYCSABKAlCAhgBEhoKDnRleHRfdHJ1bmNhdGVkGAogASgIQgIYARIUCghsYW5ndWFnZRgLIAEoCUICGAESDQoFd2lkdGgYDCABKA0SDgoGaGVpZ2h0GA0gASgNEhMKC2R1cmF0aW9uX21zGA4gASgNYgZwcm90bzM");
+  fileDesc("Chx2b2ljZWludGVyY29tL3YxL21lZGlhLnByb3RvEhB2b2ljZWludGVyY29tLnYxIrkCCgxNZWRpYU1lc3NhZ2USEAoIZXZlbnRfaWQYASABKAkSFwoPc2VuZGVyX2lkZW50aXR5GAIgASgJEhMKC29jY3VycmVkX2F0GAMgASgJEhAKCG1lZGlhX2lkGAQgASgJEhQKDGNvbnRlbnRfdHlwZRgFIAEoCRILCgN1cmwYBiABKAkSFQoNdGh1bWJuYWlsX3VybBgHIAEoCRISCgpzaXplX2J5dGVzGAggASgEEhAKBHRleHQYCSABKAlCAhgBEhoKDnRleHRfdHJ1bmNhdGVkGAogASgIQgIYARIUCghsYW5ndWFnZRgLIAEoCUICGAESDQoFd2lkdGgYDCABKA0SDgoGaGVpZ2h0GA0gASgNEhMKC2R1cmF0aW9uX21zGA4gASgNEhEKCWZpbGVfbmFtZRgPIAEoCWIGcHJvdG8z");
 
 /**
- * 画像・動画。API が complete(POST /rooms/{room_id}/media/{media_id}/complete)で履歴に
+ * 画像・動画・ファイル。API が complete(POST /rooms/{room_id}/media/{media_id}/complete)で履歴に
  * 保存した後に、LiveKit の Server API(RoomService.SendData)からデータチャネル
  * (topic は "media"、reliable)でルームの全員に配信する。
  *
@@ -56,14 +56,15 @@ export type MediaMessage = Message<"voiceintercom.v1.MediaMessage"> & {
   mediaId: string;
 
   /**
-   * MIME タイプ(image/jpeg、image/png、image/webp、image/heic、video/mp4)
+   * MIME タイプ。image/jpeg、image/png、image/webp、image/heic は画像、video/* は動画、
+   * それ以外はファイル(ダウンロードだけ)。履歴の media.media_type と同じ決め方
    *
    * @generated from field: string content_type = 5;
    */
   contentType: string;
 
   /**
-   * 表示・再生の URL(CloudFront)
+   * 表示・再生の URL(CloudFront)。ファイルはダウンロードになる
    *
    * @generated from field: string url = 6;
    */
@@ -128,6 +129,13 @@ export type MediaMessage = Message<"voiceintercom.v1.MediaMessage"> & {
    * @generated from field: uint32 duration_ms = 14;
    */
   durationMs: number;
+
+  /**
+   * 元のファイル名(パスは除く)。分からなければ空
+   *
+   * @generated from field: string file_name = 15;
+   */
+  fileName: string;
 };
 
 /**

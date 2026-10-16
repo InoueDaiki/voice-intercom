@@ -8,7 +8,7 @@ import { errorMessage, formatBytes, formatTime, languageLabel } from "../rooms.t
 const KIND_LABELS: Record<TimelineKind, string> = {
   utterance: "音声",
   text: "テキスト",
-  media: "画像・動画",
+  media: "画像・動画・ファイル",
 };
 
 // 言語の絞り込みで「原文の言語が不明(null)」を選ぶときの値
@@ -243,17 +243,28 @@ function TimelineEntry({ events, sender, usersPending }: EntryProps) {
 }
 
 // 画像は縮小画像(なければ本体)を出し、クリックで本体を開く。動画はその場で再生する。
+// ファイルは名前とダウンロードのリンクだけを出す(配信もダウンロードだけにしてある)。
 // 読み込めないときは「プレビューなし」にして、本体へのリンクだけを残す
 function MediaView({ media }: { media: TimelineMedia }) {
   const [failed, setFailed] = useState(false);
-  const isImage = media.content_type.startsWith("image/");
-  const isVideo = media.content_type.startsWith("video/");
+  const isImage = media.media_type === "image";
+  const isVideo = media.media_type === "video";
   const info = (
     <span className="muted">
       {media.content_type}、{formatBytes(media.size_bytes)}
     </span>
   );
 
+  if (media.media_type === "file") {
+    return (
+      <div className="media">
+        <a href={media.url} download={media.file_name ?? true}>
+          {media.file_name ?? "ファイル"}
+        </a>{" "}
+        {info}
+      </div>
+    );
+  }
   if (failed || (!isImage && !isVideo)) {
     return (
       <div className="media">
