@@ -135,7 +135,7 @@ body {
 
 .room {
   display: grid;
-  grid-template-rows: auto auto auto auto 1fr auto auto;
+  grid-template-rows: auto auto auto auto 1fr auto auto auto;
   gap: 0.5rem;
   height: 100%;
   max-width: 50rem;
@@ -227,11 +227,46 @@ body {
   opacity: 0.6;
 }
 
+/* ファイルを落とせることを示す */
+.room.dragging {
+  outline: 2px dashed royalblue;
+  outline-offset: 4px;
+}
+
+/* タイムラインの上端(読み込みの状態) */
+.feed-edge {
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.media-box {
+  position: relative;
+  width: fit-content;
+}
+
 .media {
+  display: block;
   max-width: 240px;
   max-height: 240px;
   border: 1px solid var(--border);
   border-radius: 4px;
+  object-fit: cover;
+}
+
+.duration {
+  position: absolute;
+  right: 0.3rem;
+  bottom: 0.3rem;
+  padding: 0 0.3rem;
+  border-radius: 3px;
+  background: rgb(0 0 0 / 60%);
+  color: white;
+  font-size: 0.75rem;
+  pointer-events: none;
+}
+
+.file {
+  word-break: break-all;
 }
 
 .outgoing {
@@ -285,8 +320,16 @@ body {
 
 .text-form {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto 1fr auto;
   gap: 0.5rem;
+}
+
+.attach {
+  font-size: 1.2rem;
+}
+
+.outgoing progress {
+  width: 6rem;
 }
 
 .text-form textarea {

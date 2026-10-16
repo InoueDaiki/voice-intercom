@@ -72,9 +72,14 @@ class FakeBackend implements MediaUploadBackend<string> {
     this.maybeFail("uploads");
     const id = `media${++this.tickets}`;
     const size = this.partSize;
+    // API と同じ決め方(画像4種と video/* 以外はファイル)
+    const isFile =
+      !["image/jpeg", "image/png", "image/webp", "image/heic"].includes(request.content_type) &&
+      !request.content_type.startsWith("video/");
     return {
       media_id: id,
       upload_url: size === undefined ? `https://s3.example/${id}/original` : null,
+      content_disposition: isFile && size === undefined ? `attachment; filename="${request.file_name}"` : null,
       thumbnail_upload_url: request.has_thumbnail ? `https://s3.example/${id}/thumbnail` : null,
       expires_at: this.expiresAt,
       multipart: size === undefined ? null : { part_size: size, part_count: Math.ceil(request.size_bytes / size) },
@@ -97,11 +102,19 @@ class FakeBackend implements MediaUploadBackend<string> {
   async putFile(
     url: string,
     _file: string,
-    options: { offset: number; length: number; contentType: string | undefined; onProgress?: (sent: number) => void },
+    options: {
+      offset: number;
+      length: number;
+      contentType: string | undefined;
+      contentDisposition?: string;
+      onProgress?: (sent: number) => void;
+    },
   ): Promise<string | undefined> {
     const part = /[?&]partNumber=(\d+)/.exec(url)?.[1] ?? null;
     if (part === null) {
-      this.calls.push(`put ${url} ${options.contentType}`);
+      this.calls.push(
+        `put ${url} ${options.contentType}${options.contentDisposition ? ` (${options.contentDisposition})` : ""}`,
+      );
       options.onProgress?.(options.length);
       this.maybeFail("put");
       return '"single"';
@@ -334,12 +347,39 @@ test("送れない形式・大きさはやり直させない", async () => {
   expect(uploader.items).toEqual([]);
 });
 
-test("API が受け付けない形式は、uploads の前に止めてやり直させない", async () => {
-  const gif = new FakePreparer();
-  gif.prepare = async (source) => ({ file: source, contentType: "image/gif", sizeBytes: 10, isVideo: false });
-  preparer = gif;
+test("画像・動画でないものはファイルとして、名前と Content-Disposition を付けて上げる", async () => {
+  const files = new FakePreparer();
+  files.prepare = async (source) => ({
+    file: source,
+    contentType: "image/gif",
+    fileName: "anim.gif",
+    sizeBytes: 10,
+    isVideo: false,
+  });
+  preparer = files;
   uploader = makeUploader();
-  const item = uploader.submit("/tmp/a.gif");
+  const item = uploader.submit("/tmp/anim.gif");
+  await settle();
+  expect(item.state).toBe("done");
+  expect(backend.requests[0]).toMatchObject({ content_type: "image/gif", file_name: "anim.gif", has_thumbnail: false });
+  expect(backend.calls).toEqual([
+    "uploads",
+    'put https://s3.example/media1/original image/gif (attachment; filename="anim.gif")',
+    "complete media1",
+  ]);
+});
+
+test("10GB を超えるものは、uploads の前に止めてやり直させない", async () => {
+  const huge = new FakePreparer();
+  huge.prepare = async (source) => ({
+    file: source,
+    contentType: "application/zip",
+    sizeBytes: 10 * 1024 ** 3 + 1,
+    isVideo: false,
+  });
+  preparer = huge;
+  uploader = makeUploader();
+  const item = uploader.submit("/tmp/a.zip");
   await settle();
   expect(item.state).toBe("failed");
   expect(item.retryable).toBe(false);

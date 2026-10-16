@@ -4,7 +4,6 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import type { TimelineEvent } from "../api.ts";
 import { mediaEvent, messageFor, textEvent } from "../testing/fixtures.ts";
-import { MediaFeed } from "./mediaFeed.ts";
 import { MediaReceiver } from "./mediaReceiver.ts";
 
 // 履歴の代わり。rows を返し、呼ばれた回数を数える
@@ -32,8 +31,25 @@ function gate(): { promise: Promise<void>; open: () => void } {
   return { promise, open };
 }
 
+// 確かめた行の受け皿(event_id で重ねない)
+class Feed {
+  private readonly rows = new Map<string, TimelineEvent>();
+  get items(): TimelineEvent[] {
+    return [...this.rows.values()].sort((a, b) => (a.event_id < b.event_id ? -1 : 1));
+  }
+  contains(id: string): boolean {
+    return this.rows.has(id);
+  }
+  add(row: TimelineEvent): void {
+    this.rows.set(row.event_id, row);
+  }
+  addAll(rows: TimelineEvent[]): void {
+    rows.forEach((r) => this.add(r));
+  }
+}
+
 let timeline: FakeTimeline;
-let feed: MediaFeed;
+let feed: Feed;
 let receiver: MediaReceiver;
 
 const elapse = (ms: number) => vi.advanceTimersByTimeAsync(ms);
@@ -43,7 +59,7 @@ beforeEach(() => {
   vi.spyOn(console, "info").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
   timeline = new FakeTimeline();
-  feed = new MediaFeed();
+  feed = new Feed();
   receiver = new MediaReceiver({
     fetchRecent: timeline.fetch,
     onConfirmed: (e) => feed.addAll(e),

@@ -243,9 +243,9 @@ SSM の値を変えたときは、新しいタスクでないと読み直さな�
 | `GET /rooms/{room_id}/timeline/event?event_id=...` | 履歴の1件(強い整合の読み取り)。消した行は墓石(`deleted` 付き)で返す。無ければ 404 | 管理者、メンバー |
 | `DELETE /rooms/{room_id}/timeline/event?event_id=...` | 送ったテキスト入力か画像・動画を消す。行は残して墓石にし(`deleted` を付け、`text`・`translations`・`media` は空)、2回目からは同じ墓石を返す。今ルームにいる人へデータチャネル(topic `deletion`)で知らせ、画像・動画なら S3 の本体とサムネイルを消して CloudFront のキャッシュを無効にする。他人の行と音声の発話は 403 | 送った本人 |
 | `PUT /rooms/{room_id}/timeline/{source_id}` | 発話(`utterance`、字幕の区切りごと)かテキスト入力(`text`。アプリが振った `message_id` も持つ)を履歴に保存する。`event_id` は `<occurred_at>#<source_id>` で、同じなら置き換える(再送しても1件)。消した行(墓石)は置き換えず、墓石を返す | Agent |
-| `POST /rooms/{room_id}/media/uploads` | 画像・動画を S3 に PUT する署名付き URL(本体と、`has_thumbnail` ならサムネイル)。期限は1時間。`size_bytes` は 10GB まで。16MB 以上ならマルチパートにし、`upload_url` の代わりに `multipart`(`part_size`・`part_count`)を返す。送信者が測った `width`・`height`(1〜65535、両方か無し)と、動画なら `duration_ms`(1〜86,400,000)を任意で送り、履歴に入れる | 管理者、メンバー |
+| `POST /rooms/{room_id}/media/uploads` | 画像・動画・ファイルを S3 に PUT する署名付き URL(本体と、`has_thumbnail` ならサムネイル)。`content_type` は MIME タイプなら何でもよく、画像4種は画像、`video/*` は動画、それ以外はファイル(`file_name` も送る)。ファイルは `content_disposition` も返す。期限は1時間。`size_bytes` は 10GB まで。16MB 以上ならマルチパートにし、`upload_url` の代わりに `multipart`(`part_size`・`part_count`)を返す。送信者が測った `width`・`height`(1〜65535、両方か無し)と、動画なら `duration_ms`(1〜86,400,000)を任意で送り、履歴に入れる | 管理者、メンバー |
 | `POST /rooms/{room_id}/media/{media_id}/parts` | マルチパートのパートを PUT する署名付き URL(`part_numbers` で 100 個まで、期限1時間。`thumbnail: true` ならサムネイルの URL も取り直す)。マルチパートでない・保存した後は 409 | アップロードした本人 |
-| `POST /rooms/{room_id}/media/{media_id}/complete` | 1回の PUT なら本文なし。マルチパートなら `parts`(全パートの `part_number` と `etag`)を送り、API が完了させる。アップロードした画像・動画を履歴(`media`)に保存し、今ルームにいる人へデータチャネル(topic `media`)で配信する。最初の complete では、ルームにいないメンバーに push 通知も送る。本体かサムネイルがまだ置かれていない、大きさが申告と違えば 409。マルチパートを完了できなければ 410(uploads からやり直す)。2回目からは同じ履歴を返し、配信だけをやり直す | アップロードした本人 |
+| `POST /rooms/{room_id}/media/{media_id}/complete` | 1回の PUT なら本文なし。マルチパートなら `parts`(全パートの `part_number` と `etag`)を送り、API が完了させる。アップロードした画像・動画・ファイルを履歴(`media`)に保存し、今ルームにいる人へデータチャネル(topic `media`)で配信する。最初の complete では、ルームにいないメンバーに push 通知も送る。本体かサムネイルがまだ置かれていない、大きさが申告と違えば 409。マルチパートを完了できなければ 410(uploads からやり直す)。2回目からは同じ履歴を返し、配信だけをやり直す | アップロードした本人 |
 | `POST /rooms/{room_id}/notifications/speaking` | 誰かが話し始めたことを push 通知する(`{speaker_id, present_ids}`)。ルームのメンバーから話者と `present_ids` を除いた人に送り、`{sent, skipped}` を返す。同じルーム × 同じ受け手には `NOTIFY_INTERVAL_S`(既定 300 秒。テキスト・画像・動画の通知と共通)に1回まで。ルームがなければ 404。送信に失敗しても 500 にせず `sent: 0` | Agent |
 | `POST /rooms/{room_id}/notifications/text` | テキスト入力が届いたことを push 通知する(`{sender_id, present_ids, text}`)。本文は「<表示名>さん: <テキストの先頭50文字>」。宛先・間引き・応答は `notifications/speaking` と同じ | Agent |
 
@@ -253,12 +253,16 @@ SSM の値を変えたときは、新しいタスクでないと読み直さな�
 
 Agent は client credentials のトークン(スコープ `voice-intercom/agent`)で呼ぶ。Agent のトークンは利用者向けのエンドポイントでは 403、`PUT .../timeline/...` と `POST .../notifications/...` は利用者のトークンでは 403 になる。
 
-画像・動画のアップロード:
+画像・動画・ファイルのアップロード:
 
-1. `POST .../media/uploads` に `content_type`(`image/jpeg`、`image/png`、`image/webp`、`image/heic`、`video/mp4`)と `size_bytes`(と、測れれば `width`・`height`・`duration_ms`)を送り、`upload_url`(16MB 以上なら `multipart`)をもらう。
-2. `upload_url` に本体を PUT する。**Content-Type ヘッダーを `content_type` と同じにする**(署名に含めてあり、違うと S3 も SeaweedFS も 403)。サムネイルは `thumbnail_upload_url` に `image/jpeg` で PUT する。
+1. `POST .../media/uploads` に `content_type`(MIME タイプ)と `size_bytes`、ファイルなら `file_name`(と、画像・動画で測れれば `width`・`height`・`duration_ms`)を送り、`upload_url`(16MB 以上なら `multipart`)をもらう。
+2. `upload_url` に本体を PUT する。**Content-Type ヘッダーを `content_type` と同じにする**(署名に含めてあり、違うと S3 も SeaweedFS も 403)。**ファイルは Content-Disposition ヘッダーを応答の `content_disposition` にする**(これも署名に入っている)。サムネイルは `thumbnail_upload_url` に `image/jpeg` で PUT する。
    - マルチパートなら、`POST .../media/{media_id}/parts` でパートの URL を取り、パート n(ファイルの `(n-1)*part_size` バイト目から `part_size` バイト。最後は残り)を PUT する。Content-Type は要らない。応答の `ETag` ヘッダーを覚えておく。パートは並べて送ってよく、失敗したパートは同じ番号で送り直せばよい。
 3. `POST .../media/{media_id}/complete` を呼ぶ(マルチパートなら `parts` に全パートの番号と ETag)。履歴の `media.url`(CloudFront)で表示・再生する。
+
+- **種類(`media.media_type`)**: `image/jpeg`、`image/png`、`image/webp`、`image/heic` は `image`、`video/*` は `video`(ブラウザが送る MOV なども)、それ以外はすべて `file`。形式は問わず、上限は同じ 10GB。GIF も `file` になる(アプリが表示できる形式だけを画像にする)。
+- **ファイルはダウンロードだけ**: `Content-Disposition: attachment; filename="<ASCII の代わりの名前>"; filename*=UTF-8''<元の名前>` でオブジェクトを置く(1回の PUT は署名に含め、マルチパートは API が CreateMultipartUpload で付ける)。CloudFront は署名なしで配信するので、HTML や SVG をブラウザで開かせると、配信のドメインで任意のページを見せられてしまうため。ウイルス検査はしていない(設計メモの「ファイルの送信」)。
+- **ファイル名**: `file_name` はパスを除いた名前だけにし、制御文字を除く(255 文字まで)。履歴の `media.file_name` と `MediaMessage.file_name` に入る。ファイルにはサムネイルと幅・高さを付けられない(422)。
 
 - 画像・動画には文を添えられない(翻訳などを考えないため。設計メモの「画像・動画のルームへの配信」)。前に受け付けていた complete の `text` は、送られても無視する(Pydantic の既定で知らない項目を捨てる。REST API は未リリースだが、作りかけのクライアントが 422 にならないように)。履歴の media の行は `text` が常に空、`language` が常に null で、前に文を添えて保存した行も読むときに空にする。
 - `width`・`height`・`duration_ms` は、送信者のアプリが整えた後の本体で測った値(向きを反映した後)。API は中身を読んで確かめず、範囲だけを確かめる。`duration_ms` は動画のときだけ。履歴の `media` にそのまま入り、送らなかった行(足す前の行、管理コンソールから上げたもの)は null。
@@ -398,7 +402,7 @@ result = notify.send_to_users(
 - API がなくても画面を確かめられるよう、管理 API(ルーム、ユーザー、履歴)のモックがある。`VITE_API_MOCK=1 mise run admin` で起動すると、メモリ上のデータで応答する(ヘッダーに「モック API」と出る)。ログインは通常どおり模擬 OIDC を使う。
   - データは再読み込みで初期値に戻る。中身は `apps/admin/src/mockAdminApi.ts`。
   - エラーの表示は次で確かめられる。既にある ID でルームを作る(409)、ルーム `forbidden` を開く(403)、URL に無い ID を入れる(404)、ID `network-error` でルームを作る(通信の失敗)。
-  - 履歴は `warehouse-a`(区切りのある発話、テキスト、画像、動画、2ページ分の件数)と `line_2` にある。動画は再生できない空のデータなので「プレビューなし」と出る。
+  - 履歴は `warehouse-a`(区切りのある発話、テキスト、画像、動画、ファイル、2ページ分の件数)と `line_2` にある。動画は再生できない空のデータなので「プレビューなし」と出る。
   - モックは開発サーバーでだけ有効になる。`pnpm build` では `VITE_API_MOCK` を設定しても読み込まれず、本番のビルドに入らない。
 - AWS の dev 環境に向けるときは、`terraform output` の値(`oidc_issuer`、`cognito_client_ids.admin`、`cognito_hosted_ui_url`、`api_endpoint`)を、上の変数に渡す。API Gateway は `http://localhost:5173`(管理コンソール)と `http://localhost:5174`(Web 版クライアント)からの CORS を許可している。
 
@@ -420,15 +424,23 @@ result = notify.send_to_users(
   | --- | --- |
   | `/` | 自分がメンバーのルームの一覧 |
   | `/profile` | 表示名と言語の登録・変更。未登録のうちは、ほかの画面からここへ送る(LiveKit のトークンにプロフィールが要るため) |
-  | `/rooms/:roomId` | 入室。開くと入り、閉じると出る。字幕と画像・動画を時刻の順に出し、PTT とテキスト入力で送る |
+  | `/rooms/:roomId` | 入室。開くと入り、閉じると出る。履歴と、入室してから届いたものを1本のタイムラインで出し、PTT、テキスト入力、画像・動画・ファイルで送る |
 
 - ルームの画面:
   - **PTT**: ボタンを押している間か、テキスト欄の外で Space を押している間だけマイクのミュートを外す。押したままタブを離れたら離したことにする。
   - **音**: 購読した音声トラックは `<audio>` に付けて鳴らす(`src/roomPlatform.ts`)。ブラウザの自動再生の制限で鳴らせないときは「音を出す」のボタンを出す(PTT やボタンを押せば鳴る)。
+  - **タイムライン**: 履歴の行(発話、テキスト、画像・動画・ファイル)と、入室してから届いた字幕を、時刻の順に1本で出す。履歴の画面は分けない。
+    - 入室とつなぎ直しで最新の50件を読む。つないでいなかった間が50件を超えれば、知っている行に届くまで古いほうへ読む(5ページまで)。上へ戻ると、50件ずつ古いほうを読み足す(見ていた位置は保つ)。
+    - 字幕は、Agent が履歴に保存した同じ区切りの行があれば、行のほうを出す(字幕の `segment_id` が履歴の `source_id`)。行が無いうち(Agent は訳がそろってから保存する)は字幕を出す。行は occurred_at、字幕は届いた時刻で並ぶ。
   - **字幕**: 原文と自分の言語の訳を出す。確定する前は薄く出す。
   - **テキスト入力**: Enter で送り、Shift+Enter で改行する。送信中・届いた・断られた・失敗した・届かなかったを、入力欄の上に出す。
-  - **削除**: 自分の送ったテキストと画像・動画に「削除」を出し、確認してから消す。消したものは「削除された…」と出す。
-  - **画像・動画**: 受け取ったもの(topic `media` を履歴で確かめたもの)と、入室・つなぎ直しで読んだ履歴の50件にあるものを出す。送ることはまだできない。
+  - **削除**: 自分の送ったテキストと画像・動画・ファイルに「削除」を出し、確認してから消す。消したものは「削除された…」と出す。
+  - **画像・動画・ファイルを送る**: 📎 で選ぶか、ルームの画面に落とす(複数でよい)。1つずつ順に送り、送信者にだけ段階と進み具合を出す。失敗したら「やり直す」でその段階から続ける(`packages/client-core` の `MediaUploader`)。形式は先頭のバイトで見分ける(`src/webMedia.ts`)。
+    - 画像(JPEG、PNG、WebP、HEIC): そのまま送る。1MB を超えたらサムネイル(JPEG、長い辺 480px)を作る。幅・高さは `createImageBitmap` で測る。ブラウザが読めない形式(多くのブラウザの HEIC)は、サムネイルも幅・高さも無しで送る。
+    - 動画: 変換せずにそのまま送る。`<video>` で長さと幅・高さを測り、0.5 秒目のコマからサムネイルを作る。
+    - それ以外: ファイルとして送り、名前と大きさ、ダウンロードのリンクを出す(新しいタブで開き、ダウンロードになる)。
+    - PUT は `XMLHttpRequest`(進み具合を取るため)。16MB 以上はマルチパートで、同時に4本。
+  - **画像・動画を見る**: サムネイル(無ければ本体)を、履歴の幅・高さの縦横比の枠で出す。画像はクリックで本体を新しいタブに開き、動画はその場で再生する(長さを右下に出す)。表示できなければダウンロードのリンクにする。
 - Web 版では push 通知をせず、バックグラウンドの音声も扱わない(設計メモの「Web 版で決めたこと」)。
 - 設定は管理コンソールと同じ `VITE_` の環境変数(`VITE_OIDC_CLIENT_ID` の既定は `web`。AWS では `cognito_client_ids.web`)。API は Vite が中継する(`/api` → `http://localhost:3000`)。
 

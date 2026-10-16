@@ -28,6 +28,8 @@ export interface SignedPut<F> {
       offset: number;
       length: number;
       contentType: string | undefined;
+      // 付けるなら Content-Disposition ヘッダー(ファイルの1回の PUT。署名に入っている)
+      contentDisposition?: string;
       onProgress?: (sent: number) => void;
     },
   ): Promise<string | undefined>;

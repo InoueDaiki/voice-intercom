@@ -106,9 +106,9 @@ describe("画像・動画", () => {
     const row = mediaEvent("2026-10-13T00:00:01.000Z", { senderId: "bob" });
     let fetches = 0;
     const session = newSession({
-      fetchRecentTimeline: async () => {
+      fetchTimelinePage: async () => {
         fetches++;
-        return [row];
+        return { items: [row], next_before: null };
       },
     });
     let notified = 0;
@@ -119,21 +119,21 @@ describe("画像・動画", () => {
     session.handleData(messageFor(row), undefined, mediaTopic);
     await flush();
     expect(fetches).toBe(1);
-    expect(session.media.items.map((e) => e.event_id)).toEqual([row.event_id]);
+    expect(session.timeline.media.map((e) => e.event_id)).toEqual([row.event_id]);
     expect(notified).toBe(1);
 
     // complete のやり直しで同じものが届いても、読まずに捨てる
     session.handleData(messageFor(row), undefined, mediaTopic);
     await flush();
     expect(fetches).toBe(1);
-    expect(session.media.items).toHaveLength(1);
+    expect(session.timeline.media).toHaveLength(1);
   });
 
   test("履歴を読めない作りでは topic media を捨てる", async () => {
     const session = newSession();
     session.handleData(messageFor(mediaEvent("2026-10-13T00:00:01.000Z")), undefined, mediaTopic);
     await flush();
-    expect(session.media.items).toEqual([]);
+    expect(session.timeline.media).toEqual([]);
   });
 });
 
@@ -155,7 +155,7 @@ describe("削除", () => {
     await flush();
 
     expect(session.captions.segments[0]!.deleted).toBe(true);
-    expect(session.media.isDeleted(media.event_id)).toBe(true);
+    expect(session.timeline.isDeleted(media.event_id)).toBe(true);
   });
 
   test("入室時の履歴の墓石を反映する", () => {
@@ -166,7 +166,7 @@ describe("削除", () => {
     session.applyTimeline([tombstoneOf(ownText("2026-10-13T00:00:01.000Z")), tombstoneOf(media)]);
 
     expect(session.captions.segments[0]!.deleted).toBe(true);
-    expect(session.media.isDeleted(media.event_id)).toBe(true);
+    expect(session.timeline.isDeleted(media.event_id)).toBe(true);
   });
 
   test("自分のテキストは、履歴に保存されるのを待ってから消す", async () => {
@@ -174,10 +174,10 @@ describe("削除", () => {
     let fetches = 0;
     const deleted: string[] = [];
     const session = newSession({
-      fetchRecentTimeline: async () => {
+      fetchTimelinePage: async () => {
         fetches++;
         // 2回目で Agent が保存した
-        return fetches < 2 ? [] : [row];
+        return { items: fetches < 2 ? [] : [row], next_before: null };
       },
       deleteTimelineEvent: async (id) => {
         deleted.push(id);
@@ -198,7 +198,7 @@ describe("削除", () => {
 
   test("保存されないままなら NotSavedYetError", async () => {
     const session = newSession({
-      fetchRecentTimeline: async () => [],
+      fetchTimelinePage: async () => ({ items: [], next_before: null }),
       deleteTimelineEvent: async (): Promise<TimelineEvent> => {
         throw new Error("呼ばれない");
       },
@@ -211,7 +211,7 @@ describe("削除", () => {
 
   test("他人のテキストと画像・動画には消す操作を出さない", () => {
     const session = newSession({
-      fetchRecentTimeline: async () => [],
+      fetchTimelinePage: async () => ({ items: [], next_before: null }),
       deleteTimelineEvent: async (): Promise<TimelineEvent> => {
         throw new Error("呼ばれない");
       },

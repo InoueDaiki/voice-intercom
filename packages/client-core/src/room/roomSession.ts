@@ -15,12 +15,12 @@ import {
   Track,
 } from "livekit-client";
 
-import type { TimelineEvent } from "../api.ts";
+import type { TimelineEvent, TimelinePage } from "../api.ts";
 import { Observable } from "../observable.ts";
 import { CaptionBoard, type CaptionSegment } from "./captionBoard.ts";
 import { DeletionReceiver } from "./deletionReceiver.ts";
-import { MediaFeed } from "./mediaFeed.ts";
 import { MediaReceiver } from "./mediaReceiver.ts";
+import { RoomTimeline, type TimelineEntry } from "./roomTimeline.ts";
 import { shouldSubscribe } from "./subscription.ts";
 import { TextSender } from "./textSender.ts";
 import { captionTopic, deletionTopic, mediaTopic, textStatusTopic, textTopic } from "./topics.ts";
@@ -51,8 +51,9 @@ export interface RoomSessionOptions {
   // ルームの名前。入室中の通知に出す
   roomName: string;
   platform?: RoomPlatform;
-  // 履歴の先頭のページ(新しい順)。無ければ topic media を捨て、自分のテキストを消せない
-  fetchRecentTimeline?: () => Promise<TimelineEvent[]>;
+  // 履歴の1ページ(新しい順。before より古いもの)。無ければ履歴を出さず、topic media を捨て、
+  // 自分のテキストを消せない
+  fetchTimelinePage?: (before: string | undefined) => Promise<TimelinePage>;
   // 履歴の1件。無ければ topic deletion を捨てる(入り直したときの履歴の読み直しで反映される)
   fetchTimelineEvent?: (eventId: string) => Promise<TimelineEvent | null>;
   // 自分の送ったものを消し、墓石を返す
@@ -66,7 +67,8 @@ export interface RoomSessionOptions {
 // データチャネルで受け取ったものの送信元。kind と identity だけを見る
 export type DataSender = Pick<RemoteParticipant, "kind" | "identity">;
 
-// 1つのルームへの接続。PTT、購読、字幕、テキスト入力、画像・動画の受け取りと削除を受け持つ。
+// 1つのルームへの接続。PTT、購読、字幕、テキスト入力、タイムライン(履歴と字幕)、
+// 画像・動画・ファイルの受け取りと削除を受け持つ。
 // 画面は subscribe で変化を知り、プロパティを読み直す(React なら useSyncExternalStore)。
 export class RoomSession extends Observable {
   readonly myIdentity: string;
@@ -74,8 +76,8 @@ export class RoomSession extends Observable {
   readonly roomName: string;
   readonly room: Room;
   readonly captions = new CaptionBoard();
-  // ルームの画面に出す画像・動画
-  readonly media = new MediaFeed();
+  // 履歴の行。字幕と合わせて1本のタイムラインにする(entries)
+  readonly timeline: RoomTimeline;
   readonly textSender: TextSender;
   // topic media の受け手。履歴を読めないときは undefined で、topic media を捨てる
   readonly mediaReceiver: MediaReceiver | undefined;
@@ -97,6 +99,7 @@ export class RoomSession extends Observable {
 
   private readonly platform: RoomPlatform;
   private readonly fetchRecent: (() => Promise<TimelineEvent[]>) | undefined;
+  private readonly hasHistory: boolean;
   private readonly deleteEvent: ((eventId: string) => Promise<TimelineEvent>) | undefined;
   private readonly findTextRetryDelaysMs: number[];
   // 反映した墓石の event_id
@@ -112,7 +115,13 @@ export class RoomSession extends Observable {
     this.myLanguage = options.myLanguage;
     this.roomName = options.roomName;
     this.platform = options.platform ?? {};
-    this.fetchRecent = options.fetchRecentTimeline;
+    const fetchPage = options.fetchTimelinePage;
+    this.hasHistory = fetchPage !== undefined;
+    this.fetchRecent = fetchPage && (async () => (await fetchPage(undefined)).items);
+    this.timeline = new RoomTimeline({
+      fetchPage: fetchPage ?? (async () => ({ items: [], next_before: null })),
+      onChanged: () => this.changed(),
+    });
     this.deleteEvent = options.deleteTimelineEvent;
     this.findTextRetryDelaysMs = options.findTextRetryDelaysMs ?? [1000, 2000, 4000];
     // 音声だけなので、映像の最適化は要らない
@@ -123,12 +132,12 @@ export class RoomSession extends Observable {
       onChanged: () => this.changed(),
       canSend: () => this.agentPresent,
     });
-    const fetchRecent = options.fetchRecentTimeline;
+    const fetchRecent = this.fetchRecent;
     this.mediaReceiver = fetchRecent
       ? new MediaReceiver({
           fetchRecent,
           onConfirmed: (events) => this.addMedia(events),
-          isKnown: (id) => this.media.contains(id),
+          isKnown: (id) => this.timeline.contains(id),
         })
       : undefined;
     const fetchOne = options.fetchTimelineEvent;
@@ -168,7 +177,11 @@ export class RoomSession extends Observable {
         this.canPlaybackAudio = canPlayback;
         this.changed();
       })
-      .on(RoomEvent.Reconnected, () => this.onReconnected?.())
+      .on(RoomEvent.Reconnected, () => {
+        // つながっていなかった間の行(画像・動画、削除、字幕の行)を埋める
+        void this.syncHistory();
+        this.onReconnected?.();
+      })
       .on(RoomEvent.Disconnected, (reason) => {
         this.connected = false;
         this.talking = false;
@@ -189,6 +202,7 @@ export class RoomSession extends Observable {
       this.connected = true;
       this.canPlaybackAudio = room.canPlaybackAudio;
       this.changed();
+      void this.syncHistory();
     } catch (e) {
       this.stopBackground();
       this.error = `入室できなかった: ${e instanceof Error ? e.message : String(e)}`;
@@ -295,9 +309,28 @@ export class RoomSession extends Observable {
     });
   }
 
-  // 画像・動画を足す(complete の応答、履歴)。event_id で重ねない
+  // 字幕と履歴の行を時刻の順に並べたタイムライン
+  get entries(): TimelineEntry[] {
+    return this.timeline.entries(this.captions);
+  }
+
+  // 古いほうの履歴を1ページ読み足す(上へ戻ったとき)
+  loadOlder(): Promise<void> {
+    return this.hasHistory ? this.timeline.loadOlder() : Promise.resolve();
+  }
+
+  // 最新の履歴を読み、行と墓石を反映する(入室とつなぎ直し)
+  private async syncHistory(): Promise<void> {
+    if (!this.hasHistory || this.disposed) {
+      return;
+    }
+    await this.timeline.syncLatest();
+    this.applyTimeline([]);
+  }
+
+  // 画像・動画・ファイルを足す(complete の応答、確かめた配信)。event_id で重ねない
   addMedia(events: Iterable<TimelineEvent>): void {
-    if (this.media.addAll(events)) {
+    if (this.timeline.addAll(events)) {
       this.changed();
     }
   }
@@ -307,8 +340,9 @@ export class RoomSession extends Observable {
   // 「削除されたテキスト」にする。
   applyTimeline(rows: Iterable<TimelineEvent>): void {
     const list = [...rows];
-    let changed = this.media.addAll(list);
-    for (const row of list) {
+    let changed = this.timeline.addAll(list);
+    // 読み込んだ行(syncLatest、loadOlder)の墓石も、字幕に反映する
+    for (const row of [...list, ...this.timeline.deletedTexts()]) {
       if (row.deleted == null) {
         continue;
       }
@@ -325,6 +359,25 @@ export class RoomSession extends Observable {
     }
   }
 
+  // タイムラインの1件を消せるか(自分の送ったテキスト・画像・動画・ファイルで、まだ消していない)
+  canDeleteEntry(entry: TimelineEntry): boolean {
+    if (entry.event) {
+      return this.canDeleteMedia(entry.event) && entry.event.kind !== "utterance";
+    }
+    return entry.type === "caption" && entry.segment !== undefined && this.canDeleteCaption(entry.segment);
+  }
+
+  // タイムラインの1件を消す。履歴の行があればその event_id で、字幕だけなら行を探して消す
+  async deleteEntry(entry: TimelineEntry): Promise<void> {
+    if (entry.event) {
+      await this.deleteOwnMedia(entry.event);
+      return;
+    }
+    if (entry.type === "caption" && entry.segment) {
+      await this.deleteOwnText(entry.segment);
+    }
+  }
+
   // 自分の送ったテキストか(消す操作を出すか)
   canDeleteCaption(segment: CaptionSegment): boolean {
     return (
@@ -336,7 +389,7 @@ export class RoomSession extends Observable {
     );
   }
 
-  // 自分の送った画像・動画か(消す操作を出すか)
+  // 自分の送った行か(消す操作を出すか)
   canDeleteMedia(event: TimelineEvent): boolean {
     return this.deleteEvent !== undefined && event.deleted == null && event.sender_id === this.myIdentity;
   }
@@ -350,8 +403,8 @@ export class RoomSession extends Observable {
     if (!fetch || !remove || !segment.isText) {
       throw new Error("消せない字幕");
     }
-    let row: TimelineEvent | undefined;
-    for (let i = 0; ; i++) {
+    let row = this.timeline.findText(this.myIdentity, segment.messageId);
+    for (let i = 0; !row; i++) {
       const rows = await fetch();
       row = rows.find(
         (r) => r.kind === "text" && r.sender_id === this.myIdentity && r.message_id === segment.messageId,
@@ -370,7 +423,7 @@ export class RoomSession extends Observable {
     }
   }
 
-  // 自分の送った画像・動画を消す
+  // 自分の送ったもの(履歴の行)を消す
   async deleteOwnMedia(event: TimelineEvent): Promise<void> {
     const remove = this.deleteEvent;
     if (!remove) {

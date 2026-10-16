@@ -3,28 +3,18 @@ import {
   type ClientApi,
   type CompletedPart,
   type CreateMediaUploadRequest,
-  type MediaContentType,
   type MediaUpload,
   type TimelineEvent,
   type UploadPartUrls,
 } from "../api.ts";
 import { Observable } from "../observable.ts";
-import { type MediaPreparer, type PreparedMedia, UnsupportedMediaError } from "./preparedMedia.ts";
+import { MAX_UPLOAD_BYTES, type MediaPreparer, type PreparedMedia, UnsupportedMediaError } from "./preparedMedia.ts";
 import { PutFailedError, type SignedPut } from "./signedPut.ts";
 
 // パートの署名付き URL を1回で取れる数(API の parts の上限)
 export const MAX_PART_URLS_PER_REQUEST = 100;
 
-// uploads が受け付ける content_type
-const CONTENT_TYPES: readonly string[] = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/heic",
-  "video/mp4",
-] satisfies MediaContentType[];
-
-// 送信中の画像・動画の段階。
+// 送信中の画像・動画・ファイルの段階。
 export type OutgoingMediaState =
   // 圧縮、サムネイルの作成
   | "preparing"
@@ -37,7 +27,7 @@ export type OutgoingMediaState =
   // どこかで失敗した。retryable ならやり直せる
   | "failed";
 
-// 送信中の画像・動画1つ。送信者の画面にだけ出す(ほかの人には何も送らない)。
+// 送信中の画像・動画・ファイル1つ。送信者の画面にだけ出す(ほかの人には何も送らない)。
 export class OutgoingMedia<S, F> {
   // 端末の中だけの ID(media_id は uploads の後に決まる)
   readonly localId: string;
@@ -128,7 +118,7 @@ export interface MediaUploaderOptions<S, F> {
   now?: () => number;
 }
 
-// 画像・動画を送る。整える → uploads → 本体とサムネイルの PUT → complete。
+// 画像・動画・ファイルを送る。整える → uploads → 本体とサムネイルの PUT → complete。
 //
 // - 1つずつ順に処理する(動画の変換は同時に1つしかできない。回線も分け合わない)。
 // - 失敗したら、その段階からやり直せる。整えたファイル、期限のうちの署名付き URL、
@@ -141,7 +131,9 @@ export interface MediaUploaderOptions<S, F> {
 // - マルチパートで API が 404・410(アップロードが無い、完了できない)を返したら、uploads から
 //   やり直す(送り終えたパートも捨てる)。complete の 409(サムネイルが無い)なら、サムネイルだけ
 //   上げ直す。
-// - 画像・動画には文を添えられない(設計メモの「画像・動画のルームへの配信」)。submit は選んだものだけを受ける。
+// - 画像・動画・ファイルには文を添えられない(設計メモの「画像・動画のルームへの配信」)。
+//   submit は選んだものだけを受ける。形式は問わず、上限は 10GB(画像・動画でないものはファイルとして
+//   ダウンロードだけになる)。
 export class MediaUploader<S, F> extends Observable {
   readonly roomId: string;
   private readonly backend: MediaUploadBackend<F>;
@@ -258,12 +250,14 @@ export class MediaUploader<S, F> extends Observable {
     const ticket = item.ticket;
     // マルチパートは、期限が過ぎても URL を取り直して続ける(送り終えたパートを捨てない)
     if (ticket === undefined || (ticket.multipart == null && this.expiring(ticket.expires_at))) {
-      if (!CONTENT_TYPES.includes(media.contentType)) {
-        throw new UnsupportedMediaError(`この形式は送れない(${media.contentType})`);
+      if (media.sizeBytes > MAX_UPLOAD_BYTES) {
+        throw new UnsupportedMediaError("10GB を超えるので送れない");
       }
       item.resetTicket();
       item.ticket = await this.backend.createUpload(this.roomId, {
-        content_type: media.contentType as MediaContentType,
+        // 形式は問わない(画像・動画でないものはファイルになる)。確かめるのは API
+        content_type: media.contentType,
+        file_name: media.fileName ?? null,
         size_bytes: media.sizeBytes,
         has_thumbnail: media.thumbnail !== undefined,
         // 表示の枠(縦横比)と動画の長さ。整えた後の本体で測った値
@@ -289,6 +283,8 @@ export class MediaUploader<S, F> extends Observable {
         offset: 0,
         length: media.sizeBytes,
         contentType: media.contentType,
+        // ファイルはダウンロードだけにするため、API が決めた値を付ける(署名に入っている)
+        contentDisposition: current.content_disposition ?? undefined,
         onProgress: (sent) => {
           item.progress = total === 0 ? undefined : sent / total;
           this.changed();

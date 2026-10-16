@@ -1,29 +1,46 @@
 import {
   ApiError,
-  type CaptionSegment,
+  apiMediaBackend,
   DELETED_TEXT_LABEL,
   deletedLabel,
   deletionWhat,
   LANGUAGE_LABELS,
   type Language,
-  mergeRoomFeed,
+  MediaUploader,
   NotSavedYetError,
+  type OutgoingMedia,
   outgoingTextLabel,
   RoomSession,
+  type TimelineEntry,
   type TimelineEvent,
   type User,
 } from "@voice-intercom/client-core";
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { useAuth } from "react-oidc-context";
 import { Link, useParams } from "react-router";
 
 import { api } from "../api.ts";
+import { formatBytes, formatDuration, formatTime } from "../format.ts";
 import { errorMessage, useMe, useRoom } from "../queries.ts";
 import { webRoomPlatform } from "../roomPlatform.ts";
 import { useObservable } from "../useObservable.ts";
+import { webMediaPreparer, xhrSignedPut } from "../webMedia.ts";
 
-// 入室したときとつなぎ直したときに読む、履歴の先頭のページの件数
-const RECENT_LIMIT = 50;
+// 履歴の1ページの件数
+const PAGE_LIMIT = 50;
+
+// 上端からこれより近づいたら、古いほうを読み足す(ピクセル)
+const LOAD_OLDER_THRESHOLD = 200;
+
+type Uploader = MediaUploader<File, Blob>;
 
 export default function RoomPage() {
   const roomId = useParams().roomId ?? "";
@@ -62,37 +79,38 @@ function BackLink() {
 // 入室している間の画面。開いたら入室し、閉じたら退室する
 function RoomScreen({ roomId, roomName, me, myIdentity }: { roomId: string; roomName: string; me: User; myIdentity: string }) {
   const [session, setSession] = useState<RoomSession>();
+  const [uploader, setUploader] = useState<Uploader>();
   const [joinError, setJoinError] = useState<string>();
+  const [dragging, setDragging] = useState(false);
   useObservable(session);
+  useObservable(uploader);
 
   useEffect(() => {
-    const fetchRecent = async () => (await api.listTimeline(roomId, { limit: RECENT_LIMIT })).items;
     const s = new RoomSession({
       myIdentity,
       myLanguage: me.language,
       roomName,
       platform: webRoomPlatform,
-      fetchRecentTimeline: fetchRecent,
+      fetchTimelinePage: (before) => api.listTimeline(roomId, { limit: PAGE_LIMIT, before }),
       fetchTimelineEvent: (eventId) => api.getTimelineEvent(roomId, eventId),
       deleteTimelineEvent: (eventId) => api.deleteTimelineEvent(roomId, eventId),
     });
-    // 入室とつなぎ直しのときに履歴を読み、切れていた間の画像・動画と削除を埋める
-    const fillGap = () => {
-      fetchRecent()
-        .then((rows) => s.applyTimeline(rows))
-        .catch((e: unknown) => console.warn("履歴を読めなかった", e));
-    };
-    s.onReconnected = fillGap;
+    const u: Uploader = new MediaUploader({
+      roomId,
+      backend: apiMediaBackend(api, xhrSignedPut),
+      preparer: webMediaPreparer,
+      // 送ったものは、配信を待たずにすぐタイムラインに出す
+      onCompleted: (event) => s.addMedia([event]),
+    });
     setSession(s);
+    setUploader(u);
     setJoinError(undefined);
     let cancelled = false;
     (async () => {
       const token = await api.createLiveKitToken(roomId);
-      if (cancelled) {
-        return;
+      if (!cancelled) {
+        await s.connect(token.server_url, token.participant_token);
       }
-      await s.connect(token.server_url, token.participant_token);
-      fillGap();
     })().catch((e: unknown) => {
       if (cancelled) {
         return;
@@ -105,12 +123,43 @@ function RoomScreen({ roomId, roomName, me, myIdentity }: { roomId: string; room
     });
     return () => {
       cancelled = true;
+      u.dispose();
       s.dispose();
     };
   }, [roomId, roomName, me.language, myIdentity]);
 
+  const sendFiles = (files: Iterable<File>) => {
+    for (const f of files) {
+      uploader?.submit(f);
+    }
+  };
+
+  // ファイルをルームの画面に落としても送れる
+  const onDragOver = (e: DragEvent) => {
+    if (session?.connected && e.dataTransfer.types.includes("Files")) {
+      e.preventDefault();
+      setDragging(true);
+    }
+  };
+  const onDrop = (e: DragEvent) => {
+    setDragging(false);
+    if (session?.connected && e.dataTransfer.files.length > 0) {
+      e.preventDefault();
+      sendFiles(e.dataTransfer.files);
+    }
+  };
+
   return (
-    <section className="room">
+    <section
+      className={dragging ? "room dragging" : "room"}
+      onDragOver={onDragOver}
+      onDragLeave={(e) => {
+        if (e.currentTarget === e.target) {
+          setDragging(false);
+        }
+      }}
+      onDrop={onDrop}
+    >
       <div className="room-header">
         <BackLink />
         <h1>{roomName}</h1>
@@ -135,9 +184,10 @@ function RoomScreen({ roomId, roomName, me, myIdentity }: { roomId: string; room
           </button>
         </p>
       )}
-      {session && <Feed session={session} myLanguage={me.language} />}
+      {session && <Timeline session={session} myLanguage={me.language} />}
       {session && <OutgoingTexts session={session} />}
-      {session && <Controls session={session} />}
+      {uploader && <OutgoingMediaList uploader={uploader} />}
+      {session && <Controls session={session} onFiles={sendFiles} />}
     </section>
   );
 }
@@ -156,16 +206,43 @@ function RoomStatus({ session }: { session: RoomSession }) {
   );
 }
 
-// 字幕と画像・動画を時刻の順に。新しいものが下に来るので、下端を見ていれば追いかける
-function Feed({ session, myLanguage }: { session: RoomSession; myLanguage: Language }) {
-  const entries = mergeRoomFeed(session.captions.segments, session.media.items);
+// 履歴と、入室してから届いたものを1本にしたタイムライン。新しいものが下に来る。
+// 下端を見ていれば新しいものを追いかけ、上端に近づいたら古いほうを読み足す
+function Timeline({ session, myLanguage }: { session: RoomSession; myLanguage: Language }) {
+  const entries = session.entries;
+  const timeline = session.timeline;
   const listRef = useRef<HTMLOListElement>(null);
   const stickToBottom = useRef(true);
+  // 読み足す前の高さ。読み足した後に、見ていた位置がずれないよう同じだけ下げる
+  const heightBeforeOlder = useRef<number | undefined>(undefined);
 
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (!el) {
+      return;
+    }
+    if (heightBeforeOlder.current !== undefined && !timeline.loadingOlder) {
+      el.scrollTop += el.scrollHeight - heightBeforeOlder.current;
+      heightBeforeOlder.current = undefined;
+    } else if (stickToBottom.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  });
+
+  const loadOlder = () => {
+    const el = listRef.current;
+    if (!el || timeline.loadingOlder || !timeline.hasOlder || !timeline.loaded) {
+      return;
+    }
+    heightBeforeOlder.current = el.scrollHeight;
+    void session.loadOlder();
+  };
+
+  // 読み込んだ分が少なく、スクロールできないまま上端にいるなら、続けて読み足す
   useEffect(() => {
     const el = listRef.current;
-    if (el && stickToBottom.current) {
-      el.scrollTop = el.scrollHeight;
+    if (el && timeline.loaded && el.scrollHeight <= el.clientHeight) {
+      loadOlder();
     }
   });
 
@@ -176,114 +253,181 @@ function Feed({ session, myLanguage }: { session: RoomSession; myLanguage: Langu
       onScroll={(e) => {
         const el = e.currentTarget;
         stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+        if (el.scrollTop < LOAD_OLDER_THRESHOLD) {
+          loadOlder();
+        }
       }}
     >
-      {entries.length === 0 && <li className="muted">まだ何もありません。PTT を押して話すか、テキストを送ってください。</li>}
+      <li className="feed-edge muted">
+        {!timeline.loaded || timeline.loadingOlder
+          ? "読み込み中…"
+          : timeline.hasOlder
+            ? "上へ戻ると、古いものを読み込みます"
+            : "これより前はありません"}
+      </li>
+      {timeline.error && (
+        <li className="feed-edge error">
+          {timeline.error}
+          <button type="button" className="link-button" onClick={() => void timeline.syncLatest()}>
+            読み直す
+          </button>
+        </li>
+      )}
+      {timeline.loaded && entries.length === 0 && (
+        <li className="muted">まだ何もありません。PTT を押して話すか、テキストやファイルを送ってください。</li>
+      )}
       {entries.map((entry) =>
         entry.type === "caption" ? (
-          <CaptionItem key={`c-${entry.segment.segmentId}`} session={session} segment={entry.segment} myLanguage={myLanguage} />
+          <CaptionItem key={entry.key} session={session} entry={entry} myLanguage={myLanguage} />
         ) : (
-          <MediaItem key={`m-${entry.event.event_id}`} session={session} event={entry.event} />
+          <MediaItem key={entry.key} session={session} entry={entry} />
         ),
       )}
     </ol>
   );
 }
 
-function CaptionItem({ session, segment, myLanguage }: { session: RoomSession; segment: CaptionSegment; myLanguage: Language }) {
+// 消す操作と確認。失敗したら理由を返す
+function useDelete(session: RoomSession, entry: TimelineEntry, what: string) {
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string>();
-  // 話者と同じ言語なら訳は届かない(Agent が作らない)
-  const translation = segment.originalLanguage === myLanguage ? undefined : segment.translations.get(myLanguage);
-
-  const onDelete = async () => {
-    if (!window.confirm("このテキストを削除しますか?")) {
+  const run = async () => {
+    if (!window.confirm(`この${what}を削除しますか?`)) {
       return;
     }
     setDeleting(true);
     setError(undefined);
     try {
-      await session.deleteOwnText(segment);
+      await session.deleteEntry(entry);
     } catch (e) {
       setError(e instanceof NotSavedYetError ? "まだ履歴に保存されていません。少し待ってからやり直してください。" : errorMessage(e));
     } finally {
       setDeleting(false);
     }
   };
+  return { deleting, error, run, can: session.canDeleteEntry(entry) };
+}
+
+// 音声の発話とテキスト入力。履歴の行も、届いたばかりの字幕も同じ形で出す
+function CaptionItem({
+  session,
+  entry,
+  myLanguage,
+}: {
+  session: RoomSession;
+  entry: Extract<TimelineEntry, { type: "caption" }>;
+  myLanguage: Language;
+}) {
+  const remove = useDelete(session, entry, "テキスト");
+  // 話者と同じ言語なら訳は無い(Agent が作らない)
+  const translation = entry.originalLanguage === myLanguage ? undefined : entry.translations.get(myLanguage);
 
   return (
-    <li className={`feed-item ${segment.isText ? "kind-text" : "kind-utterance"}`}>
+    <li className={`feed-item ${entry.isText ? "kind-text" : "kind-utterance"}`}>
       <div className="feed-head">
-        <span className="sender">{session.displayName(segment.speakerIdentity)}</span>
-        <span className="muted">{formatTime(segment.receivedAt)}</span>
-        {segment.isText && <span className="tag">テキスト</span>}
-        {segment.originalLanguage && (
-          <span className="tag">{LANGUAGE_LABELS[segment.originalLanguage as Language] ?? segment.originalLanguage}</span>
+        <span className="sender">{session.displayName(entry.speakerIdentity)}</span>
+        <span className="muted">{formatTime(entry.at)}</span>
+        {entry.isText && <span className="tag">テキスト</span>}
+        {entry.originalLanguage && (
+          <span className="tag">{LANGUAGE_LABELS[entry.originalLanguage as Language] ?? entry.originalLanguage}</span>
         )}
-        {session.canDeleteCaption(segment) && (
-          <button type="button" className="link-button" disabled={deleting} onClick={() => void onDelete()}>
+        {remove.can && (
+          <button type="button" className="link-button" disabled={remove.deleting} onClick={() => void remove.run()}>
             削除
           </button>
         )}
       </div>
-      {segment.deleted ? (
+      {entry.deleted ? (
         <p className="deleted">{DELETED_TEXT_LABEL}</p>
       ) : (
         <>
-          {segment.original && (
-            <p className={segment.original.isFinal ? "original" : "original pending"}>{segment.original.text}</p>
+          {entry.original && (
+            <p className={entry.original.isFinal ? "original" : "original pending"}>
+              {entry.original.text || <span className="muted">(聞き取れませんでした)</span>}
+            </p>
           )}
           {translation && (
             <p className={translation.isFinal ? "translation" : "translation pending"}>{translation.text}</p>
           )}
         </>
       )}
-      {error && <p className="error">{error}</p>}
+      {remove.error && <p className="error">{remove.error}</p>}
     </li>
   );
 }
 
-// 画像・動画(送るのはまだ。受け取ったもの、履歴にあるものを出す)
-function MediaItem({ session, event }: { session: RoomSession; event: TimelineEvent }) {
-  const [error, setError] = useState<string>();
-  const media = event.media;
-  const what = deletionWhat(event);
-
-  const onDelete = async () => {
-    if (!window.confirm(`この${what}を削除しますか?`)) {
-      return;
-    }
-    setError(undefined);
-    try {
-      await session.deleteOwnMedia(event);
-    } catch (e) {
-      setError(errorMessage(e));
-    }
-  };
+// 画像・動画・ファイル
+function MediaItem({ session, entry }: { session: RoomSession; entry: Extract<TimelineEntry, { type: "media" }> }) {
+  const event = entry.event;
+  const remove = useDelete(session, entry, deletionWhat(event));
 
   return (
     <li className="feed-item kind-media">
       <div className="feed-head">
         <span className="sender">{session.displayName(event.sender_id)}</span>
-        <span className="muted">{formatTime(new Date(event.occurred_at))}</span>
-        {session.canDeleteMedia(event) && (
-          <button type="button" className="link-button" onClick={() => void onDelete()}>
+        <span className="muted">{formatTime(entry.at)}</span>
+        {remove.can && (
+          <button type="button" className="link-button" disabled={remove.deleting} onClick={() => void remove.run()}>
             削除
           </button>
         )}
       </div>
-      {event.deleted || !media ? (
-        <p className="deleted">{deletedLabel(event)}</p>
-      ) : media.content_type.startsWith("video/") ? (
-        // 一覧ではサムネイル(無ければ枠)だけを読み、本体は再生してから読む
-        <video className="media" src={media.url} poster={media.thumbnail_url ?? undefined} controls preload="none" />
-      ) : (
-        <a href={media.url} target="_blank" rel="noreferrer">
-          <img className="media" src={media.thumbnail_url ?? media.url} alt="送られた画像" loading="lazy" />
-        </a>
-      )}
-      {error && <p className="error">{error}</p>}
+      <MediaBody event={event} />
+      {remove.error && <p className="error">{remove.error}</p>}
     </li>
+  );
+}
+
+function MediaBody({ event }: { event: TimelineEvent }) {
+  const [failed, setFailed] = useState(false);
+  const media = event.media;
+  if (event.deleted || !media) {
+    return <p className="deleted">{deletedLabel(event)}</p>;
+  }
+  if (media.media_type === "file" || failed) {
+    // ファイルはダウンロードだけ(Content-Disposition: attachment で置いてある)。
+    // 画像・動画を表示できなかったときも、ダウンロードのリンクにする。
+    // 配信の応答にヘッダーが無くても、ルームの画面から離れないよう、新しいタブで開く
+    return (
+      <p className="file">
+        <span aria-hidden="true">📄</span>{" "}
+        <a href={media.url} download={media.file_name ?? true} target="_blank" rel="noreferrer">
+          {media.file_name ?? (media.media_type === "file" ? "ファイル" : "ダウンロード")}
+        </a>{" "}
+        <span className="muted">{formatBytes(media.size_bytes)}</span>
+      </p>
+    );
+  }
+  // 縦横比の枠を先に取り、読み終えても周りがずれないようにする
+  const aspect = media.width && media.height ? `${media.width} / ${media.height}` : undefined;
+  if (media.media_type === "video") {
+    // 一覧ではサムネイル(無ければ枠)だけを読み、本体は再生してから読む
+    return (
+      <div className="media-box">
+        <video
+          className="media"
+          style={{ aspectRatio: aspect }}
+          src={media.url}
+          poster={media.thumbnail_url ?? undefined}
+          controls
+          preload="none"
+          onError={() => setFailed(true)}
+        />
+        {media.duration_ms != null && <span className="duration">{formatDuration(media.duration_ms)}</span>}
+      </div>
+    );
+  }
+  return (
+    <a href={media.url} target="_blank" rel="noreferrer">
+      <img
+        className="media"
+        style={{ aspectRatio: aspect }}
+        src={media.thumbnail_url ?? media.url}
+        alt="送られた画像"
+        loading="lazy"
+        onError={() => setFailed(true)}
+      />
+    </a>
   );
 }
 
@@ -308,9 +452,56 @@ function OutgoingTexts({ session }: { session: RoomSession }) {
   );
 }
 
-// PTT とテキスト入力。PTT はボタンを押している間か、テキスト欄の外で Space を押している間
-function Controls({ session }: { session: RoomSession }) {
+// 送信中の画像・動画・ファイル(送った本人にだけ出す)
+function OutgoingMediaList({ uploader }: { uploader: Uploader }) {
+  const items = uploader.items;
+  if (items.length === 0) {
+    return null;
+  }
+  return (
+    <ul className="outgoing">
+      {items.map((item) => (
+        <li key={item.localId}>
+          <span className="outgoing-text">{item.source.name}</span>
+          <span className={item.state === "failed" ? "tag error" : "tag"}>{outgoingMediaLabel(item)}</span>
+          {item.state !== "failed" && item.progress !== undefined && (
+            <progress max={1} value={item.progress} aria-label="進み具合" />
+          )}
+          {item.state === "failed" && item.retryable && (
+            <button type="button" className="link-button" onClick={() => uploader.retry(item)}>
+              やり直す
+            </button>
+          )}
+          {item.state === "failed" && (
+            <button type="button" className="link-button" onClick={() => uploader.dismiss(item)}>
+              取り消す
+            </button>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function outgoingMediaLabel(item: OutgoingMedia<File, Blob>): string {
+  switch (item.state) {
+    case "preparing":
+      return "準備中";
+    case "uploading":
+      return item.progress === undefined ? "送信中" : `送信中 ${Math.floor(item.progress * 100)}%`;
+    case "completing":
+      return "保存中";
+    case "done":
+      return "送信済み";
+    case "failed":
+      return `送れませんでした: ${item.error ?? "理由不明"}`;
+  }
+}
+
+// PTT、テキスト入力、ファイルの添付。PTT はボタンを押している間か、テキスト欄の外で Space を押している間
+function Controls({ session, onFiles }: { session: RoomSession; onFiles: (files: Iterable<File>) => void }) {
   const [text, setText] = useState("");
+  const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const isTyping = (e: KeyboardEvent) => {
@@ -380,6 +571,26 @@ function Controls({ session }: { session: RoomSession }) {
         {session.talking ? "話しています" : "押して話す(Space)"}
       </button>
       <form className="text-form" onSubmit={onSubmit}>
+        <button
+          type="button"
+          className="attach"
+          title="画像・動画・ファイルを送る(10GB まで)"
+          aria-label="画像・動画・ファイルを送る"
+          disabled={disabled}
+          onClick={() => fileInput.current?.click()}
+        >
+          📎
+        </button>
+        <input
+          ref={fileInput}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            onFiles(Array.from(e.target.files ?? []));
+            e.target.value = "";
+          }}
+        />
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -394,8 +605,4 @@ function Controls({ session }: { session: RoomSession }) {
       </form>
     </div>
   );
-}
-
-function formatTime(d: Date): string {
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }

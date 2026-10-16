@@ -1,4 +1,4 @@
-// 送る形に整えた画像・動画と、整える処理(端末に依るので各アプリが差し込む)。
+// 送る形に整えた画像・動画・ファイルと、整える処理(端末に依るので各アプリが差し込む)。
 
 // 本体の上限(10GB。API の CreateMediaUploadRequest の size_bytes の上限と合わせる。
 // 大きなものはマルチパートで上げる)。動画の長さには上限を設けない
@@ -38,11 +38,14 @@ export function validDurationMs(ms: number | undefined): number | undefined {
   return rounded >= 1 && rounded <= MAX_MEDIA_DURATION_MS ? rounded : undefined;
 }
 
-// 送る形に整えた画像・動画。F は本体を指すもの(Web 版は Blob、React Native はファイルのパスなど)
+// 送る形に整えた画像・動画・ファイル。F は本体を指すもの(Web 版は Blob、React Native はファイルのパスなど)
 export interface PreparedMedia<F> {
   file: F;
-  // uploads に渡す content_type(image/jpeg、image/png、image/webp、image/heic、video/mp4)
+  // uploads に渡す content_type。image/jpeg、image/png、image/webp、image/heic は画像、
+  // video/* は動画、それ以外はファイル(ダウンロードだけ)
   contentType: string;
+  // 元のファイル名(ファイルのダウンロードの名前と表示に使う)
+  fileName?: string;
   sizeBytes: number;
   isVideo: boolean;
   // サムネイル(image/jpeg)。無ければ undefined
@@ -53,7 +56,7 @@ export interface PreparedMedia<F> {
   durationMs?: number;
 }
 
-// 送れない画像・動画(形式、大きさ、長さ)。やり直しても同じなので、やり直させない。
+// 送れないもの(大きさなど)。やり直しても同じなので、やり直させない。
 export class UnsupportedMediaError extends Error {
   constructor(message: string) {
     super(message);

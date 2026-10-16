@@ -12,11 +12,11 @@
 | `src/room/subscription.ts` | 購読するトラックの決め方 | `lib/room/subscription.dart` |
 | `src/room/captionBoard.ts` | 字幕の断片の連結と確定、消したテキスト | `lib/room/caption_board.dart` |
 | `src/room/textSender.ts` | テキスト入力の送り直しと `TextStatus` | `lib/room/text_sender.dart` |
-| `src/room/mediaFeed.ts` | ルームの表示の画像・動画、字幕との並べ方 | `lib/room/media_feed.dart` |
+| `src/room/roomTimeline.ts` | 履歴の行と字幕を1本にしたタイムライン(読み足し、つなぎ直しの抜けの埋め方、墓石) | `lib/room/media_feed.dart` を広げたもの |
 | `src/room/mediaReceiver.ts` | topic `media` を履歴で確かめてから出す | `lib/room/media_receiver.dart` |
 | `src/room/deletionReceiver.ts` | topic `deletion` を履歴で確かめてから反映する | `lib/room/deletion_receiver.dart` |
 | `src/room/deletionLabels.ts` | 「削除された…」の言い方 | `lib/screens/deletion_widgets.dart` の一部 |
-| `src/media/mediaUploader.ts` | 画像・動画の送信(整える → uploads → PUT → complete。マルチパートは同時に4本、上限 10GB) | `lib/media/media_uploader.dart`、`api_media_backend.dart` |
+| `src/media/mediaUploader.ts` | 画像・動画・ファイルの送信(整える → uploads → PUT → complete。マルチパートは同時に4本、上限 10GB。形式は問わない) | `lib/media/media_uploader.dart`、`api_media_backend.dart` |
 | `src/media/mediaType.ts` | 先頭のバイトで形式を見分ける | `lib/media/media_type.dart` |
 | `src/media/preparedMedia.ts` | 整えた画像・動画の形、上限、`MediaPreparer` | `lib/media/media_preparer.dart` の一部 |
 | `src/media/signedPut.ts` | 署名付き URL への PUT の口(`SignedPut`) | `lib/media/http_put.dart` の取り決め |
@@ -30,8 +30,8 @@ DOM の API は使わない。`tsconfig.json` の `lib` に DOM を入れず、�
 | `ClientApiOptions.getAccessToken` | ログインとトークンの更新 | `oidc-client-ts` | 未定 |
 | `RoomPlatform.attachAudio` / `detachAudio` | 購読した音声を鳴らす | `track.attach()` の `<audio>` を置く | 要らない(SDK が鳴らす) |
 | `RoomPlatform.startBackground` / `stopBackground` | 入室中のバックグラウンドの音声 | 無し | フォアグラウンドサービス、iOS の音声のバックグラウンド |
-| `MediaPreparer` | 選んだものを送る形に整える(サムネイル、幅・高さ、動画の変換) | まだ無い | 未定 |
-| `SignedPut` | 本体の範囲を読みながらの PUT と進み具合 | まだ無い(`Blob.slice` と `XMLHttpRequest` の予定) | 未定 |
+| `MediaPreparer` | 選んだものを送る形に整える(サムネイル、幅・高さ、動画の変換) | `apps/web/src/webMedia.ts`(変換はしない) | 未定 |
+| `SignedPut` | 本体の範囲を読みながらの PUT と進み具合 | `apps/web/src/webMedia.ts`(`Blob.slice` と `XMLHttpRequest`) | 未定 |
 
 - `crypto.getRandomValues`(テキストの `message_id`)は、React Native では `react-native-get-random-values` などで足す。
 - `livekit-client` は peerDependency。React Native では `@livekit/react-native`(`livekit-client` を前提にしている)と一緒に入れる。iOS のミュートのモード(`setMicrophoneMuteMode`)のような端末だけの設定は、モバイル版で足す。
@@ -44,4 +44,4 @@ DOM の API は使わない。`tsconfig.json` の `lib` に DOM を入れず、�
 
 ## テスト
 
-`pnpm --dir packages/client-core test`(Vitest。Node で動かす)。Flutter 版の単体テスト(`caption_board_test`、`text_sender_test`、`media_receiver_test`、`deletion_test`、`media_feed_test`、`media_type_test`、`media_uploader_test`、`subscription_test`、`room_session_*_test`)を移した。`fakeAsync` は Vitest の偽のタイマー(`vi.advanceTimersByTimeAsync`)に置き換えた。
+`pnpm --dir packages/client-core test`(Vitest。Node で動かす)。Flutter 版の単体テスト(`caption_board_test`、`text_sender_test`、`media_receiver_test`、`deletion_test`、`media_feed_test`(`roomTimeline.test.ts` に入れた)、`media_type_test`、`media_uploader_test`、`subscription_test`、`room_session_*_test`)を移した。`fakeAsync` は Vitest の偽のタイマー(`vi.advanceTimersByTimeAsync`)に置き換えた。
