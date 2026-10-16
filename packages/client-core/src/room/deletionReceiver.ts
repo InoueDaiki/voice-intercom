@@ -48,7 +48,7 @@ export class DeletionReceiver {
   readonly maxPending: number;
 
   private readonly pending = new Set<string>();
-  private readonly timers = new Set<unknown>();
+  private readonly timers = new Set<ReturnType<typeof setTimeout>>();
   private disposed = false;
 
   constructor(options: DeletionReceiverOptions) {

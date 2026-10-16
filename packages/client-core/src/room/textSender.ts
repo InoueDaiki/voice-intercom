@@ -27,7 +27,7 @@ export class OutgoingText {
   // 最後に届いた TextStatus(TextStatus を送らない古い Agent なら undefined のまま)
   status: TextStatus | undefined;
 
-  /** @internal */ timer: unknown;
+  /** @internal */ timer: ReturnType<typeof setTimeout> | undefined;
   // 送る順番は来たが、canSend が偽で送らずにいる
   /** @internal */ waiting = false;
 

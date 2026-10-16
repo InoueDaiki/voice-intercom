@@ -53,7 +53,7 @@ export class MediaReceiver {
   private readonly pending = new Map<string, number>();
   // 次の読み込みで確かめるもの(届いたばかりか、読み直しの時刻が来たもの)
   private readonly due = new Set<string>();
-  private readonly timers = new Set<unknown>();
+  private readonly timers = new Set<ReturnType<typeof setTimeout>>();
   private fetching = false;
   private again = false;
   private disposed = false;

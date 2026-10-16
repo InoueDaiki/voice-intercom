@@ -1,5 +1,6 @@
 packages:
   - apps/admin
+  - apps/web
   - packages/api-client/ts
   - packages/client-core
   - packages/schema/ts
