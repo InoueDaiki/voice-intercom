@@ -5,7 +5,7 @@ import {
   TextStatus_State,
   TextStatusSchema,
 } from "@voice-intercom/schema/voiceintercom/v1/text_status_pb";
-import { ParticipantKind } from "livekit-client";
+import { type LocalAudioTrack, ParticipantKind, type Room } from "livekit-client";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import type { TimelineEvent } from "../api.ts";
@@ -223,5 +223,123 @@ describe("削除", () => {
     expect(session.canDeleteMedia(mine)).toBe(true);
     expect(session.canDeleteMedia(mediaEvent("2026-10-13T00:00:03.000Z", { senderId: "bob" }))).toBe(false);
     expect(session.canDeleteMedia(tombstoneOf(mine))).toBe(false);
+  });
+});
+
+// 入室とマイクのための偽の Room とマイクのトラック
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (e: unknown) => void } {
+  let resolve!: (value: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function fakeMic() {
+  const track = {
+    mute: vi.fn(async () => {}),
+    unmute: vi.fn(async () => {}),
+    stop: vi.fn(),
+  };
+  return { track, asTrack: track as unknown as LocalAudioTrack };
+}
+
+function fakeRoom(options: { connect?: Promise<void>; publishTrack?: () => Promise<unknown> } = {}) {
+  const room = {
+    on: vi.fn(() => room),
+    connect: vi.fn(() => options.connect ?? Promise.resolve()),
+    remoteParticipants: new Map(),
+    localParticipant: { publishTrack: vi.fn(options.publishTrack ?? (async () => ({}))) },
+    removeAllListeners: vi.fn(),
+    disconnect: vi.fn(async () => {}),
+    canPlaybackAudio: true,
+  };
+  return { room, asRoom: room as unknown as Room };
+}
+
+describe("入室とマイク", () => {
+  test("入室を待つ間に PTT を押していたら、入室したらミュートを外す", async () => {
+    const connecting = deferred<void>();
+    const { asRoom } = fakeRoom({ connect: connecting.promise });
+    const mic = fakeMic();
+    const session = newSession({ room: asRoom, createMicTrack: async () => mic.asTrack });
+
+    const joined = session.connect("wss://example", "token");
+    session.setPressing(true);
+    await flush();
+    expect(mic.track.unmute).not.toHaveBeenCalled();
+
+    connecting.resolve();
+    await joined;
+    await flush();
+    expect(session.connected).toBe(true);
+    expect(mic.track.unmute).toHaveBeenCalledTimes(1);
+    expect(session.talking).toBe(true);
+  });
+
+  test("マイクのトラックを作っている間に dispose されたら、トラックを止めてやめる", async () => {
+    const creating = deferred<LocalAudioTrack>();
+    const { room, asRoom } = fakeRoom();
+    const mic = fakeMic();
+    const startBackground = vi.fn(async () => true);
+    const session = newSession({ room: asRoom, createMicTrack: () => creating.promise, platform: { startBackground } });
+
+    const joined = session.connect("wss://example", "token");
+    await flush();
+    session.dispose();
+    creating.resolve(mic.asTrack);
+    await joined;
+
+    expect(mic.track.stop).toHaveBeenCalled();
+    expect(room.localParticipant.publishTrack).not.toHaveBeenCalled();
+    expect(startBackground).not.toHaveBeenCalled();
+    expect(session.connected).toBe(false);
+    expect(session.error).toBeUndefined();
+  });
+
+  test("publish している間に dispose されたら、トラックを止めてやめる", async () => {
+    const publishing = deferred<unknown>();
+    const { asRoom } = fakeRoom({ publishTrack: () => publishing.promise });
+    const mic = fakeMic();
+    const startBackground = vi.fn(async () => true);
+    const session = newSession({ room: asRoom, createMicTrack: async () => mic.asTrack, platform: { startBackground } });
+
+    const joined = session.connect("wss://example", "token");
+    await flush();
+    session.dispose();
+    // 切断で publish が失敗しても、エラーにはしない
+    publishing.reject(new Error("切断された"));
+    await joined;
+
+    expect(mic.track.stop).toHaveBeenCalled();
+    expect(startBackground).not.toHaveBeenCalled();
+    expect(session.error).toBeUndefined();
+  });
+
+  test("publish できなければトラックを止める", async () => {
+    const { asRoom } = fakeRoom({
+      publishTrack: async () => {
+        throw new Error("失敗");
+      },
+    });
+    const mic = fakeMic();
+    const session = newSession({ room: asRoom, createMicTrack: async () => mic.asTrack });
+
+    await expect(session.connect("wss://example", "token")).rejects.toThrow("失敗");
+    expect(mic.track.stop).toHaveBeenCalled();
+    expect(session.error).toContain("入室できなかった");
+  });
+
+  test("dispose でマイクのトラックを止める", async () => {
+    const { asRoom } = fakeRoom();
+    const mic = fakeMic();
+    const session = newSession({ room: asRoom, createMicTrack: async () => mic.asTrack });
+
+    await session.connect("wss://example", "token");
+    expect(mic.track.stop).not.toHaveBeenCalled();
+    session.dispose();
+    expect(mic.track.stop).toHaveBeenCalledTimes(1);
   });
 });

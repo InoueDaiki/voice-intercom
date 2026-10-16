@@ -62,6 +62,7 @@ export interface RoomSessionOptions {
   findTextRetryDelaysMs?: number[];
   // テストで差し替える
   room?: Room;
+  createMicTrack?: () => Promise<LocalAudioTrack>;
 }
 
 // データチャネルで受け取ったものの送信元。kind と identity だけを見る
@@ -102,6 +103,7 @@ export class RoomSession extends Observable {
   private readonly hasHistory: boolean;
   private readonly deleteEvent: ((eventId: string) => Promise<TimelineEvent>) | undefined;
   private readonly findTextRetryDelaysMs: number[];
+  private readonly createMicTrack: () => Promise<LocalAudioTrack>;
   // 反映した墓石の event_id
   private readonly appliedDeletions = new Set<string>();
   private mic: LocalAudioTrack | undefined;
@@ -126,6 +128,7 @@ export class RoomSession extends Observable {
     this.findTextRetryDelaysMs = options.findTextRetryDelaysMs ?? [1000, 2000, 4000];
     // 音声だけなので、映像の最適化は要らない
     this.room = options.room ?? new Room({ adaptiveStream: false, dynacast: false });
+    this.createMicTrack = options.createMicTrack ?? (() => createLocalAudioTrack());
     // Agent を知ってから送る。知る前に Agent が返した字幕は捨てるため(TextSender)
     this.textSender = new TextSender({
       send: (m) => this.sendText(m),
@@ -189,8 +192,12 @@ export class RoomSession extends Observable {
         this.error ??= `切断された(${reason === undefined ? "理由不明" : DisconnectReason[reason]})`;
         this.changed();
       });
+    // 入室の途中で dispose されたら(入室中に画面を離れた)、そこでやめる。エラーにはしない
     try {
       await room.connect(url, token, { autoSubscribe: false });
+      if (this.disposed) {
+        return;
+      }
       for (const p of room.remoteParticipants.values()) {
         for (const pub of p.audioTrackPublications.values()) {
           this.maybeSubscribe(p, pub);
@@ -199,12 +206,22 @@ export class RoomSession extends Observable {
       await this.publishMuted();
       // マイクの権限を得た後(publish の後)に始める。権限が無いとマイクのサービスにできない
       await this.startBackground();
+      if (this.disposed) {
+        // 始めている間に dispose された。dispose の止める操作より後に始まったので、止め直す
+        this.stopBackground();
+        return;
+      }
       this.connected = true;
       this.canPlaybackAudio = room.canPlaybackAudio;
       this.changed();
+      // 入室を待つ間に PTT を押していたら、ここでミュートを外す
+      this.queueApplyMic();
       void this.syncHistory();
     } catch (e) {
       this.stopBackground();
+      if (this.disposed) {
+        return;
+      }
       this.error = `入室できなかった: ${e instanceof Error ? e.message : String(e)}`;
       this.changed();
       throw e;
@@ -220,6 +237,11 @@ export class RoomSession extends Observable {
   setPressing(value: boolean): void {
     this.pressing = value;
     this.changed();
+    this.queueApplyMic();
+  }
+
+  // マイクを pressing と connected に揃える操作を、つなぎの後ろに足す
+  private queueApplyMic(): void {
     this.micOps = this.micOps
       .then(() => this.applyMic())
       .catch((e: unknown) => {
@@ -459,6 +481,9 @@ export class RoomSession extends Observable {
     }
     this.disposed = true;
     this.stopBackground();
+    // マイクを放す(ブラウザのマイク使用中の表示を消す)
+    this.mic?.stop();
+    this.mic = undefined;
     this.textSender.dispose();
     this.mediaReceiver?.dispose();
     this.deletionReceiver?.dispose();
@@ -469,12 +494,26 @@ export class RoomSession extends Observable {
   // マイクのトラックを、ミュートしたまま publish する。
   // 話す間だけミュートを外す(services/agent の README の「話者のトラック」)。
   private async publishMuted(): Promise<void> {
-    const track = await createLocalAudioTrack();
+    const track = await this.createMicTrack();
+    if (this.disposed) {
+      track.stop();
+      return;
+    }
     // publish の前にミュートしておくと、ミュートの状態で publish される(音が漏れない)。
     // マイクのミュートはトラックを止めずに無効にするだけ(Room の stopMicTrackOnMute が既定の false)なので、
     // 外すのが速い
-    await track.mute();
-    await this.room.localParticipant.publishTrack(track, { source: Track.Source.Microphone });
+    try {
+      await track.mute();
+      await this.room.localParticipant.publishTrack(track, { source: Track.Source.Microphone });
+    } catch (e) {
+      // publish できなかったトラックは誰も止めないので、ここで止める(マイクを掴んだままにしない)
+      track.stop();
+      throw e;
+    }
+    if (this.disposed) {
+      track.stop();
+      return;
+    }
     this.mic = track;
   }
 
