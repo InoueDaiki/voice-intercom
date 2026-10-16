@@ -386,8 +386,9 @@ result = notify.send_to_users(
   | --- | --- |
   | `/` | ホーム(API の死活) |
   | `/rooms` | ルームの一覧。`/rooms/new` で作成、`/rooms/:roomId` で名前とメンバーの編集、削除 |
-  | `/rooms/:roomId/timeline` | ルームの履歴(新しい順。「もっと見る」で古いものを読む)。区切られた発話はまとめて出し、訳文は折りたたむ。種類と言語で絞り込める(読み込んだ分の中で) |
   | `/users` | プロフィールを登録したユーザーの一覧と、所属しているルーム。名前で絞り込める |
+
+  ルームの中身(履歴)は管理コンソールでは見せない(設計メモの「管理コンソールにルームの履歴を出さない」)。
 
 - API は Vite が中継する(`/api` → `http://localhost:3000`。`/api` は外して渡す)。同じオリジンになるので、ローカルでは CORS が要らない。API は別に `mise run api` で起動しておく([ローカルで API を動かす](#ローカルで-api-を動かす))。
 - 設定は `VITE_` で始まる環境変数で渡す。ローカルでは何も設定しなくてよい。
@@ -399,10 +400,9 @@ result = notify.send_to_users(
   | `VITE_OIDC_LOGOUT_URL` | ログアウトの URL。Cognito では `<cognito_hosted_ui_url>/logout` | なし(探索で得た `end_session_endpoint`) |
   | `VITE_API_BASE_URL` | API の URL | `/api`(Vite の中継) |
 
-- API がなくても画面を確かめられるよう、管理 API(ルーム、ユーザー、履歴)のモックがある。`VITE_API_MOCK=1 mise run admin` で起動すると、メモリ上のデータで応答する(ヘッダーに「モック API」と出る)。ログインは通常どおり模擬 OIDC を使う。
+- API がなくても画面を確かめられるよう、管理 API(ルーム、ユーザー)のモックがある。`VITE_API_MOCK=1 mise run admin` で起動すると、メモリ上のデータで応答する(ヘッダーに「モック API」と出る)。ログインは通常どおり模擬 OIDC を使う。
   - データは再読み込みで初期値に戻る。中身は `apps/admin/src/mockAdminApi.ts`。
   - エラーの表示は次で確かめられる。既にある ID でルームを作る(409)、ルーム `forbidden` を開く(403)、URL に無い ID を入れる(404)、ID `network-error` でルームを作る(通信の失敗)。
-  - 履歴は `warehouse-a`(区切りのある発話、テキスト、画像、動画、ファイル、2ページ分の件数)と `line_2` にある。動画は再生できない空のデータなので「プレビューなし」と出る。
   - モックは開発サーバーでだけ有効になる。`pnpm build` では `VITE_API_MOCK` を設定しても読み込まれず、本番のビルドに入らない。
 - AWS の dev 環境に向けるときは、`terraform output` の値(`oidc_issuer`、`cognito_client_ids.admin`、`cognito_hosted_ui_url`、`api_endpoint`)を、上の変数に渡す。API Gateway は `http://localhost:5173`(管理コンソール)と `http://localhost:5174`(Web 版クライアント)からの CORS を許可している。
 

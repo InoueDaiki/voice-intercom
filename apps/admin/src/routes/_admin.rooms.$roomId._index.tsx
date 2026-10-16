@@ -65,11 +65,6 @@ export default function RoomDetail() {
         <dt>更新日時</dt>
         <dd>{formatDateTime(current.updated_at)}</dd>
       </dl>
-      <p>
-        <Link className="button" to={`/rooms/${encodeURIComponent(current.room_id)}/timeline`}>
-          履歴を見る
-        </Link>
-      </p>
 
       <h2>編集</h2>
       {update.isSuccess && !update.isPending && <p className="success">保存しました。</p>}

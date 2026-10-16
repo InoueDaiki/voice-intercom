@@ -42,37 +42,11 @@ export const LANGUAGE_LABELS: Record<Language, string> = {
   en: "英語",
 };
 
-// 言語コードを日本語名に直す。知らないコードはそのまま、null は「不明」
-export function languageLabel(code: string | null | undefined): string {
-  if (!code) {
-    return "不明";
-  }
-  return code in LANGUAGE_LABELS ? LANGUAGE_LABELS[code as Language] : code;
-}
-
 const dateTimeFormat = new Intl.DateTimeFormat("ja-JP", { dateStyle: "medium", timeStyle: "short" });
 
 export function formatDateTime(iso: string): string {
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? iso : dateTimeFormat.format(date);
-}
-
-// 履歴の時刻。発話の前後がわかるよう、秒まで出す
-const timeFormat = new Intl.DateTimeFormat("ja-JP", { dateStyle: "medium", timeStyle: "medium" });
-
-export function formatTime(iso: string): string {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? iso : timeFormat.format(date);
-}
-
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`;
-  }
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 // API の失敗を、画面に出す文に直す。409 は画面ごとに文が違うので、呼び出し側で先に見る

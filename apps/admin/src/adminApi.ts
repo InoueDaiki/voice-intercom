@@ -1,4 +1,4 @@
-// 管理 API(ルーム、ユーザー、履歴)の呼び出し。画面はここに置いた関数だけを使う。
+// 管理 API(ルーム、ユーザー)の呼び出し。画面はここに置いた関数だけを使う。
 // 型は生成クライアント(@voice-intercom/api-client)から取る。
 
 import type { Schemas } from "@voice-intercom/api-client";
@@ -15,21 +15,6 @@ export type Language = User["language"];
 
 export interface ListResponse<T> {
   items: T[];
-}
-
-// ---- ルームの履歴 ----
-
-// utterance は音声の発話(長い発話は区切られて複数件になる)、text はテキスト入力、media は画像・動画
-export type TimelineEvent = Schemas["TimelineEvent"];
-export type TimelineKind = TimelineEvent["kind"];
-export type TimelineMedia = Schemas["TimelineMedia"];
-// 新しい順。next_before が null なら、それより古いものはない
-export type TimelinePage = Schemas["TimelinePage"];
-
-export interface TimelineQuery {
-  limit?: number;
-  // この event_id より古いものを返す
-  before?: string;
 }
 
 // 話者の言語(services/api の定義と同じ並び)。型は生成物と突き合わせる
@@ -104,7 +89,6 @@ export interface AdminApi {
   updateRoom(roomId: string, body: RoomUpdate): Promise<Room>;
   deleteRoom(roomId: string): Promise<void>;
   listUsers(): Promise<ListResponse<User>>;
-  listTimeline(roomId: string, query?: TimelineQuery): Promise<TimelinePage>;
 }
 
 const path = (room_id: string) => ({ params: { path: { room_id } } });
@@ -118,8 +102,6 @@ const httpAdminApi: AdminApi = {
     await call(api.DELETE("/rooms/{room_id}", path(roomId)));
   },
   listUsers: () => call(api.GET("/users")),
-  listTimeline: (roomId, query) =>
-    call(api.GET("/rooms/{room_id}/timeline", { params: { path: { room_id: roomId }, query } })),
 };
 
 // 開発サーバーで VITE_API_MOCK=1 のときだけ、メモリ上のモックで応答する。
@@ -139,5 +121,4 @@ export const adminApi: AdminApi = {
   updateRoom: async (roomId, body) => (await load()).updateRoom(roomId, body),
   deleteRoom: async (roomId) => (await load()).deleteRoom(roomId),
   listUsers: async () => (await load()).listUsers(),
-  listTimeline: async (roomId, query) => (await load()).listTimeline(roomId, query),
 };
