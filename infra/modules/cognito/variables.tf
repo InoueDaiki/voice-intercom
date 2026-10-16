@@ -37,6 +37,17 @@ variable "mobile_logout_urls" {
   default     = []
 }
 
+variable "web_callback_urls" {
+  description = "Web 版クライアントのリダイレクト先"
+  type        = list(string)
+}
+
+variable "web_logout_urls" {
+  description = "Web 版クライアントのログアウト後のリダイレクト先"
+  type        = list(string)
+  default     = []
+}
+
 variable "admin_callback_urls" {
   description = "管理コンソールのリダイレクト先"
   type        = list(string)

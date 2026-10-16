@@ -16,6 +16,7 @@ services:
     ports:
       - "3000:3000" # API(ローカル実行)
       - "5173:5173" # 管理コンソール(Vite)
+      - "5174:5174" # Web 版クライアント
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

@@ -35,8 +35,11 @@ provider "aws" {
 data "aws_caller_identity" "current" {}
 
 locals {
-  # 管理コンソールをローカル(Vite)で動かすときのオリジン
+  # 管理コンソールと Web 版クライアントを、ローカルの開発サーバーで動かすときのオリジン
   admin_origins = ["http://localhost:5173"]
+  web_origins   = ["http://localhost:5174"]
+  # API と画像・動画のバケットが CORS で許可するオリジン
+  client_origins = concat(local.admin_origins, local.web_origins)
 }
 
 module "auth" {
@@ -49,6 +52,8 @@ module "auth" {
   # モバイルアプリ(React Native)の URL スキームは未定。決まったら合わせる
   mobile_callback_urls = ["voiceintercom://callback"]
   mobile_logout_urls   = ["voiceintercom://signout"]
+  web_callback_urls    = [for o in local.web_origins : "${o}/callback"]
+  web_logout_urls      = local.web_origins
   admin_callback_urls  = [for o in local.admin_origins : "${o}/callback"]
   admin_logout_urls    = local.admin_origins
 }
@@ -101,7 +106,7 @@ module "media" {
   # バケット名は全世界で一意なので、アカウント ID を付ける
   bucket_name          = "${local.name_prefix}-media-${data.aws_caller_identity.current.account_id}"
   force_destroy        = true
-  cors_allowed_origins = local.admin_origins
+  cors_allowed_origins = local.client_origins
 }
 
 # LiveKit の API シークレット。値は Terraform の外で入れる(state に残さない)
@@ -229,7 +234,7 @@ module "api" {
   jwt_issuer           = module.auth.issuer
   jwt_audiences        = local.client_ids
   public_routes        = ["GET /health"]
-  cors_allowed_origins = local.admin_origins
+  cors_allowed_origins = local.client_origins
   log_retention_days   = 14
 
   environment = {
@@ -253,7 +258,7 @@ module "api" {
 }
 
 locals {
-  client_ids = [module.auth.mobile_client_id, module.auth.admin_client_id, module.auth.agent_client_id]
+  client_ids = [module.auth.mobile_client_id, module.auth.web_client_id, module.auth.admin_client_id, module.auth.agent_client_id]
 }
 
 # 話者ごと・発話ごとの録音(Agent が書く)。media は CloudFront でバケット全体を配信するので、

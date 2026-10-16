@@ -386,7 +386,7 @@ result = notify.send_to_users(
   - エラーの表示は次で確かめられる。既にある ID でルームを作る(409)、ルーム `forbidden` を開く(403)、URL に無い ID を入れる(404)、ID `network-error` でルームを作る(通信の失敗)。
   - 履歴は `warehouse-a`(区切りのある発話、テキスト、画像、動画、2ページ分の件数)と `line_2` にある。動画は再生できない空のデータなので「プレビューなし」と出る。
   - モックは開発サーバーでだけ有効になる。`pnpm build` では `VITE_API_MOCK` を設定しても読み込まれず、本番のビルドに入らない。
-- AWS の dev 環境に向けるときは、`terraform output` の値(`oidc_issuer`、`cognito_client_ids.admin`、`cognito_hosted_ui_url`、`api_endpoint`)を、上の変数に渡す。API Gateway は `http://localhost:5173` からの CORS を許可している。
+- AWS の dev 環境に向けるときは、`terraform output` の値(`oidc_issuer`、`cognito_client_ids.admin`、`cognito_hosted_ui_url`、`api_endpoint`)を、上の変数に渡す。API Gateway は `http://localhost:5173`(管理コンソール)と `http://localhost:5174`(Web 版クライアント)からの CORS を許可している。
 
 ## ローカルの DynamoDB と S3
 
@@ -423,7 +423,7 @@ AWS に接続せずに API を動かせるように、devContainer と一緒に�
 
 - **JWT オーソライザーがない**。本番は API Gateway の JWT オーソライザーが先にトークンを確かめ、Lambda の中でも確かめる。ローカルは Lambda の中の検証(`auth.py`。署名・期限・iss・`token_use`・`client_id`)だけになる。Lambda は `requestContext.authorizer` を使わないので、イベントにも入れない。`routeKey` は `public_routes`(`GET /health`)と同じものだけ、それ以外は `$default` にする。
 - ステージは本番と同じ `$default` なので、パスに前置きはない。
-- CORS は本番と同じ設定(メソッド、`authorization`・`content-type`)で、このサーバーが返す。許可するオリジンは `API_CORS_ALLOWED_ORIGINS`(カンマ区切り、既定は `http://localhost:5173`)。Web 版クライアントの開発サーバーから呼ぶときは、そのオリジンを足す。React Native のアプリはブラウザではないので CORS は関係しない。
+- CORS は本番と同じ設定(メソッド、`authorization`・`content-type`)で、このサーバーが返す。許可するオリジンは `API_CORS_ALLOWED_ORIGINS`(カンマ区切り、既定は管理コンソールの `http://localhost:5173` と Web 版クライアントの `http://localhost:5174`)。React Native のアプリはブラウザではないので CORS は関係しない。
 - リクエストは1つずつ処理する(Lambda の1つの実行環境と同じ)。
 
 トークンは模擬 OIDC から取る。`iss` が `OIDC_ISSUER` と合うよう、`DEV_HOST` で接続する。

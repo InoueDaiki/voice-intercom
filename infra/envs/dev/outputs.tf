@@ -9,6 +9,7 @@ output "cognito_hosted_ui_url" {
 output "cognito_client_ids" {
   value = {
     mobile = module.auth.mobile_client_id
+    web    = module.auth.web_client_id
     admin  = module.auth.admin_client_id
     agent  = module.auth.agent_client_id
   }

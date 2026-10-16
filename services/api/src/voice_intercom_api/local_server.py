@@ -38,8 +38,8 @@ PUBLIC_ROUTES = frozenset({"GET /health"})
 CORS_ALLOW_METHODS = "GET,POST,PUT,PATCH,DELETE"
 CORS_ALLOW_HEADERS = "authorization,content-type"
 CORS_MAX_AGE = "3600"
-# 許可するオリジン(カンマ区切り)。本番の dev 環境と同じく、管理コンソールの開発サーバー
-DEFAULT_CORS_ORIGINS = "http://localhost:5173"
+# 許可するオリジン(カンマ区切り)。本番の dev 環境と同じく、管理コンソールと Web 版クライアントの開発サーバー
+DEFAULT_CORS_ORIGINS = "http://localhost:5173,http://localhost:5174"
 
 # 読み直しのために見張るディレクトリ(このパッケージ)
 _PACKAGE_DIR = Path(__file__).resolve().parent

@@ -24,6 +24,10 @@ output "mobile_client_id" {
   value = aws_cognito_user_pool_client.mobile.id
 }
 
+output "web_client_id" {
+  value = aws_cognito_user_pool_client.web.id
+}
+
 output "admin_client_id" {
   value = aws_cognito_user_pool_client.admin.id
 }

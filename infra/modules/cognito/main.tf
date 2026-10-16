@@ -122,6 +122,34 @@ resource "aws_cognito_user_pool_client" "admin" {
   }
 }
 
+# Web 版クライアント。公開クライアントで PKCE を使う。管理コンソールとは分ける
+resource "aws_cognito_user_pool_client" "web" {
+  name         = "web"
+  user_pool_id = aws_cognito_user_pool.this.id
+
+  generate_secret                      = false
+  allowed_oauth_flows_user_pool_client = true
+  allowed_oauth_flows                  = ["code"]
+  allowed_oauth_scopes                 = local.user_scopes
+  supported_identity_providers         = ["COGNITO"]
+  callback_urls                        = var.web_callback_urls
+  logout_urls                          = var.web_logout_urls
+
+  explicit_auth_flows           = ["ALLOW_REFRESH_TOKEN_AUTH"]
+  prevent_user_existence_errors = "ENABLED"
+  enable_token_revocation       = true
+
+  access_token_validity  = 60
+  id_token_validity      = 60
+  refresh_token_validity = 30
+
+  token_validity_units {
+    access_token  = "minutes"
+    id_token      = "minutes"
+    refresh_token = "days"
+  }
+}
+
 # LiveKit Agent。秘密を持つクライアントで、client credentials でトークンを取る
 resource "aws_cognito_user_pool_client" "agent" {
   name         = "agent"
