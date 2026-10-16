@@ -1,3 +1,0 @@
-# Flutter はホストでだけ使う(devContainer には入れない)
-[tools]
-flutter = "3.47.6"

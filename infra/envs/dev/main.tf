@@ -46,7 +46,7 @@ module "auth" {
   domain_prefix       = local.name_prefix
   deletion_protection = false
 
-  # Flutter アプリの URL スキームは未定。決まったら合わせる
+  # モバイルアプリ(React Native)の URL スキームは未定。決まったら合わせる
   mobile_callback_urls = ["voiceintercom://callback"]
   mobile_logout_urls   = ["voiceintercom://signout"]
   admin_callback_urls  = [for o in local.admin_origins : "${o}/callback"]

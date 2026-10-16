@@ -27,12 +27,12 @@ variable "deletion_protection" {
 }
 
 variable "mobile_callback_urls" {
-  description = "Flutter アプリのリダイレクト先(カスタム URL スキーム)"
+  description = "モバイルアプリのリダイレクト先(カスタム URL スキーム)"
   type        = list(string)
 }
 
 variable "mobile_logout_urls" {
-  description = "Flutter アプリのログアウト後のリダイレクト先"
+  description = "モバイルアプリのログアウト後のリダイレクト先"
   type        = list(string)
   default     = []
 }

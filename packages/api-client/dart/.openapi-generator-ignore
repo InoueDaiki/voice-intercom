@@ -1,7 +1,0 @@
-# openapi-generator が書かないファイル(.gitignore と同じ書式)
-# アプリから path で参照するライブラリなので、CI やドキュメントの雛形は要らない
-.travis.yml
-git_push.sh
-README.md
-doc/**
-test/**

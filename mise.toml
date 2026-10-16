@@ -1,5 +1,4 @@
 # ツールの版とタスク。devContainer とホストの両方でこのファイルを使う。
-# Flutter だけは apps/mobile/mise.toml で管理する(ホスト専用)。
 
 [vars]
 # LiveKit サーバーの版。devContainer の livekit-server と、ホストの mise run livekit のイメージの両方に使う
@@ -30,26 +29,20 @@ description = "依存関係をインストールする"
 run = ["uv sync --all-packages", "pnpm install"]
 
 [tasks.gen]
-description = "proto と REST API から Python / TypeScript / Dart のコードを生成する"
+description = "proto と REST API から Python / TypeScript のコードを生成する"
 depends = ["gen:proto", "gen:api"]
 
 [tasks."gen:proto"]
-description = "proto から Python / TypeScript / Dart の型を生成する"
+description = "proto から Python / TypeScript の型を生成する"
 run = "buf generate"
 
 [tasks."gen:api"]
-description = "Pydantic のモデルから OpenAPI を出し、TypeScript と Dart のクライアントを生成する"
+description = "Pydantic のモデルから OpenAPI を出し、TypeScript のクライアントを生成する"
 dir = "packages/api-client"
-# Dart の生成(openapi-generator)にだけ Java を使う。ホストの mise install では入らない
-tools = { java = "temurin-25.0.4+7.0.LTS" }
-env = { LANG = "C.UTF-8" }
 run = [
   "uv run python -m voice_intercom_api.openapi > openapi.json",
   # openapi-typescript は TypeScript 7 では動かないので、5 系と一緒に dlx で動かす
   "pnpm --dir ts gen",
-  # 消えたモデルのファイルが残らないよう、生成し直す
-  "rm -rf dart/lib dart/.openapi-generator",
-  "pnpm dlx @openapitools/openapi-generator-cli@2.41.0 generate --generator-key dart",
 ]
 
 [tasks.lint]

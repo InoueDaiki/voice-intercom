@@ -12,12 +12,11 @@ inputs:
   mise-cache-save-post:
     description: >-
       true なら、mise のキャッシュをジョブの最後に保存する。
-      タスクの中で入るツール(gen:api の Java)もキャッシュに含めたいときに使う
+      タスクの中で入るツールもキャッシュに含めたいときに使う
     default: "false"
   working-directory:
     description: >-
-      mise を動かすディレクトリ。サブディレクトリの mise.toml(apps/mobile の Flutter など)の
-      ツールも入れたいときに指定する
+      mise を動かすディレクトリ。サブディレクトリの mise.toml のツールも入れたいときに指定する
     default: "."
   python:
     description: true なら uv sync する

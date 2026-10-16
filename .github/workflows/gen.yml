@@ -1,5 +1,5 @@
 # 生成物(packages/schema/*、packages/api-client/*)がコミットされたものと一致するかを確かめる。
-# gen:api は Java(openapi-generator)と pnpm dlx を使って重いので、生成に関係するパスが変わったときだけ動かす
+# gen:api は pnpm dlx を使って重いので、生成に関係するパスが変わったときだけ動かす
 name: 生成物
 
 on:
@@ -46,17 +46,15 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           mise-cache-prefix: mise-v1-gen
-          # gen:api のタスクで入る Java もキャッシュに含める
-          mise-cache-save-post: "true"
           python: "true"
-      # pnpm dlx で取ってくる openapi-typescript と openapi-generator-cli(と、それが落とす jar)
+      # pnpm dlx で取ってくる openapi-typescript
       - name: pnpm dlx のキャッシュ
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/pnpm/dlx
           key: >-
             pnpm-dlx-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.toml',
-            'packages/api-client/ts/package.json', 'packages/api-client/openapitools.json') }}
+            'packages/api-client/ts/package.json') }}
       - run: mise run gen
       # git diff は追跡していないファイルを見ないので、新しく増えたファイルも status で確かめる
       - name: 差分がないか

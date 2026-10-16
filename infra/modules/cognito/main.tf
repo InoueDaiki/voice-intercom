@@ -66,7 +66,7 @@ locals {
   user_scopes = ["openid", "email", "profile"]
 }
 
-# Flutter アプリ。公開クライアント(秘密を持たない)で PKCE を使う
+# モバイルアプリ(React Native)。公開クライアント(秘密を持たない)で PKCE を使う
 resource "aws_cognito_user_pool_client" "mobile" {
   name         = "mobile"
   user_pool_id = aws_cognito_user_pool.this.id

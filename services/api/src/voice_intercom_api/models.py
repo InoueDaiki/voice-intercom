@@ -1,4 +1,4 @@
-"""REST API のモデル。OpenAPI と、TypeScript / Dart のクライアントの生成元になる。"""
+"""REST API のモデル。OpenAPI と、TypeScript のクライアントの生成元になる。"""
 
 from typing import Annotated, Literal
 

@@ -9,7 +9,8 @@
 ```mermaid
 flowchart LR
   subgraph clients["クライアント"]
-    mobile["Flutter アプリ<br>(iOS / Android)"]
+    web["Web 版クライアント<br>(Vite + React)"]
+    mobile["モバイル版クライアント<br>(React Native。後から作る)"]
     admin["管理コンソール<br>(Vite + React)"]
   end
 
@@ -33,8 +34,10 @@ flowchart LR
     fcm["FCM<br>(iOS は APNs 経由)"]
   end
 
+  web -->|"ログイン"| cognito
   mobile -->|"ログイン"| cognito
   admin -->|"ログイン"| cognito
+  web -->|"REST(JWT)"| apigw
   mobile -->|"REST(JWT)"| apigw
   admin -->|"REST(JWT)"| apigw
   apigw --> lambda
@@ -42,6 +45,7 @@ flowchart LR
   lambda -->|"push"| fcm
   fcm -->|"通知"| mobile
 
+  web <-->|"音声・チャット・字幕"| sfu
   mobile <-->|"音声・チャット・字幕"| sfu
   sfu <-->|"話者の音声 / 翻訳音声・字幕"| agent
   agent -->|"WebSocket"| openai
@@ -49,6 +53,8 @@ flowchart LR
   agent -->|"テキストの保存<br>(client credentials)"| apigw
   agent -->|"録音"| s3
 
+  web -->|"署名付き URL でアップロード"| s3
+  web -->|"表示・再生"| cf
   mobile -->|"署名付き URL でアップロード"| s3
   mobile -->|"表示・再生"| cf
   cf --> s3
@@ -68,20 +74,21 @@ flowchart LR
   class s3 storage
   class cf network
   class cognito security
-  class mobile,admin,sfu,openai,tts,fcm external
+  class web,mobile,admin,sfu,openai,tts,fcm external
 ```
 
 ## 構成
 
 | パス | 内容 | 開発する場所 |
 | --- | --- | --- |
-| `apps/mobile` | Flutter アプリ(iOS / Android) | ホスト |
 | `apps/admin` | 管理コンソール(Vite + React) | devContainer |
+| `apps/web` | Web 版クライアント(Vite + React)。これから作る | devContainer |
+| `apps/mobile` | モバイル版クライアント(React Native)。Web 版がある程度できてから作る | ホスト |
 | `services/agent` | LiveKit Agent(Python) | devContainer |
 | `services/api` | API Gateway + Lambda(Python) | devContainer |
 | `proto/` | データチャネルで流すメッセージの定義(Protobuf) | devContainer |
-| `packages/schema/{python,ts,dart}` | `proto/` から生成した型。生成物もコミットする | 生成は devContainer |
-| `packages/api-client/{ts,dart}` | REST API のクライアント。`services/api` の Pydantic のモデルから出した `openapi.json` をもとに生成する。生成物もコミットする | 生成は devContainer |
+| `packages/schema/{python,ts}` | `proto/` から生成した型。生成物もコミットする | 生成は devContainer |
+| `packages/api-client/ts` | REST API のクライアント(TypeScript)。`services/api` の Pydantic のモデルから出した `openapi.json` をもとに生成する。生成物もコミットする | 生成は devContainer |
 | `infra/` | Terraform(`envs/dev`、`envs/prod`。同じ AWS アカウントで名前を分ける) | devContainer |
 
 ## セットアップ
@@ -90,8 +97,7 @@ flowchart LR
 
 1. Docker Desktop と [mise](https://mise.jdx.dev) を入れる(`brew install mise`)。
 2. `cp .env.example .env` を実行し、`DEV_HOST` と `OIDC_ISSUER` をホストの LAN の IP に書き換える。
-3. `mise install` を実行する。Flutter を使うときは `apps/mobile` でも `mise install` を実行する。LiveKit サーバーは macOS 向けのバイナリが配布されていないので、ホストには入れず、`mise run livekit` が公式のイメージ(`livekit/livekit-server`)を Docker で動かす。版は `mise.toml` の `[vars]` の `livekit_version` で、devContainer の `livekit-server` と揃えてある。
-4. Flutter の iOS ビルドには Xcode が必要。初回は `sudo xcodebuild -license` で同意しておく。
+3. `mise install` を実行する。LiveKit サーバーは macOS 向けのバイナリが配布されていないので、ホストには入れず、`mise run livekit` が公式のイメージ(`livekit/livekit-server`)を Docker で動かす。版は `mise.toml` の `[vars]` の `livekit_version` で、devContainer の `livekit-server` と揃えてある。
 
 ### devContainer
 
@@ -103,7 +109,7 @@ GitHub CLI(`gh`。版は `mise.toml`)を使うときは、初回に `gh auth log
 
 | コマンド | 内容 | 実行する場所 |
 | --- | --- | --- |
-| `mise run gen` | proto から型を、REST API から OpenAPI とクライアントを生成する(`gen:proto`、`gen:api`)。Dart のクライアントの生成に使う Java は、初回にこのタスクが入れる | devContainer |
+| `mise run gen` | proto から型を、REST API から OpenAPI とクライアントを生成する(`gen:proto`、`gen:api`) | devContainer |
 | `mise run lint` | buf lint、ruff、pyright、tsc | devContainer |
 | `mise run fmt` | 整形 | devContainer |
 | `mise run test` | pytest | devContainer |
@@ -118,18 +124,17 @@ GitHub CLI(`gh`。版は `mise.toml`)を使うときは、初回に `gh auth log
 
 ## CI(GitHub Actions)
 
-PR と main への push で動く。ツールは mise で `mise.toml` と同じ版を入れ、ジョブの中身は上の `mise run` のタスクと揃えてある。Flutter は `apps/mobile/mise.toml` と同じ版を mise で入れ、`apps/mobile/README.md` の「テスト」と同じコマンドを動かす。
+PR と main への push で動く。ツールは mise で `mise.toml` と同じ版を入れ、ジョブの中身は上の `mise run` のタスクと揃えてある。
 
 | ワークフロー | 動く条件 | 内容 |
 | --- | --- | --- |
 | `ci.yml` | 毎回 | `mise run lint`、`mise run test`、`buf breaking`(PR はベースブランチ、main への push は push 前と比べる) |
 | `gen.yml` | proto、`services/api`、生成物、lock ファイル、`mise.toml` などが変わったとき | `mise run gen` の後に差分がないか(生成物が古ければ落ちる) |
 | `terraform.yml` | `infra/` か `mise.toml` が変わったとき | `terraform fmt -check`、`envs/dev`・`envs/prod` の `init -backend=false` と `validate`(AWS には接続しない) |
-| `flutter.yml` | `apps/mobile`、それが参照する `packages/api-client/dart`・`packages/schema/dart`、`mise.toml` などが変わったとき | `flutter pub get --enforce-lockfile`、`flutter analyze`、`flutter test`(`test/` の単体テストだけ。`integration_test/` はシミュレーターとローカルの環境が要るので動かさない) |
 
 - action はタグではなくコミット SHA で固定し、横にタグを書く。共通の準備(mise、uv、pnpm とそのキャッシュ)は `.github/actions/setup` にまとめてある。
 - `terraform init` は lock ファイルを書き換えない(`-lockfile=readonly`)。プロバイダーを上げたら、`terraform providers lock -platform=linux_amd64 -platform=linux_arm64 -platform=darwin_arm64` で CI の分のハッシュも入れる。
-- `gen.yml`、`terraform.yml`、`flutter.yml` はパスで絞っているので、必須のチェックにすると、関係のない PR が待ち続ける。必須にするのは `ci.yml` のジョブだけにする。
+- `gen.yml`、`terraform.yml` はパスで絞っているので、必須のチェックにすると、関係のない PR が待ち続ける。必須にするのは `ci.yml` のジョブだけにする。
 
 ## AWS(Terraform)
 
@@ -280,7 +285,7 @@ complete で履歴に保存した後に、API が LiveKit の Server API でル�
 アプリが受け取るとき:
 
 - topic `media` のデータを `MediaMessage` として読む。同じ `event_id` が2回以上届くことがある(complete のやり直し)ので、`event_id` で重複を捨てる。自分の送ったものも届く。
-- 送信元の参加者があるデータは捨てる(参加者は topic を偽れる)。送信元の参加者が無いだけではサーバーから来たとは言えない(入った直後の参加者のデータも無しで届く)ので、表示の前に履歴(`GET /rooms/{room_id}/timeline`)で `event_id` の行を確かめ、表示には履歴の行を使う(設計メモの「誰がルームに知らせるか」)。モバイルアプリはこの形で受けている(`apps/mobile` の README の「受ける(ルームへの配信)」)。
+- 送信元の参加者があるデータは捨てる(参加者は topic を偽れる)。送信元の参加者が無いだけではサーバーから来たとは言えない(入った直後の参加者のデータも無しで届く)ので、表示の前に履歴(`GET /rooms/{room_id}/timeline`)で `event_id` の行を確かめ、表示には履歴の行を使う(設計メモの「誰がルームに知らせるか」)。Flutter 版のアプリはこの形で受けていた(タグ `flutter-final` の `apps/mobile/README.md` の「受ける(ルームへの配信)」)。
 
 ### 送ったものの削除
 
@@ -418,7 +423,7 @@ AWS に接続せずに API を動かせるように、devContainer と一緒に�
 
 - **JWT オーソライザーがない**。本番は API Gateway の JWT オーソライザーが先にトークンを確かめ、Lambda の中でも確かめる。ローカルは Lambda の中の検証(`auth.py`。署名・期限・iss・`token_use`・`client_id`)だけになる。Lambda は `requestContext.authorizer` を使わないので、イベントにも入れない。`routeKey` は `public_routes`(`GET /health`)と同じものだけ、それ以外は `$default` にする。
 - ステージは本番と同じ `$default` なので、パスに前置きはない。
-- CORS は本番と同じ設定(メソッド、`authorization`・`content-type`)で、このサーバーが返す。許可するオリジンは `API_CORS_ALLOWED_ORIGINS`(カンマ区切り、既定は `http://localhost:5173`)。Flutter の実機アプリはブラウザではないので CORS は関係しない。Flutter Web から直接呼ぶときだけ、そのオリジンを足す。
+- CORS は本番と同じ設定(メソッド、`authorization`・`content-type`)で、このサーバーが返す。許可するオリジンは `API_CORS_ALLOWED_ORIGINS`(カンマ区切り、既定は `http://localhost:5173`)。Web 版クライアントの開発サーバーから呼ぶときは、そのオリジンを足す。React Native のアプリはブラウザではないので CORS は関係しない。
 - リクエストは1つずつ処理する(Lambda の1つの実行環境と同じ)。
 
 トークンは模擬 OIDC から取る。`iss` が `OIDC_ISSUER` と合うよう、`DEV_HOST` で接続する。
