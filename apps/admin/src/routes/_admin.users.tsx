@@ -5,7 +5,7 @@ import { ApiError, type Room } from "../adminApi.ts";
 import { useRooms, useUsers } from "../queries.ts";
 import { errorMessage, formatDateTime, LANGUAGE_LABELS } from "../rooms.ts";
 
-export function UserList() {
+export default function UserList() {
   const users = useUsers();
   const rooms = useRooms();
   const [filter, setFilter] = useState("");

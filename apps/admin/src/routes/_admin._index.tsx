@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { api } from "../api.ts";
 
-export function Home() {
+export default function Home() {
   const health = useQuery({
     queryKey: ["health"],
     queryFn: async () => {

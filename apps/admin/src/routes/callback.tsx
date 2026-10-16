@@ -1,6 +1,6 @@
 import { useAuth } from "react-oidc-context";
 
-export function Callback() {
+export default function Callback() {
   const auth = useAuth();
   if (auth.error) {
     return (

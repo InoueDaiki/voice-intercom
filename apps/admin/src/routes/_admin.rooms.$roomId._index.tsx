@@ -5,7 +5,7 @@ import { useDeleteRoom, useRoom, useUpdateRoom } from "../queries.ts";
 import { RoomForm } from "../RoomForm.tsx";
 import { errorMessage, formatDateTime } from "../rooms.ts";
 
-export function RoomDetail() {
+export default function RoomDetail() {
   const roomId = useParams().roomId ?? "";
   const navigate = useNavigate();
   const room = useRoom(roomId);

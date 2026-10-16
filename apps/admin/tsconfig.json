@@ -7,11 +7,13 @@
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
     "types": ["vite/client", "node"],
+    // react-router typegen が .react-router/types に出す、ルートごとの型(+types)を読む
+    "rootDirs": [".", "./.react-router/types"],
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "vite.config.ts", "react-router.config.ts", ".react-router/types/**/*"]
 }

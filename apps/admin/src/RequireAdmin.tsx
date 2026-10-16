@@ -1,12 +1,12 @@
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import { hasAuthParams, useAuth } from "react-oidc-context";
-import { Outlet, useLocation } from "react-router";
+import { useLocation } from "react-router";
 
 import { ADMIN_GROUP, groupsOf, signOut } from "./auth.ts";
 
 // ログインしていなければログイン画面へ送り、admin グループでなければ画面を見せない。
 // 実際の権限の判定は API がする。ここは表示の出し分けだけ
-export function RequireAdmin() {
+export function RequireAdmin({ children }: { children: ReactNode }) {
   const auth = useAuth();
   const location = useLocation();
   const needsSignIn =
@@ -41,5 +41,5 @@ export function RequireAdmin() {
       </main>
     );
   }
-  return <Outlet />;
+  return children;
 }

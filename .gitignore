@@ -23,6 +23,9 @@ __pycache__/
 # Node
 node_modules/
 dist/
+# React Router の生成物(ルートの型)とビルド
+.react-router/
+apps/*/build/
 .pnpm-store/
 
 

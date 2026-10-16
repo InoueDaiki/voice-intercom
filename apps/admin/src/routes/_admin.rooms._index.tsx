@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { useRooms } from "../queries.ts";
 import { errorMessage, formatDateTime } from "../rooms.ts";
 
-export function RoomList() {
+export default function RoomList() {
   const rooms = useRooms();
 
   return (

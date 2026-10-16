@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 
-export function NotFound() {
+export default function NotFound() {
   return (
     <section>
       <h1>ページが見つかりません</h1>

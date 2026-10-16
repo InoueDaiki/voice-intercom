@@ -49,7 +49,7 @@ function toEntries(events: TimelineEvent[]): Entry[] {
   return entries;
 }
 
-export function RoomTimeline() {
+export default function RoomTimeline() {
   const roomId = useParams().roomId ?? "";
   const room = useRoom(roomId);
   const timeline = useTimeline(roomId);

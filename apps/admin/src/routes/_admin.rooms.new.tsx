@@ -5,7 +5,7 @@ import { useCreateRoom } from "../queries.ts";
 import { RoomForm } from "../RoomForm.tsx";
 import { errorMessage } from "../rooms.ts";
 
-export function RoomCreate() {
+export default function RoomCreate() {
   const navigate = useNavigate();
   const create = useCreateRoom();
 

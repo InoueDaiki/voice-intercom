@@ -10,7 +10,10 @@ function required(name: string, value: string | undefined): string {
 
 export const config = {
   // トークンの iss と一致させる。ローカルは模擬 OIDC(リポジトリ直下の .env の OIDC_ISSUER)
-  oidcIssuer: required("VITE_OIDC_ISSUER", import.meta.env.VITE_OIDC_ISSUER),
+  // ビルドで SPA の index.html を作るときにも読み込まれるので、使うときに確かめる
+  get oidcIssuer(): string {
+    return required("VITE_OIDC_ISSUER", import.meta.env.VITE_OIDC_ISSUER);
+  },
   // Cognito の管理コンソール用のクライアント。模擬 OIDC では何でもよいので、Cognito の名前に揃える
   oidcClientId: import.meta.env.VITE_OIDC_CLIENT_ID || "admin",
   // Cognito はログアウトが標準の end_session_endpoint ではないので、
