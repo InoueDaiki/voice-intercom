@@ -46,7 +46,7 @@ run = [
 ]
 
 [tasks.lint]
-description = "lint と型検査"
+description = "lint と型検査(JS は各パッケージの typecheck。React Router のルートの型も作る)"
 run = [
   "buf lint",
   "uv run ruff check",
@@ -60,8 +60,16 @@ description = "整形"
 run = ["buf format -w", "uv run ruff format", "uv run ruff check --fix"]
 
 [tasks.test]
-description = "テスト"
+description = "テスト(pytest と、JS の Vitest)"
+depends = ["test:py", "test:js"]
+
+[tasks."test:py"]
+description = "Python のテスト(pytest)"
 run = "uv run pytest"
+
+[tasks."test:js"]
+description = "JS のテスト(test のスクリプトがあるパッケージで Vitest)"
+run = "pnpm -r --if-present test"
 
 [tasks."build:api"]
 description = "Lambda(services/api)に載せるディレクトリを .build/api に作る"
@@ -88,6 +96,10 @@ run = "scripts/with-local-aws.sh scripts/local-init.sh"
 [tasks.admin]
 description = "管理コンソールの開発サーバーを起動する(http://localhost:5173)"
 run = "pnpm --dir apps/admin dev"
+
+[tasks.web]
+description = "Web 版クライアントの開発サーバーを起動する(http://localhost:5174)"
+run = "pnpm --dir apps/web dev"
 
 [tasks.livekit]
 description = "ローカルの LiveKit サーバーを公式のイメージで起動する(ホストで実行。Docker が要る)"

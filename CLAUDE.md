@@ -13,7 +13,10 @@
 
 - サーバーサイドは Python 3.14 に揃える。uv の workspace(`services/*`、`packages/schema/python`)、ruff、pyright を使う。
 - JS は pnpm の workspace。アプリは3つ: 管理コンソール(`apps/admin`、Vite + React の SPA)、Web 版クライアント(`apps/web`、Vite + React の SPA)、モバイル版クライアント(`apps/mobile`、React Native)。
-- クライアントの処理(ルームの状態、字幕、メディアの送受信など)は画面から切り離して共有のパッケージに置き、Web 版とモバイル版で使い回す。Web 版を先に作り、モバイル版は後から足す。
+- 管理コンソールと Web 版のルーティングは、React Router の framework モードを SPA(`ssr: false`)で使い、`src/routes` のファイル名でルートを書く(`@react-router/fs-routes`)。Next.js は使わない。
+- クライアントの処理(ルームの状態、字幕、メディアの送受信など)は画面から切り離して共有のパッケージ(`packages/client-core`)に置き、Web 版とモバイル版で使い回す。Web 版を先に作り、モバイル版は後から足す。
+  - `packages/client-core` では DOM の API を使わない(`lib` に DOM を入れていない)。端末に依るところ(音声の出し方、ファイルの読み方、動画の変換、ログイン)はインターフェースにして、各アプリから差し込む。
+  - テストは Vitest(`mise run test` が pytest と一緒に動かす)。
 - 型の共有:
   - データチャネルのメッセージは `proto/` に定義し、`mise run gen` で生成する。生成物(`packages/schema/*`)は手で編集せず、コミットする。
   - REST API は Pydantic のモデルを正にして OpenAPI を出し、TypeScript のクライアントを生成する。

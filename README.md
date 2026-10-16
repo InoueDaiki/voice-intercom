@@ -81,13 +81,14 @@ flowchart LR
 
 | パス | 内容 | 開発する場所 |
 | --- | --- | --- |
-| `apps/admin` | 管理コンソール(Vite + React) | devContainer |
-| `apps/web` | Web 版クライアント(Vite + React)。これから作る | devContainer |
+| `apps/admin` | 管理コンソール(Vite + React Router の SPA) | devContainer |
+| `apps/web` | Web 版クライアント(Vite + React Router の SPA) | devContainer |
 | `apps/mobile` | モバイル版クライアント(React Native)。Web 版がある程度できてから作る | ホスト |
 | `services/agent` | LiveKit Agent(Python) | devContainer |
 | `services/api` | API Gateway + Lambda(Python) | devContainer |
 | `proto/` | データチャネルで流すメッセージの定義(Protobuf) | devContainer |
 | `packages/schema/{python,ts}` | `proto/` から生成した型。生成物もコミットする | 生成は devContainer |
+| `packages/client-core` | クライアントの画面を持たない処理(ルームの状態、字幕、テキスト入力、画像・動画の送受信と削除)。Web 版とモバイル版で使い回す。[packages/client-core/README.md](packages/client-core/README.md) | devContainer |
 | `packages/api-client/ts` | REST API のクライアント(TypeScript)。`services/api` の Pydantic のモデルから出した `openapi.json` をもとに生成する。生成物もコミットする | 生成は devContainer |
 | `infra/` | Terraform(`envs/dev`、`envs/prod`。同じ AWS アカウントで名前を分ける) | devContainer |
 
@@ -110,11 +111,12 @@ GitHub CLI(`gh`。版は `mise.toml`)を使うときは、初回に `gh auth log
 | コマンド | 内容 | 実行する場所 |
 | --- | --- | --- |
 | `mise run gen` | proto から型を、REST API から OpenAPI とクライアントを生成する(`gen:proto`、`gen:api`) | devContainer |
-| `mise run lint` | buf lint、ruff、pyright、tsc | devContainer |
+| `mise run lint` | buf lint、ruff、pyright、tsc(JS の各パッケージの `typecheck`) | devContainer |
 | `mise run fmt` | 整形 | devContainer |
-| `mise run test` | pytest | devContainer |
+| `mise run test` | pytest(`test:py`)と、JS の Vitest(`test:js`) | devContainer |
 | `mise run api` | REST API をローカルで起動する(`http://localhost:3000`。ローカルの DynamoDB・S3・模擬 OIDC につなぐ) | devContainer |
 | `mise run admin` | 管理コンソールの開発サーバーを起動する(`http://localhost:5173`) | devContainer |
+| `mise run web` | Web 版クライアントの開発サーバーを起動する(`http://localhost:5174`) | devContainer |
 | `mise run livekit` | ローカルの LiveKit サーバーを Docker で起動する(`--dev`、LAN に公開。ポートは 7880、7881、7882/udp) | ホスト |
 | `mise run build:api` | Lambda に載せるディレクトリ(`.build/api`)を作る | devContainer |
 | `mise run build:agent` | Agent のイメージを linux/arm64 でビルドする(`voice-intercom-agent:local`) | devContainer |
@@ -128,7 +130,7 @@ PR と main への push で動く。ツールは mise で `mise.toml` と同じ�
 
 | ワークフロー | 動く条件 | 内容 |
 | --- | --- | --- |
-| `ci.yml` | 毎回 | `mise run lint`、`mise run test`、`buf breaking`(PR はベースブランチ、main への push は push 前と比べる) |
+| `ci.yml` | 毎回 | `mise run lint`、`mise run test:py`、`mise run test:js`(別のジョブ)、`buf breaking`(PR はベースブランチ、main への push は push 前と比べる) |
 | `gen.yml` | proto、`services/api`、生成物、lock ファイル、`mise.toml` などが変わったとき | `mise run gen` の後に差分がないか(生成物が古ければ落ちる) |
 | `terraform.yml` | `infra/` か `mise.toml` が変わったとき | `terraform fmt -check`、`envs/dev`・`envs/prod` の `init -backend=false` と `validate`(AWS には接続しない) |
 
@@ -353,6 +355,17 @@ result = notify.send_to_users(
 - client credentials(Agent から API を呼ぶとき)では、Cognito のアクセストークンと同じ形(`client_id`、`token_use`、`scope`)の claims を返す。設定は [.devcontainer/mock-oidc.json](.devcontainer/mock-oidc.json)。
 - トークンの `iss` はリクエストの Host から決まる。そのため、クライアントは必ず `DEV_HOST` で接続する。コンテナ内から鍵(JWKS)を取るときは、`http://oidc:8090/default/jwks` を使う。
 
+## React のアプリの作り(管理コンソールと Web 版)
+
+どちらも Vite + React Router の framework モードを SPA として使う(`react-router.config.ts` の `ssr: false`。Next.js は使わない。理由は設計メモの「クライアントを React にそろえる」)。
+
+- **ルート**: `src/routes` のファイル名で決める(`@react-router/fs-routes` の `flatRoutes`。`src/routes.ts`)。`appDirectory` は `src`。
+  - `_app.tsx` のように `_` で始まるものはパスを持たないレイアウト(ログインの確かめなど)。`_app.rooms.$roomId.tsx` は `/rooms/:roomId`、`_app._index.tsx` は `/`、`_app.$.tsx` は見つからないパス。
+  - `rooms.$roomId.tsx` と `rooms.$roomId.timeline.tsx` を並べると親子になり、親に `<Outlet />` が要る。親子にしないときは `rooms.$roomId._index.tsx` にする。
+- **root**: `src/root.tsx` が HTML の骨組み(`index.html` の代わり)と、ログイン(`AuthProvider`)・TanStack Query を受け持つ。ルートに `clientLoader` を置き、ビルドで作る `index.html` には `HydrateFallback` だけを入れる。
+- **ビルド**: `pnpm build` は `build/client` に静的なファイルと `index.html` を出す。ビルドのときに Node でルートのモジュールを読み込むので、モジュールの読み込みで `window` を触らない(`UserManager` は最初に使うときに作る)。配信では、知らないパスに `index.html` を返す。
+- **型**: `typecheck` は `react-router typegen` でルートごとの型(`.react-router/types`、コミットしない)を作ってから `tsc` を動かす。
+
 ## 管理コンソール
 
 `mise run admin` で起動し、ホストのブラウザで `http://localhost:5173` を開く(Cognito のリダイレクト先に合わせて、`localhost` で開く)。
@@ -367,6 +380,7 @@ result = notify.send_to_users(
 
   | パス | 内容 |
   | --- | --- |
+  | `/` | ホーム(API の死活) |
   | `/rooms` | ルームの一覧。`/rooms/new` で作成、`/rooms/:roomId` で名前とメンバーの編集、削除 |
   | `/rooms/:roomId/timeline` | ルームの履歴(新しい順。「もっと見る」で古いものを読む)。区切られた発話はまとめて出し、訳文は折りたたむ。種類と言語で絞り込める(読み込んだ分の中で) |
   | `/users` | プロフィールを登録したユーザーの一覧と、所属しているルーム。名前で絞り込める |
@@ -387,6 +401,36 @@ result = notify.send_to_users(
   - 履歴は `warehouse-a`(区切りのある発話、テキスト、画像、動画、2ページ分の件数)と `line_2` にある。動画は再生できない空のデータなので「プレビューなし」と出る。
   - モックは開発サーバーでだけ有効になる。`pnpm build` では `VITE_API_MOCK` を設定しても読み込まれず、本番のビルドに入らない。
 - AWS の dev 環境に向けるときは、`terraform output` の値(`oidc_issuer`、`cognito_client_ids.admin`、`cognito_hosted_ui_url`、`api_endpoint`)を、上の変数に渡す。API Gateway は `http://localhost:5173`(管理コンソール)と `http://localhost:5174`(Web 版クライアント)からの CORS を許可している。
+
+## Web 版クライアント
+
+`mise run web` で起動し、ホストのブラウザで `http://localhost:5174` を開く(Cognito の web クライアントの戻り先に合わせて、`localhost` で開く。マイクも `localhost` か HTTPS でないと使えない)。ルームの処理は `packages/client-core` の `RoomSession` で、画面は `apps/web/src/routes`。
+
+- ログインは標準の OIDC(認可コード + PKCE)。ローカルでは模擬 OIDC のログイン画面で、claims に次を入れる。`username` が LiveKit の identity(ルームの `member_ids` の sub)になる。
+
+  ```json
+  { "token_use": "access", "client_id": "web", "email": "user1@example.com" }
+  ```
+
+- ローカルの API が `web` のトークンを受け付けるよう、`.env` の `OIDC_CLIENT_IDS` に `web` を入れておく(`.env.example` には入っている)。
+- ログインは `localStorage` に持ち、タブを閉じても続く(Cognito の web クライアントのリフレッシュトークンは30日)。
+- 画面:
+
+  | パス | 内容 |
+  | --- | --- |
+  | `/` | 自分がメンバーのルームの一覧 |
+  | `/profile` | 表示名と言語の登録・変更。未登録のうちは、ほかの画面からここへ送る(LiveKit のトークンにプロフィールが要るため) |
+  | `/rooms/:roomId` | 入室。開くと入り、閉じると出る。字幕と画像・動画を時刻の順に出し、PTT とテキスト入力で送る |
+
+- ルームの画面:
+  - **PTT**: ボタンを押している間か、テキスト欄の外で Space を押している間だけマイクのミュートを外す。押したままタブを離れたら離したことにする。
+  - **音**: 購読した音声トラックは `<audio>` に付けて鳴らす(`src/roomPlatform.ts`)。ブラウザの自動再生の制限で鳴らせないときは「音を出す」のボタンを出す(PTT やボタンを押せば鳴る)。
+  - **字幕**: 原文と自分の言語の訳を出す。確定する前は薄く出す。
+  - **テキスト入力**: Enter で送り、Shift+Enter で改行する。送信中・届いた・断られた・失敗した・届かなかったを、入力欄の上に出す。
+  - **削除**: 自分の送ったテキストと画像・動画に「削除」を出し、確認してから消す。消したものは「削除された…」と出す。
+  - **画像・動画**: 受け取ったもの(topic `media` を履歴で確かめたもの)と、入室・つなぎ直しで読んだ履歴の50件にあるものを出す。送ることはまだできない。
+- Web 版では push 通知をせず、バックグラウンドの音声も扱わない(設計メモの「Web 版で決めたこと」)。
+- 設定は管理コンソールと同じ `VITE_` の環境変数(`VITE_OIDC_CLIENT_ID` の既定は `web`。AWS では `cognito_client_ids.web`)。API は Vite が中継する(`/api` → `http://localhost:3000`)。
 
 ## ローカルの DynamoDB と S3
 
