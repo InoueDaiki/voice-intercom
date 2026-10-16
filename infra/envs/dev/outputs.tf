@@ -27,9 +27,10 @@ output "api_endpoint" {
 
 output "table_names" {
   value = {
-    timeline = module.timeline_table.table_name
-    users    = module.users_table.table_name
-    rooms    = module.rooms_table.table_name
+    timeline     = module.timeline_table.table_name
+    users        = module.users_table.table_name
+    rooms        = module.rooms_table.table_name
+    room_members = module.room_members_table.table_name
   }
 }
 

@@ -16,6 +16,7 @@ CLIENT_ID = "mobile"
 LIVEKIT_API_KEY = "devkey"
 LIVEKIT_API_SECRET = "secret-secret-secret-secret-secret"
 ROOMS_TABLE = "voice-intercom-test-rooms"
+ROOM_MEMBERS_TABLE = "voice-intercom-test-room-members"
 USERS_TABLE = "voice-intercom-test-users"
 
 
@@ -68,6 +69,7 @@ def env(monkeypatch: pytest.MonkeyPatch, verifier: auth.TokenVerifier) -> Iterat
         "LIVEKIT_API_KEY": LIVEKIT_API_KEY,
         "LIVEKIT_API_SECRET": LIVEKIT_API_SECRET,
         "ROOMS_TABLE": ROOMS_TABLE,
+        "ROOM_MEMBERS_TABLE": ROOM_MEMBERS_TABLE,
         "USERS_TABLE": USERS_TABLE,
     }.items():
         monkeypatch.setenv(name, value)
@@ -79,7 +81,10 @@ def env(monkeypatch: pytest.MonkeyPatch, verifier: auth.TokenVerifier) -> Iterat
 
 @pytest.fixture
 def tables(monkeypatch: pytest.MonkeyPatch, env: None) -> Iterator[None]:
-    """moto で DynamoDB を模擬し、rooms と users のテーブルを作る(キーは dev 環境と揃える)。"""
+    """moto で DynamoDB を模擬し、rooms、room_members、users のテーブルを作る。
+
+    キーは dev 環境と揃える。
+    """
     # 本物の AWS に向かないよう、ダミーの鍵を使う
     monkeypatch.delenv("AWS_PROFILE", raising=False)
     monkeypatch.delenv("AWS_ENDPOINT_URL_DYNAMODB", raising=False)
@@ -96,6 +101,28 @@ def tables(monkeypatch: pytest.MonkeyPatch, env: None) -> Iterator[None]:
                 AttributeDefinitions=[{"AttributeName": key, "AttributeType": "S"}],
                 KeySchema=[{"AttributeName": key, "KeyType": "HASH"}],
             )
+        dynamodb.create_table(
+            TableName=ROOM_MEMBERS_TABLE,
+            BillingMode="PAY_PER_REQUEST",
+            AttributeDefinitions=[
+                {"AttributeName": "room_id", "AttributeType": "S"},
+                {"AttributeName": "user_id", "AttributeType": "S"},
+            ],
+            KeySchema=[
+                {"AttributeName": "room_id", "KeyType": "HASH"},
+                {"AttributeName": "user_id", "KeyType": "RANGE"},
+            ],
+            GlobalSecondaryIndexes=[
+                {
+                    "IndexName": store.MEMBER_ROOMS_INDEX,
+                    "KeySchema": [
+                        {"AttributeName": "user_id", "KeyType": "HASH"},
+                        {"AttributeName": "room_id", "KeyType": "RANGE"},
+                    ],
+                    "Projection": {"ProjectionType": "KEYS_ONLY"},
+                }
+            ],
+        )
         store._table.cache_clear()  # pyright: ignore[reportPrivateUsage]
         yield
         store._table.cache_clear()  # pyright: ignore[reportPrivateUsage]

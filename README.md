@@ -236,7 +236,7 @@ SSM の値を変えたときは、新しいタスクでないと読み直さな�
 | `GET /rooms` | ルームの一覧(`{items}`) | 管理者はすべて、それ以外は自分がメンバーのルーム |
 | `POST /rooms` | ルームを作る。同じ `room_id` があれば 409 | 管理者 |
 | `GET /rooms/{room_id}` | ルームを取る | 管理者、メンバー |
-| `PATCH /rooms/{room_id}` | 名前とメンバー(`member_ids`、Cognito の sub)を変える | 管理者 |
+| `PATCH /rooms/{room_id}` | 名前とメンバー(`member_ids`、Cognito の sub)を変える。`member_ids` は user_id の順で返す | 管理者 |
 | `DELETE /rooms/{room_id}` | ルームを消す(204) | 管理者 |
 | `GET /users/me` | 自分のプロフィール(表示名、言語)。未登録なら 404 | 本人 |
 | `PUT /users/me` | プロフィールを登録・更新する | 本人 |
@@ -458,7 +458,8 @@ AWS に接続せずに API を動かせるように、devContainer と一緒に�
 | DynamoDB | [DynamoDB Local](https://hub.docker.com/r/amazon/dynamodb-local)(compose の `dynamodb`) | コンテナ内は `http://dynamodb:8000`、ホストからは `http://localhost:8000` |
 | S3 + CloudFront | [SeaweedFS](https://github.com/seaweedfs/seaweedfs) の S3 API(compose の `s3`) | `http://${DEV_HOST}:8333` |
 
-1. 初回と、ボリュームを消した後に `mise run local:init` を実行する。テーブル(`voice-intercom-local-timeline` / `-users` / `-rooms`)とバケット(`voice-intercom-local-media`、Agent の録音の `voice-intercom-local-recordings`)を作る。キーは `infra/envs/dev/main.tf` と揃えてある。DynamoDB Local はポイントインタイムリカバリの API がなく、Terraform のモジュールでは作れないので、スクリプトで作る。
+1. 初回と、ボリュームを消した後に `mise run local:init` を実行する。テーブル(`voice-intercom-local-timeline` / `-users` / `-rooms` / `-room-members`)とバケット(`voice-intercom-local-media`、Agent の録音の `voice-intercom-local-recordings`)を作る。キーは `infra/envs/dev/main.tf` と揃えてある。DynamoDB Local はポイントインタイムリカバリの API がなく、Terraform のモジュールでは作れないので、スクリプトで作る。
+   - room-members を足す前に作ったルーム(rooms の行に `member_ids` がある)は、`mise run local:init` の後に `scripts/with-local-aws.sh uv run python -m voice_intercom_api.migrate_room_members` で移す。dev 環境も、`terraform apply` の後に同じスクリプトを、テーブル名(`ROOMS_TABLE`、`ROOM_MEMBERS_TABLE`)と AWS の認証情報を渡して1回実行する(設計メモの「ルームのメンバーを別のテーブルにする」)。
 2. API などを動かすときは、`scripts/with-local-aws.sh <起動コマンド>` で包む。接続先(`AWS_ENDPOINT_URL_DYNAMODB`、`AWS_ENDPOINT_URL_S3`)、ローカル用の鍵、テーブル名とバケット名(`TIMELINE_TABLE` など、Lambda と同じ名前。Agent の録音の `RECORDING_BUCKET` も)を環境変数で渡す。Agent も `scripts/with-local-aws.sh uv run python -m voice_intercom_agent start` で動かすと、録音をローカルの S3 に書く(`services/agent/README.md` の「録音を確かめる」)。AWS SDK の標準の環境変数なので、アプリにローカル用の分岐は要らない。
 
 注意:

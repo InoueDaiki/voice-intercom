@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 from conftest import auth_headers, http_event
 
-from voice_intercom_api import store
+from voice_intercom_api import migrate_room_members, store
 from voice_intercom_api.app import handler
 
 pytestmark = pytest.mark.usefixtures("tables")
@@ -167,6 +167,35 @@ def test_admin_updates_room(admin: str) -> None:
     assert body["member_ids"] == ["member-3"]
 
 
+def test_member_list_follows_membership(admin: str, member: str) -> None:
+    call("PATCH", "/rooms/room-b", admin, {"member_ids": ["member-2", "member-1"]})
+    call("PATCH", "/rooms/room-a", admin, {"member_ids": ["member-2"]})
+
+    status, body = call("GET", "/rooms", member)
+
+    assert status == 200
+    assert room_ids(body) == ["room-b"]
+    # メンバーは user_id の順で返す
+    assert body["items"][0]["member_ids"] == ["member-1", "member-2"]
+
+
+def test_member_list_skips_stale_index(
+    admin: str, member: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # GSI に外した後の行が残っていても(結果整合)、ルームのメンバーで確かめて出さない
+    call("PATCH", "/rooms/room-a", admin, {"member_ids": ["member-2"]})
+    real_query = store._query  # pyright: ignore[reportPrivateUsage]
+
+    def stale_query(table: Any, **kwargs: Any) -> Any:
+        if kwargs.get("IndexName") == store.MEMBER_ROOMS_INDEX:
+            return iter([{"room_id": "room-a", "user_id": "member-1"}])
+        return real_query(table, **kwargs)
+
+    monkeypatch.setattr(store, "_query", stale_query)
+
+    assert call("GET", "/rooms", member) == (200, {"items": []})
+
+
 def test_update_requires_admin(member: str) -> None:
     assert call("PATCH", "/rooms/room-a", member, {"name": "A2"})[0] == 403
 
@@ -184,6 +213,43 @@ def test_admin_deletes_room(admin: str) -> None:
 
     assert (status, body) == (204, None)
     assert store.get_room("room-a") is None
+    assert store._member_ids("room-a") == []  # pyright: ignore[reportPrivateUsage]
+
+
+def test_recreated_room_drops_leftover_members(admin: str, member: str) -> None:
+    # ルームを消したときにメンバーの行が残っても(途中で失敗したとき)、一覧に出さず、作り直せば消える
+    store._rooms().delete_item(Key={"room_id": "room-a"})  # pyright: ignore[reportPrivateUsage]
+
+    assert call("GET", "/rooms", member) == (200, {"items": []})
+
+    status, body = call("POST", "/rooms", admin, {"room_id": "room-a", "name": "A2"})
+
+    assert status == 201
+    assert body["member_ids"] == []
+    assert store._member_ids("room-a") == []  # pyright: ignore[reportPrivateUsage]
+
+
+def test_migrate_member_ids(member: str) -> None:
+    # room_members に移す前の形の行(member_ids を rooms の行に持つ)
+    store._rooms().put_item(  # pyright: ignore[reportPrivateUsage]
+        Item={
+            "room_id": "room-old",
+            "name": "Old",
+            "member_ids": ["member-1", "member-9", "member-1"],
+            "created_at": "2026-10-01T00:00:00.000Z",
+            "updated_at": "2026-10-01T00:00:00.000Z",
+        }
+    )
+
+    migrate_room_members.main()
+    migrate_room_members.main()  # 2回目は何もしない
+
+    item = store._rooms().get_item(Key={"room_id": "room-old"})["Item"]  # pyright: ignore[reportPrivateUsage]
+    assert "member_ids" not in item
+    status, body = call("GET", "/rooms", member)
+    assert status == 200
+    assert room_ids(body) == ["room-a", "room-old"]
+    assert body["items"][1]["member_ids"] == ["member-1", "member-9"]
 
 
 def test_delete_requires_admin(member: str) -> None:

@@ -9,6 +9,7 @@ ENV = {
     "LIVEKIT_CLIENT_URL": "ws://livekit.test:7880",
     "LIVEKIT_API_KEY": "devkey",
     "ROOMS_TABLE": "rooms",
+    "ROOM_MEMBERS_TABLE": "room-members",
     "USERS_TABLE": "users",
 }
 

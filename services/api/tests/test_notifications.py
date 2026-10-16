@@ -283,8 +283,8 @@ def test_text_body_shortens_and_unknown_sender(agent: str, fake: FakeNotify) -> 
     text(agent, sender="no-profile", body="あ" * 60, present=[])
 
     assert fake.calls[0]["body"] == "誰か: " + "あ" * 50 + "…"
-    # 送信者が member_ids にいなくても、メンバー全員に送る
-    assert fake.calls[0]["user_ids"] == ["speaker", "present-1", "away-1", "away-2"]
+    # 送信者が member_ids にいなくても、メンバー全員に送る(メンバーは user_id の順)
+    assert fake.calls[0]["user_ids"] == ["away-1", "away-2", "present-1", "speaker"]
 
 
 def test_text_excludes_sender_and_present(agent: str, fake: FakeNotify) -> None:

@@ -85,8 +85,7 @@ module "users_table" {
   point_in_time_recovery = false
 }
 
-# ルームの設定と参加者(member_ids)。「自分がメンバーのルーム」は Scan で取る。
-# ルームの数が少ないので GSI や所属のテーブルは作らない(services/api の store.py)
+# ルームの設定(名前、作った時刻)。メンバーは room_members に持つ(services/api の store.py)
 module "rooms_table" {
   source = "../../modules/dynamodb"
 
@@ -96,8 +95,29 @@ module "rooms_table" {
   point_in_time_recovery = false
 }
 
+# ルームのメンバー。1人1行(room_id × user_id)。ルームのメンバーはテーブルの Query で、
+# 「自分がメンバーのルーム」は GSI(user_id-index)の Query で取る
+module "room_members_table" {
+  source = "../../modules/dynamodb"
+
+  name      = "${local.name_prefix}-room-members"
+  hash_key  = "room_id"
+  range_key = "user_id"
+  global_secondary_indexes = [
+    { name = "user_id-index", hash_key = "user_id", range_key = "room_id" },
+  ]
+  deletion_protection    = false
+  point_in_time_recovery = false
+}
+
 locals {
-  table_arns = [module.timeline_table.table_arn, module.users_table.table_arn, module.rooms_table.table_arn]
+  table_arns = [
+    module.timeline_table.table_arn,
+    module.users_table.table_arn,
+    module.rooms_table.table_arn,
+    module.room_members_table.table_arn,
+    "${module.room_members_table.table_arn}/index/*",
+  ]
 }
 
 module "media" {
@@ -178,10 +198,10 @@ data "aws_iam_policy_document" "api" {
     resources = local.table_arns
   }
 
-  # ルームとユーザーの一覧(件数が少ないので Scan で取る)。timeline は Query だけにする
+  # 管理者向けのルームとユーザーの一覧(すべてを返すので Scan で取る)。timeline は Query だけにする
   statement {
     actions   = ["dynamodb:Scan"]
-    resources = [module.users_table.table_arn, module.rooms_table.table_arn]
+    resources = [module.users_table.table_arn, module.rooms_table.table_arn, module.room_members_table.table_arn]
   }
 
   # 署名付き URL の発行(アップロードと、必要なら直接の取得)。HeadObject は GetObject の権限で動く。
@@ -247,14 +267,15 @@ module "api" {
   log_retention_days   = 14
 
   environment = merge({
-    OIDC_ISSUER     = module.auth.issuer
-    OIDC_JWKS_URL   = module.auth.jwks_url
-    OIDC_CLIENT_IDS = join(",", local.client_ids)
-    TIMELINE_TABLE  = module.timeline_table.table_name
-    USERS_TABLE     = module.users_table.table_name
-    ROOMS_TABLE     = module.rooms_table.table_name
-    MEDIA_BUCKET    = module.media.bucket_name
-    MEDIA_BASE_URL  = "https://${module.media.cdn_domain_name}"
+    OIDC_ISSUER        = module.auth.issuer
+    OIDC_JWKS_URL      = module.auth.jwks_url
+    OIDC_CLIENT_IDS    = join(",", local.client_ids)
+    TIMELINE_TABLE     = module.timeline_table.table_name
+    USERS_TABLE        = module.users_table.table_name
+    ROOMS_TABLE        = module.rooms_table.table_name
+    ROOM_MEMBERS_TABLE = module.room_members_table.table_name
+    MEDIA_BUCKET       = module.media.bucket_name
+    MEDIA_BASE_URL     = "https://${module.media.cdn_domain_name}"
     # 消した画像・動画のキャッシュの無効化(deletion.py)
     MEDIA_DISTRIBUTION_ID = module.media.distribution_id
 

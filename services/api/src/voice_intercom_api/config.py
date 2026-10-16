@@ -26,6 +26,7 @@ class Settings:
     agent_name: str
     # DynamoDB のテーブル名(infra/envs/<env>/main.tf、ローカルは scripts/with-local-aws.sh)
     rooms_table: str
+    room_members_table: str
     users_table: str
 
 
@@ -63,6 +64,7 @@ def get_settings() -> Settings:
         livekit_api_secret=_livekit_api_secret(),
         agent_name=os.environ.get("AGENT_NAME", "voice-intercom"),
         rooms_table=_require("ROOMS_TABLE"),
+        room_members_table=_require("ROOM_MEMBERS_TABLE"),
         users_table=_require("USERS_TABLE"),
     )
 

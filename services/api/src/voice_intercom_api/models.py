@@ -7,7 +7,9 @@ from pydantic import BaseModel, Field
 # LiveKit のルーム名にそのまま使う
 RoomId = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,64}$", description="ルームの ID")]
 RoomName = Annotated[str, Field(min_length=1, max_length=100, description="ルームの表示名")]
-MemberIds = Annotated[list[str], Field(description="メンバーの user_id(Cognito の sub)")]
+MemberIds = Annotated[
+    list[str], Field(description="メンバーの user_id(Cognito の sub)。返すときは user_id の順")
+]
 DisplayName = Annotated[str, Field(min_length=1, max_length=50, description="表示名")]
 
 # gpt-realtime-translate が出力できる13言語。

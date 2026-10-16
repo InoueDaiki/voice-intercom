@@ -367,7 +367,7 @@ export interface components {
             name: string;
             /**
              * Member Ids
-             * @description メンバーの user_id(Cognito の sub)
+             * @description メンバーの user_id(Cognito の sub)。返すときは user_id の順
              * @default []
              */
             member_ids: string[];
@@ -577,7 +577,7 @@ export interface components {
             name: string;
             /**
              * Member Ids
-             * @description メンバーの user_id(Cognito の sub)
+             * @description メンバーの user_id(Cognito の sub)。返すときは user_id の順
              */
             member_ids: string[];
             /**

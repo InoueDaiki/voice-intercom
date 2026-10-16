@@ -24,6 +24,7 @@ export AWS_ENDPOINT_URL_S3="http://${DEV_HOST}:8333"
 export TIMELINE_TABLE=voice-intercom-local-timeline
 export USERS_TABLE=voice-intercom-local-users
 export ROOMS_TABLE=voice-intercom-local-rooms
+export ROOM_MEMBERS_TABLE=voice-intercom-local-room-members
 export MEDIA_BUCKET=voice-intercom-local-media
 # CloudFront の代わりに、S3 のバケットを匿名で読む
 export MEDIA_BASE_URL="http://${DEV_HOST}:8333/${MEDIA_BUCKET}"

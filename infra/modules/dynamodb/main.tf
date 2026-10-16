@@ -1,5 +1,13 @@
 # DynamoDB のテーブル1つ。用途ごとにテーブルを分け、このモジュールを用途の数だけ呼ぶ。
-# キーは文字列(S)に揃える。
+# キーは文字列(S)に揃える(GSI のキーも)。
+
+locals {
+  gsi_keys = distinct(flatten([
+    for gsi in var.global_secondary_indexes : compact([gsi.hash_key, gsi.range_key])
+  ]))
+  # GSI のキーのうち、テーブルのキーでないもの
+  gsi_only_keys = [for k in local.gsi_keys : k if !contains(compact([var.hash_key, var.range_key]), k)]
+}
 
 resource "aws_dynamodb_table" "this" {
   name                        = var.name
@@ -19,6 +27,38 @@ resource "aws_dynamodb_table" "this" {
     content {
       name = attribute.value
       type = "S"
+    }
+  }
+
+  dynamic "attribute" {
+    for_each = local.gsi_only_keys
+
+    content {
+      name = attribute.value
+      type = "S"
+    }
+  }
+
+  dynamic "global_secondary_index" {
+    for_each = var.global_secondary_indexes
+
+    content {
+      name            = global_secondary_index.value.name
+      projection_type = global_secondary_index.value.projection_type
+
+      key_schema {
+        attribute_name = global_secondary_index.value.hash_key
+        key_type       = "HASH"
+      }
+
+      dynamic "key_schema" {
+        for_each = global_secondary_index.value.range_key == null ? [] : [global_secondary_index.value.range_key]
+
+        content {
+          attribute_name = key_schema.value
+          key_type       = "RANGE"
+        }
+      }
     }
   }
 

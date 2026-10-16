@@ -20,6 +20,17 @@ variable "ttl_attribute" {
   default     = null
 }
 
+variable "global_secondary_indexes" {
+  description = "GSI。projection_type は ALL / KEYS_ONLY(INCLUDE は使わない)"
+  type = list(object({
+    name            = string
+    hash_key        = string
+    range_key       = optional(string)
+    projection_type = optional(string, "KEYS_ONLY")
+  }))
+  default = []
+}
+
 variable "deletion_protection" {
   description = "テーブルの削除保護"
   type        = bool
