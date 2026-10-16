@@ -1,11 +1,12 @@
 import json
 from collections.abc import Callable
 
+import boto3
 import jwt
 import pytest
 from conftest import LIVEKIT_API_KEY, LIVEKIT_API_SECRET, auth_headers, http_event
 
-from voice_intercom_api import store
+from voice_intercom_api import agent_wake, store
 from voice_intercom_api.app import handler
 
 pytestmark = pytest.mark.usefixtures("tables")
@@ -89,3 +90,56 @@ def test_rejects_agent_token(make_token: Callable[..., str]) -> None:
 @pytest.mark.parametrize("room_name", ["", "a/b", "x" * 65])
 def test_validates_room_name(make_token: Callable[..., str], room_name: str) -> None:
     assert call({"room_name": room_name}, make_token())["statusCode"] == 422
+
+
+# dev の scale to zero: 0 台の Agent を起こす(agent_wake.py)
+
+
+def make_agent_service(desired: int) -> None:
+    ecs = boto3.client("ecs")
+    ecs.create_cluster(clusterName="agent")
+    ecs.register_task_definition(
+        family="agent", containerDefinitions=[{"name": "agent", "image": "x", "memory": 512}]
+    )
+    ecs.create_service(
+        cluster="agent", serviceName="agent", taskDefinition="agent", desiredCount=desired
+    )
+
+
+def desired_count() -> int:
+    res = boto3.client("ecs").describe_services(cluster="agent", services=["agent"])
+    return res["services"][0]["desiredCount"]
+
+
+@pytest.fixture
+def wake_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_ECS_CLUSTER", "agent")
+    monkeypatch.setenv("AGENT_ECS_SERVICE", "agent")
+    agent_wake._ecs.cache_clear()  # pyright: ignore[reportPrivateUsage]
+
+
+def test_wakes_agent_from_zero(make_token: Callable[..., str], wake_env: None) -> None:
+    make_agent_service(0)
+
+    decode(call({"room_name": "room-1"}, make_token()))
+
+    assert desired_count() == 1
+
+
+def test_does_not_touch_running_agent(make_token: Callable[..., str], wake_env: None) -> None:
+    make_agent_service(2)
+
+    decode(call({"room_name": "room-1"}, make_token()))
+
+    # オートスケールなどで増えた台数は変えない
+    assert desired_count() == 2
+
+
+def test_issues_token_even_if_wake_fails(make_token: Callable[..., str], wake_env: None) -> None:
+    # サービスが無い(権限が無い、など)ときも、トークンは出す
+    decode(call({"room_name": "room-1"}, make_token()))
+
+
+def test_no_wake_without_settings() -> None:
+    # ローカルと prod では ECS を呼ばない
+    assert agent_wake.wake() is False

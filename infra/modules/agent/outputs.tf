@@ -10,6 +10,11 @@ output "service_name" {
   value = aws_ecs_service.this.name
 }
 
+output "service_arn" {
+  description = "ECS のサービスの ARN(scale to zero で API に台数を変えさせる権限に使う)"
+  value       = local.service_arn
+}
+
 output "log_group_name" {
   value = aws_cloudwatch_log_group.this.name
 }

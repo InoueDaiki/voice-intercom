@@ -11,7 +11,17 @@ locals {
   # 台数はオートスケールの最小・最大で決める(desired_count は Terraform では作るときにしか使わない)
   max_count = var.image_tag == "" ? 0 : var.max_count
   min_count = min(var.min_count, local.max_count)
-  image     = "${aws_ecr_repository.this.repository_url}:${var.image_tag == "" ? "latest" : var.image_tag}"
+
+  # scale to zero(dev)。台数は API と Agent が 0 と 1 で切り替え、オートスケールは使わない
+  scale_to_zero = var.scale_to_zero_idle_minutes > 0
+  service_arn   = "arn:aws:ecs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:service/${var.name}/${var.name}"
+  scale_to_zero_environment = local.scale_to_zero ? {
+    IDLE_SHUTDOWN_MIN  = tostring(var.scale_to_zero_idle_minutes)
+    ECS_CLUSTER        = var.name
+    ECS_SERVICE        = var.name
+    AWS_DEFAULT_REGION = data.aws_region.current.region
+  } : {}
+  image = "${aws_ecr_repository.this.repository_url}:${var.image_tag == "" ? "latest" : var.image_tag}"
 
   # 履歴の保存(services/agent の history.py)。var.history が null なら何も足さない
   history_environment = var.history == null ? {} : {
@@ -150,6 +160,23 @@ resource "aws_iam_role_policy" "task_protection" {
   policy = data.aws_iam_policy_document.task_protection.json
 }
 
+# scale to zero: 使われなくなったら、Agent が自分のサービスの台数を 0 にする
+data "aws_iam_policy_document" "scale_to_zero" {
+  count = local.scale_to_zero ? 1 : 0
+
+  statement {
+    actions   = ["ecs:UpdateService"]
+    resources = [local.service_arn]
+  }
+}
+
+resource "aws_iam_role_policy" "scale_to_zero" {
+  count  = local.scale_to_zero ? 1 : 0
+  name   = "scale-to-zero"
+  role   = aws_iam_role.task.id
+  policy = data.aws_iam_policy_document.scale_to_zero[0].json
+}
+
 # 録音を置く。録音のバケットの rooms/ の下への PutObject だけを許す(読み取り、一覧、削除はしない)。
 # マルチパートアップロード(CreateMultipartUpload・UploadPart・CompleteMultipartUpload)も
 # s3:PutObject の権限で動く。途中で止まったものはバケットのライフサイクルで消す
@@ -201,7 +228,7 @@ resource "aws_ecs_task_definition" "this" {
       essential = true
 
       environment = [
-        for k, v in merge(var.environment, local.history_environment, local.recording_environment, {
+        for k, v in merge(var.environment, local.history_environment, local.recording_environment, local.scale_to_zero_environment, {
           LIVEKIT_URL     = var.livekit_url
           LIVEKIT_API_KEY = var.livekit_api_key
         }) : { name = k, value = v }
@@ -267,8 +294,9 @@ resource "aws_ecs_service" "this" {
   name            = var.name
   cluster         = aws_ecs_cluster.this.id
   task_definition = aws_ecs_task_definition.this.arn
-  desired_count   = local.min_count
-  launch_type     = "FARGATE"
+  # scale to zero では 0 台から始め、入室で API が 1 台にする
+  desired_count = local.scale_to_zero ? 0 : local.min_count
+  launch_type   = "FARGATE"
 
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
@@ -304,6 +332,9 @@ resource "aws_ecs_service" "this" {
 # ECS 用のサービスリンクロール(AWSServiceRoleForApplicationAutoScaling_ECSService)は、
 # Application Auto Scaling が無ければ作る
 resource "aws_appautoscaling_target" "this" {
+  # scale to zero では使わない(0 台からは CPU の指標が出ず、台数は API と Agent が決める)
+  count = local.scale_to_zero ? 0 : 1
+
   service_namespace  = "ecs"
   resource_id        = "service/${aws_ecs_cluster.this.name}/${aws_ecs_service.this.name}"
   scalable_dimension = "ecs:service:DesiredCount"
@@ -316,11 +347,13 @@ resource "aws_appautoscaling_target" "this" {
 # 断るので、目標はそれより低くして、断り始める前に台数を増やす(公式はスケールアウトを 0.5 付近で
 # 早めにすると書いている)。スケールインは、保護の付いていないタスクからしか止めない
 resource "aws_appautoscaling_policy" "cpu" {
+  count = local.scale_to_zero ? 0 : 1
+
   name               = "${var.name}-cpu"
   policy_type        = "TargetTrackingScaling"
-  service_namespace  = aws_appautoscaling_target.this.service_namespace
-  resource_id        = aws_appautoscaling_target.this.resource_id
-  scalable_dimension = aws_appautoscaling_target.this.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.this[0].service_namespace
+  resource_id        = aws_appautoscaling_target.this[0].resource_id
+  scalable_dimension = aws_appautoscaling_target.this[0].scalable_dimension
 
   target_tracking_scaling_policy_configuration {
     predefined_metric_specification {
@@ -332,4 +365,15 @@ resource "aws_appautoscaling_policy" "cpu" {
     # ルームの増減で上下しやすいので、減らすのはゆっくりにする
     scale_in_cooldown = var.scale_in_cooldown_seconds
   }
+}
+
+# オートスケールに count を付けた(scale to zero で作らない)ので、前からある環境では番号付きに移す
+moved {
+  from = aws_appautoscaling_target.this
+  to   = aws_appautoscaling_target.this[0]
+}
+
+moved {
+  from = aws_appautoscaling_policy.cpu
+  to   = aws_appautoscaling_policy.cpu[0]
 }

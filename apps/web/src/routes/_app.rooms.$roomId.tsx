@@ -202,6 +202,10 @@ function RoomStatus({ session }: { session: RoomSession }) {
       <span className={session.agentPresent ? "tag" : "tag muted"}>
         {session.agentPresent ? "翻訳あり" : "翻訳の準備中"}
       </span>
+      {!session.agentPresent && (
+        // dev では使っていない間 Agent を止めているので、起動を待つことがある(設計メモの「Agent の scale to zero」)
+        <span className="muted hint">翻訳の Agent の起動に1〜2分かかることがあります</span>
+      )}
     </span>
   );
 }

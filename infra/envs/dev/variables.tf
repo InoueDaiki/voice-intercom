@@ -19,13 +19,13 @@ variable "agent_image_tag" {
 }
 
 variable "agent_min_count" {
-  description = "Agent のタスクの最小の台数(オートスケール)"
+  description = "Agent のタスクの最小の台数(オートスケール)。agent_idle_shutdown_minutes が 0 のときだけ使う"
   type        = number
   default     = 1
 }
 
 variable "agent_max_count" {
-  description = "Agent のタスクの最大の台数(オートスケール)。0 にすると Agent を止める(使わないときに Fargate の料金をかけない)"
+  description = "Agent のタスクの最大の台数(オートスケール)。0 にすると Agent を止め、scale to zero でも起こさなくなる"
   type        = number
   default     = 2
 }
@@ -34,4 +34,10 @@ variable "recording_retention_days" {
   description = "録音を残す日数。過ぎたものは S3 のライフサイクルで消す"
   type        = number
   default     = 30
+}
+
+variable "agent_idle_shutdown_minutes" {
+  description = "scale to zero。ジョブ(ルーム)の無い状態がこの分数続いたら Agent を 0 台にし、入室で 1 台にする。0 にすると min_count・max_count でオートスケールする"
+  type        = number
+  default     = 15
 }

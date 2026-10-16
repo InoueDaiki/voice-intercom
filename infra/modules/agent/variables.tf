@@ -136,6 +136,22 @@ variable "image_retention_count" {
   default     = 20
 }
 
+variable "scale_to_zero_idle_minutes" {
+  description = <<-EOT
+    0 より大きければ scale to zero にする(dev 向け)。オートスケールを使わず、台数を 0 か 1 にする。
+    Agent はジョブの無い状態がこの分数続いたら台数を 0 にし(services/agent の scale_to_zero.py)、
+    API は入室のトークンを出すときに 0 なら 1 にする(services/api の agent_wake.py。API に渡す設定は
+    呼び出し元で足す)。0 なら min_count・max_count でオートスケールする
+  EOT
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.scale_to_zero_idle_minutes >= 0
+    error_message = "scale_to_zero_idle_minutes は 0 以上にする"
+  }
+}
+
 variable "container_insights" {
   description = "ECS の Container Insights(CloudWatch の追加料金がかかる)"
   type        = bool

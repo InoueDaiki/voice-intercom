@@ -5,7 +5,7 @@ import logging
 import openai
 from livekit.agents import AgentServer, AutoSubscribe, JobContext, cli
 
-from . import task_protection
+from . import scale_to_zero, task_protection
 from .agent import IntercomAgent
 from .config import Settings, agent_name
 from .text_translation import TextTranslator
@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 server = AgentServer()
 # ECS の上では、ジョブを持っている間だけタスクのスケールイン保護を付ける
 task_protection.install(server)
+# Agent のいないルームを割り当て直し、dev では使われなくなったら台数を 0 にする
+scale_to_zero.install(server, agent_name())
 
 
 @server.rtc_session(agent_name=agent_name())

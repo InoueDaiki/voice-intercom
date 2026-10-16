@@ -204,6 +204,15 @@ data "aws_iam_policy_document" "api" {
     resources = [module.media.distribution_arn]
   }
 
+  # scale to zero: 入室のトークンを出すときに、0 台の Agent を 1 台にする(agent_wake.py)
+  dynamic "statement" {
+    for_each = local.agent_wake ? [1] : []
+    content {
+      actions   = ["ecs:DescribeServices", "ecs:UpdateService"]
+      resources = [module.agent.service_arn]
+    }
+  }
+
   # ListBucket がないと、ないオブジェクトの HeadObject が 404 ではなく 403 になり、
   # メディアの complete で「まだ置かれていない」(409)を見分けられない
   statement {
@@ -237,7 +246,7 @@ module "api" {
   cors_allowed_origins = local.client_origins
   log_retention_days   = 14
 
-  environment = {
+  environment = merge({
     OIDC_ISSUER     = module.auth.issuer
     OIDC_JWKS_URL   = module.auth.jwks_url
     OIDC_CLIENT_IDS = join(",", local.client_ids)
@@ -254,11 +263,22 @@ module "api" {
     # シークレットの値ではなく、SSM のパラメーター名を渡す
     LIVEKIT_API_SECRET_PARAMETER  = aws_ssm_parameter.livekit_api_secret.name
     FCM_SERVICE_ACCOUNT_PARAMETER = aws_ssm_parameter.fcm_service_account.name
-  }
+    }, local.agent_wake ? {
+    # 入室のトークンを出すときに、0 台の Agent を 1 台にする(services/api の agent_wake.py)。
+    # 名前は module.agent の var.name と同じ(module.agent を参照すると、Agent が API の URL を
+    # 参照しているので循環する)
+    AGENT_ECS_CLUSTER = local.agent_name
+    AGENT_ECS_SERVICE = local.agent_name
+  } : {})
 }
 
 locals {
   client_ids = [module.auth.mobile_client_id, module.auth.web_client_id, module.auth.admin_client_id, module.auth.agent_client_id]
+
+  # Agent の ECS のクラスターとサービスの名前(module.agent の var.name)
+  agent_name = "${local.name_prefix}-agent"
+  # API が Agent を起こすか。イメージを push する前と、agent_max_count を 0 にして止めたときは起こさない
+  agent_wake = var.agent_idle_shutdown_minutes > 0 && var.agent_image_tag != "" && var.agent_max_count > 0
 }
 
 # 話者ごと・発話ごとの録音(Agent が書く)。media は CloudFront でバケット全体を配信するので、
@@ -271,16 +291,20 @@ module "recordings" {
   force_destroy  = true
 }
 
-# LiveKit Agent(ECS Fargate)。dev は小さめのタスクを 1〜2 つにする(使わないときは agent_max_count を 0 に)
+# LiveKit Agent(ECS Fargate)。dev は scale to zero にする。入室で API が 1 台にし、使われなくなったら
+# Agent が 0 台にする(agent_idle_shutdown_minutes。設計メモの「Agent の scale to zero」)。
+# agent_max_count を 0 にすると、起こさなくなる
 module "agent" {
   source = "../../modules/agent"
 
-  name      = "${local.name_prefix}-agent"
+  name      = local.agent_name
   image_tag = var.agent_image_tag
   cpu       = 1024
   memory    = 2048
   min_count = var.agent_min_count
   max_count = var.agent_max_count
+
+  scale_to_zero_idle_minutes = var.agent_idle_shutdown_minutes
 
   # LiveKit Cloud ではアプリと Agent の接続先が同じなので、アプリに返す URL をそのまま使う
   livekit_url                      = var.livekit_client_url

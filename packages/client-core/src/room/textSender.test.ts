@@ -122,11 +122,32 @@ test("送ってよくなるまで待ち、resume ですぐ送る", async () => {
   expect(item.state).toBe("delivered");
 });
 
-test("送ってよくならないまま上限まで待てば諦める", async () => {
+test("Agent を待つ間は回数に数えず、上限(3分)まで待ってから諦める", async () => {
   const sender = make({ canSend: () => false });
   const item = sender.submit("はい")!;
-  await elapse(12_000);
+  expect(outgoingTextLabel(item)).toBe("翻訳の準備を待っています");
+  // 送り直しの上限(3回 × 4秒)を過ぎても、Agent の起動を待つ
+  await elapse(120_000);
   expect(sent).toEqual([]);
+  expect(item.state).toBe("sending");
+  expect(item.attempts).toBe(0);
+  await elapse(60_000);
+  expect(item.state).toBe("failed");
+});
+
+test("Agent の起動を待ってから送り、そこから送り直しを数える", async () => {
+  let agentKnown = false;
+  const sender = make({ canSend: () => agentKnown });
+  const item = sender.submit("はい")!;
+  await elapse(90_000);
+  agentKnown = true;
+  sender.resume();
+  await elapse(0);
+  expect(sent.map((m) => m.messageId)).toEqual(["m1"]);
+  expect(outgoingTextLabel(item)).toBe("送信中(1回目)");
+  // 届かなければ、ふつうに 3 回まで送り直す
+  await elapse(12_000);
+  expect(sent).toHaveLength(3);
   expect(item.state).toBe("failed");
 });
 

@@ -30,10 +30,17 @@ export class OutgoingText {
   /** @internal */ timer: ReturnType<typeof setTimeout> | undefined;
   // 送る順番は来たが、canSend が偽で送らずにいる
   /** @internal */ waiting = false;
+  // Agent を待ち始めた時刻(ミリ秒)
+  /** @internal */ waitingSince: number | undefined;
 
   constructor(messageId: string, text: string) {
     this.messageId = messageId;
     this.text = text;
+  }
+
+  // Agent がまだいないので、送らずに待っている(dev の scale to zero では Agent の起動に 1〜2 分かかる)
+  get waitingForAgent(): boolean {
+    return this.state === "sending" && this.waiting;
   }
 
   // Agent が受け付けて(ACCEPTED)、まだ結果(COMPLETED か FAILED)が届いていない
@@ -51,7 +58,11 @@ export interface TextSenderOptions {
   maxAttempts?: number;
   // 今送ってよいか。偽なら送らずに待つ(resume で送る)
   canSend?: () => boolean;
+  // canSend が偽のまま待つ長さの上限(ミリ秒)。過ぎたら諦める
+  maxWaitMs?: number;
   newMessageId?: () => string;
+  // 今の時刻(ミリ秒)。テストで差し替える
+  now?: () => number;
 }
 
 // テキスト入力(topic "text" の TextMessage)を送り、届かなければ送り直す。
@@ -65,7 +76,9 @@ export interface TextSenderOptions {
 // 受け手のアプリは、送信元が Agent の参加者の字幕しか読まない(RoomSession)。Agent が後から
 // 入ったルームでは、アプリが Agent を知るまでの約3秒に届いた字幕は捨てられ、送り直しも Agent が
 // 重複として捨てるので、字幕が返ってこない。そこで canSend が偽(Agent をまだ知らない)の間は
-// 送らずに待ち、resume で送る。待つ間も送ったものとして数え、上限で諦める(Agent がいない)。
+// 送らずに待ち、resume で送る。待つ間は送り直しの回数に数えず、maxWaitMs(既定 3 分)で諦める。
+// dev の scale to zero では、入室してから Agent が起動するまで 1〜2 分かかるため
+// (設計メモの「Agent の scale to zero」)。
 //
 // Agent は受け付け・断り・結果を TextStatus(topic "text_status")で送信者だけに送る(applyStatus)。
 // 字幕と TextStatus のどちらが届いても送り直しを止める(TextStatus を送らない古い Agent でも止まる)。
@@ -77,7 +90,9 @@ export class TextSender {
   readonly ackTimeoutMs: number;
   readonly maxAttempts: number;
   private readonly canSend: () => boolean;
+  readonly maxWaitMs: number;
   private readonly newMessageId: () => string;
+  private readonly now: () => number;
   private readonly itemMap = new Map<string, OutgoingText>();
   private disposed = false;
 
@@ -87,7 +102,9 @@ export class TextSender {
     this.ackTimeoutMs = options.ackTimeoutMs ?? 4000;
     this.maxAttempts = options.maxAttempts ?? 3;
     this.canSend = options.canSend ?? (() => true);
+    this.maxWaitMs = options.maxWaitMs ?? 3 * 60 * 1000;
     this.newMessageId = options.newMessageId ?? randomMessageId;
+    this.now = options.now ?? Date.now;
   }
 
   // 送った順のテキスト
@@ -147,7 +164,7 @@ export class TextSender {
     for (const item of this.itemMap.values()) {
       if (item.waiting && item.state === "sending") {
         clearTimeout(item.timer);
-        this.sendNow(item);
+        this.attempt(item);
       }
     }
   }
@@ -171,22 +188,20 @@ export class TextSender {
     this.onChanged();
   }
 
+  // 送れるなら送り(回数に数える)、送れなければ Agent を待つ
   private attempt(item: OutgoingText): void {
-    item.attempts++;
     item.state = "sending";
-    this.onChanged();
     if (this.canSend()) {
-      this.sendNow(item);
+      item.attempts++;
+      item.waiting = false;
+      item.waitingSince = undefined;
+      // 送信の失敗も、字幕が届かなかったのと同じく時間切れで送り直す
+      this.send(create(TextMessageSchema, { messageId: item.messageId, text: item.text })).catch(() => {});
     } else {
       item.waiting = true;
-      this.startTimer(item);
+      item.waitingSince ??= this.now();
     }
-  }
-
-  private sendNow(item: OutgoingText): void {
-    item.waiting = false;
-    // 送信の失敗も、字幕が届かなかったのと同じく時間切れで送り直す
-    this.send(create(TextMessageSchema, { messageId: item.messageId, text: item.text })).catch(() => {});
+    this.onChanged();
     this.startTimer(item);
   }
 
@@ -195,7 +210,10 @@ export class TextSender {
       if (this.disposed || item.state !== "sending") {
         return;
       }
-      if (item.attempts >= this.maxAttempts) {
+      const gaveUp = item.waiting
+        ? !this.canSend() && this.now() - (item.waitingSince ?? 0) >= this.maxWaitMs
+        : item.attempts >= this.maxAttempts;
+      if (gaveUp) {
         item.state = "failed";
         this.onChanged();
         return;
@@ -233,7 +251,7 @@ export function randomMessageId(): string {
 export function outgoingTextLabel(t: OutgoingText): string | undefined {
   switch (t.state) {
     case "sending":
-      return `送信中(${t.attempts}回目)`;
+      return t.waitingForAgent ? "翻訳の準備を待っています" : `送信中(${t.attempts}回目)`;
     case "delivered":
       // 結果を待っている間だけ出す。結果を送らない古い Agent では、字幕が届いたら消す
       return t.processing ? "届いた" : undefined;

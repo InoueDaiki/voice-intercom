@@ -346,3 +346,7 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+.hint {
+  font-size: 0.8rem;
+}

@@ -186,6 +186,10 @@ PoC で分かったことに従う(`realtime.py` の先頭にまとめてある)
 | `TASK_PROTECTION_EXPIRES_MIN` | `60` | 1回で付ける保護の長さ(分、1〜2880)。Agent が落ちたら、この長さで保護が切れる |
 | `TASK_PROTECTION_RENEW_MIN` | `20` | ジョブがある間、保護を延長する間隔(分)。期限より短くする |
 | `TASK_PROTECTION_MAX_HOURS` | `12` | 保護を続ける長さの上限(時間)。過ぎたら延長をやめる(ジョブが絶えないタスクでもデプロイが終わるように)。`0` なら上限なし |
+| `CATCH_UP_DISPATCH` | `1` | `0` でなければ、LiveKit に登録した後に、人がいて Agent のいないルームを `CreateDispatch` で割り当て直す(`scale_to_zero.py`。Agent が1台もいない間に作られたルームの割り当ては、LiveKit が後から渡さないため) |
+| `CATCH_UP_DELAY_S` | `5` | 登録してから割り当て直すまでの秒数(ふつうの割り当てが届くのを待つ) |
+| `IDLE_SHUTDOWN_MIN` | `0` | 0 より大きく、`ECS_CLUSTER`・`ECS_SERVICE` もあれば、ジョブの無い状態がこの分数続いたら自分の ECS のサービスの台数を 0 にする(dev の scale to zero。Terraform が渡す) |
+| `ECS_CLUSTER`・`ECS_SERVICE` | | 台数を 0 にするサービス(dev の scale to zero) |
 
 ## ローカルで確かめる
 

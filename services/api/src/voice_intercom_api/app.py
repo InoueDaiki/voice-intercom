@@ -22,7 +22,7 @@ from aws_lambda_powertools.utilities.typing import LambdaContext
 from livekit import api as livekit
 from pydantic import BaseModel, Field
 
-from voice_intercom_api import devices, media, notifications, store, timeline
+from voice_intercom_api import agent_wake, devices, media, notifications, store, timeline
 from voice_intercom_api.auth import AdminUser, CurrentUser
 from voice_intercom_api.config import get_settings
 from voice_intercom_api.models import (
@@ -225,6 +225,9 @@ def create_livekit_token(
     profile = store.get_user(user.sub)
     if profile is None:
         raise ServiceError(HTTPStatus.CONFLICT, "プロフィールをまだ登録していない")
+
+    # dev では、使っていない間 0 台にしている Agent を起こす(agent_wake.py)
+    agent_wake.wake()
 
     settings = get_settings()
     token = (
