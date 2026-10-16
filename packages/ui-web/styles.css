@@ -1,0 +1,41 @@
+/* Web のアプリの CSS の入口。各アプリの src/index.css はこれを読み込むだけにする。
+   色・角丸・書体はトークン(design-tokens)からだけ来る。ここやアプリで色を足さない */
+@import "tailwindcss";
+@import "@voice-intercom/design-tokens/theme.css";
+
+/* 部品のクラスも拾う(アプリの外にあるので、自動では探されない) */
+@source "./src";
+
+@layer base {
+  :root {
+    color-scheme: light dark;
+  }
+
+  body {
+    @apply bg-canvas font-sans text-fg antialiased;
+  }
+
+  h1 {
+    @apply text-2xl font-bold tracking-tight;
+  }
+
+  h2 {
+    @apply text-lg font-semibold;
+  }
+
+  a {
+    @apply text-primary-fg underline-offset-2 hover:underline;
+  }
+
+  code {
+    @apply rounded-sm bg-surface-muted px-1 font-mono text-[0.9em];
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-primary;
+  }
+
+  progress {
+    @apply accent-primary;
+  }
+}

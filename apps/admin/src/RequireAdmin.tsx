@@ -1,3 +1,4 @@
+import { Button, FullScreenMessage } from "@voice-intercom/ui-web";
 import { useEffect, type ReactNode } from "react";
 import { hasAuthParams, useAuth } from "react-oidc-context";
 import { useLocation } from "react-router";
@@ -20,25 +21,31 @@ export function RequireAdmin({ children }: { children: ReactNode }) {
 
   if (auth.error) {
     return (
-      <main className="centered">
-        <p>ログインに失敗しました: {auth.error.message}</p>
-        <button type="button" onClick={() => void auth.signinRedirect()}>
-          ログインし直す
-        </button>
-      </main>
+      <FullScreenMessage
+        action={
+          <Button variant="primary" onClick={() => void auth.signinRedirect()}>
+            ログインし直す
+          </Button>
+        }
+      >
+        ログインに失敗しました: {auth.error.message}
+      </FullScreenMessage>
     );
   }
   if (!auth.isAuthenticated || !auth.user) {
-    return <main className="centered">ログイン画面へ移動しています…</main>;
+    return <FullScreenMessage>ログイン画面へ移動しています…</FullScreenMessage>;
   }
   if (!groupsOf(auth.user).includes(ADMIN_GROUP)) {
     return (
-      <main className="centered">
-        <p>このアカウントには管理コンソールを使う権限がありません。</p>
-        <button type="button" onClick={() => void signOut()}>
-          ログアウト
-        </button>
-      </main>
+      <FullScreenMessage
+        action={
+          <Button onClick={() => void signOut()}>
+            ログアウト
+          </Button>
+        }
+      >
+        このアカウントには管理コンソールを使う権限がありません。
+      </FullScreenMessage>
     );
   }
   return children;

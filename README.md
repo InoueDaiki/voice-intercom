@@ -89,6 +89,8 @@ flowchart LR
 | `proto/` | データチャネルで流すメッセージの定義(Protobuf) | devContainer |
 | `packages/schema/{python,ts}` | `proto/` から生成した型。生成物もコミットする | 生成は devContainer |
 | `packages/client-core` | クライアントの画面を持たない処理(ルームの状態、字幕、テキスト入力、画像・動画の送受信と削除)。Web 版とモバイル版で使い回す。[packages/client-core/README.md](packages/client-core/README.md) | devContainer |
+| `packages/design-tokens` | デザイントークン(色、角丸、書体)。3つのアプリで共有する。Tailwind のテーマと React Native の値を生成し、生成物もコミットする。[packages/design-tokens/README.md](packages/design-tokens/README.md) | 生成は devContainer |
+| `packages/ui-web` | 管理コンソールと Web 版の UI 部品と、Tailwind の入口の CSS。画面を書くときの決まりもここ。[packages/ui-web/README.md](packages/ui-web/README.md) | devContainer |
 | `packages/api-client/ts` | REST API のクライアント(TypeScript)。`services/api` の Pydantic のモデルから出した `openapi.json` をもとに生成する。生成物もコミットする | 生成は devContainer |
 | `infra/` | Terraform(`envs/dev`、`envs/prod`。同じ AWS アカウントで名前を分ける) | devContainer |
 
@@ -110,8 +112,8 @@ GitHub CLI(`gh`。版は `mise.toml`)を使うときは、初回に `gh auth log
 
 | コマンド | 内容 | 実行する場所 |
 | --- | --- | --- |
-| `mise run gen` | proto から型を、REST API から OpenAPI とクライアントを生成する(`gen:proto`、`gen:api`) | devContainer |
-| `mise run lint` | buf lint、ruff、pyright、tsc(JS の各パッケージの `typecheck`) | devContainer |
+| `mise run gen` | proto から型を、REST API から OpenAPI とクライアントを、デザイントークンから CSS と TS を生成する(`gen:proto`、`gen:api`、`gen:tokens`) | devContainer |
+| `mise run lint` | buf lint、ruff、pyright、tsc(JS の各パッケージの `typecheck`)、oxlint(デザインの規則。`pnpm lint:design`) | devContainer |
 | `mise run fmt` | 整形 | devContainer |
 | `mise run test` | pytest(`test:py`)と、JS の Vitest(`test:js`) | devContainer |
 | `mise run api` | REST API をローカルで起動する(`http://localhost:3000`。ローカルの DynamoDB・S3・模擬 OIDC につなぐ) | devContainer |
@@ -374,6 +376,7 @@ result = notify.send_to_users(
 - **root**: `src/root.tsx` が HTML の骨組み(`index.html` の代わり)と、ログイン(`AuthProvider`)・TanStack Query を受け持つ。ルートに `clientLoader` を置き、ビルドで作る `index.html` には `HydrateFallback` だけを入れる。
 - **ビルド**: `pnpm build` は `build/client` に静的なファイルと `index.html` を出す。ビルドのときに Node でルートのモジュールを読み込むので、モジュールの読み込みで `window` を触らない(`UserManager` は最初に使うときに作る)。配信では、知らないパスに `index.html` を返す。
 - **型**: `typecheck` は `react-router typegen` でルートごとの型(`.react-router/types`、コミットしない)を作ってから `tsc` を動かす。
+- **見た目**: Tailwind CSS v4(`@tailwindcss/vite`)と `packages/ui-web` の部品で書く。色はトークンの名前だけを使い、明暗は OS の設定で切り替わる。決まりは [packages/ui-web/README.md](packages/ui-web/README.md)。
 
 ## 管理コンソール
 
@@ -440,7 +443,7 @@ result = notify.send_to_users(
   - **字幕**: 原文と自分の言語の訳を出す。確定する前は薄く出す。
   - **テキスト入力**: Enter で送り、Shift+Enter で改行する。送信中・届いた・断られた・失敗した・届かなかったを、入力欄の上に出す。
   - **削除**: 自分の送ったテキストと画像・動画・ファイルに「削除」を出し、確認してから消す。消したものは「削除された…」と出す。
-  - **画像・動画・ファイルを送る**: 📎 で選ぶか、ルームの画面に落とす(複数でよい)。1つずつ順に送り、送信者にだけ段階と進み具合を出す。失敗したら「やり直す」でその段階から続ける(`packages/client-core` の `MediaUploader`)。形式は先頭のバイトで見分ける(`src/webMedia.ts`)。
+  - **画像・動画・ファイルを送る**: クリップのボタンで選ぶか、ルームの画面に落とす(複数でよい)。1つずつ順に送り、送信者にだけ段階と進み具合を出す。失敗したら「やり直す」でその段階から続ける(`packages/client-core` の `MediaUploader`)。形式は先頭のバイトで見分ける(`src/webMedia.ts`)。
     - 画像(JPEG、PNG、WebP、HEIC): そのまま送る。1MB を超えたらサムネイル(JPEG、長い辺 480px)を作る。幅・高さは `createImageBitmap` で測る。ブラウザが読めない形式(多くのブラウザの HEIC)は、サムネイルも幅・高さも無しで送る。
     - 動画: 変換せずにそのまま送る。`<video>` で長さと幅・高さを測り、0.5 秒目のコマからサムネイルを作る。
     - それ以外: ファイルとして送り、名前と大きさ、ダウンロードのリンクを出す(新しいタブで開き、ダウンロードになる)。

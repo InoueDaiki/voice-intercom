@@ -3,4 +3,6 @@ packages:
   - apps/web
   - packages/api-client/ts
   - packages/client-core
+  - packages/design-tokens
+  - packages/ui-web
   - packages/schema/ts

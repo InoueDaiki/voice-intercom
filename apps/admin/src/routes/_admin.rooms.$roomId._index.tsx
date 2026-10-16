@@ -1,3 +1,4 @@
+import { Alert, Button, Card, PageHeader } from "@voice-intercom/ui-web";
 import { Link, useNavigate, useParams } from "react-router";
 
 import type { RoomUpdate } from "../adminApi.ts";
@@ -12,31 +13,30 @@ export default function RoomDetail() {
   const update = useUpdateRoom(roomId);
   const remove = useDeleteRoom(roomId);
 
-  const back = (
-    <p>
-      <Link to="/rooms">← ルームの一覧</Link>
-    </p>
-  );
+  const back = <Link to="/rooms">← ルームの一覧</Link>;
 
   if (room.isPending) {
     return (
       <section>
-        {back}
-        <p>読み込み中…</p>
+        <PageHeader title="ルーム" back={back} />
+        <p className="text-fg-muted">読み込み中…</p>
       </section>
     );
   }
   if (room.isError) {
     return (
       <section>
-        {back}
-        <h1>ルーム「{roomId}」</h1>
-        <div className="error" role="alert">
-          <p>{errorMessage(room.error)}</p>
-          <button type="button" onClick={() => void room.refetch()}>
-            再読み込み
-          </button>
-        </div>
+        <PageHeader title={`ルーム「${roomId}」`} back={back} />
+        <Alert
+          tone="danger"
+          action={
+            <Button size="sm" onClick={() => void room.refetch()}>
+              再読み込み
+            </Button>
+          }
+        >
+          {errorMessage(room.error)}
+        </Alert>
       </section>
     );
   }
@@ -52,54 +52,57 @@ export default function RoomDetail() {
   };
 
   return (
-    <section>
-      {back}
-      <h1>{current.name}</h1>
-      <dl className="meta">
-        <dt>ID</dt>
-        <dd>
-          <code>{current.room_id}</code>
-        </dd>
-        <dt>作成日時</dt>
-        <dd>{formatDateTime(current.created_at)}</dd>
-        <dt>更新日時</dt>
-        <dd>{formatDateTime(current.updated_at)}</dd>
-      </dl>
+    <section className="grid max-w-2xl gap-8">
+      <div>
+        <PageHeader title={current.name} back={back} />
+        <Card>
+          <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">
+            <dt className="text-fg-muted">ID</dt>
+            <dd>
+              <code>{current.room_id}</code>
+            </dd>
+            <dt className="text-fg-muted">作成日時</dt>
+            <dd>{formatDateTime(current.created_at)}</dd>
+            <dt className="text-fg-muted">更新日時</dt>
+            <dd>{formatDateTime(current.updated_at)}</dd>
+          </dl>
+        </Card>
+      </div>
 
-      <h2>編集</h2>
-      {update.isSuccess && !update.isPending && <p className="success">保存しました。</p>}
-      <RoomForm
-        // 保存した後はサーバーの値でフォームを作り直す
-        key={current.updated_at}
-        initial={current}
-        editableId={false}
-        submitLabel="保存"
-        pending={update.isPending}
-        serverError={update.error ? errorMessage(update.error) : undefined}
-        onSubmit={(values) => {
-          // 変えた項目だけを送る
-          const body: RoomUpdate = {};
-          if (values.name !== current.name) {
-            body.name = values.name;
-          }
-          if (values.member_ids.join("\n") !== current.member_ids.join("\n")) {
-            body.member_ids = values.member_ids;
-          }
-          update.mutate(body);
-        }}
-      />
+      <div className="grid gap-3">
+        <h2>編集</h2>
+        {update.isSuccess && !update.isPending && <Alert tone="success">保存しました。</Alert>}
+        <RoomForm
+          // 保存した後はサーバーの値でフォームを作り直す
+          key={current.updated_at}
+          initial={current}
+          editableId={false}
+          submitLabel="保存"
+          pending={update.isPending}
+          serverError={update.error ? errorMessage(update.error) : undefined}
+          onSubmit={(values) => {
+            // 変えた項目だけを送る
+            const body: RoomUpdate = {};
+            if (values.name !== current.name) {
+              body.name = values.name;
+            }
+            if (values.member_ids.join("\n") !== current.member_ids.join("\n")) {
+              body.member_ids = values.member_ids;
+            }
+            update.mutate(body);
+          }}
+        />
+      </div>
 
-      <h2>削除</h2>
-      <div className="danger">
-        <p>ルームを削除すると、メンバーはこのルームに入れなくなります。</p>
-        {remove.error && (
-          <p className="error" role="alert">
-            削除できません: {errorMessage(remove.error)}
-          </p>
-        )}
-        <button type="button" className="danger-button" onClick={onDelete} disabled={remove.isPending}>
-          {remove.isPending ? "削除中…" : "このルームを削除"}
-        </button>
+      <div className="grid gap-3">
+        <h2>削除</h2>
+        <Card tone="danger" className="grid justify-items-start gap-3">
+          <p className="text-sm">ルームを削除すると、メンバーはこのルームに入れなくなります。</p>
+          {remove.error && <Alert tone="danger">削除できません: {errorMessage(remove.error)}</Alert>}
+          <Button variant="danger" onClick={onDelete} disabled={remove.isPending}>
+            {remove.isPending ? "削除中…" : "このルームを削除"}
+          </Button>
+        </Card>
       </div>
     </section>
   );

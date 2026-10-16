@@ -1,4 +1,5 @@
-import { useId, useState, type FormEvent } from "react";
+import { Alert, Button, Card, Field, Input } from "@voice-intercom/ui-web";
+import { useState, type FormEvent } from "react";
 
 import { MemberEditor } from "./MemberEditor.tsx";
 import { ROOM_NAME_MAX, validateRoomId, validateRoomName } from "./rooms.ts";
@@ -25,8 +26,6 @@ export function RoomForm({ initial, editableId, submitLabel, pending, serverErro
   const [values, setValues] = useState(initial);
   // 一度送ろうとするまでは、入力中に検査の結果を出さない
   const [touched, setTouched] = useState(false);
-  const idInput = useId();
-  const nameInput = useId();
 
   const idError = editableId ? validateRoomId(values.room_id) : undefined;
   const nameError = validateRoomName(values.name);
@@ -45,52 +44,42 @@ export function RoomForm({ initial, editableId, submitLabel, pending, serverErro
   };
 
   return (
-    <form className="form" onSubmit={submit} noValidate>
-      {editableId && (
-        <div className="field">
-          <label htmlFor={idInput}>ルーム ID</label>
-          <input
-            id={idInput}
-            value={values.room_id}
-            onChange={(e) => setValues({ ...values, room_id: e.target.value })}
-            maxLength={64}
-            autoComplete="off"
-            aria-invalid={touched && !!idError}
-            disabled={pending}
-          />
-          <small className="muted">半角英数字と - _、64文字以内。作成した後は変えられません。</small>
-          {touched && idError && <small className="error">{idError}</small>}
-        </div>
-      )}
-      <div className="field">
-        <label htmlFor={nameInput}>名前</label>
-        <input
-          id={nameInput}
-          value={values.name}
-          onChange={(e) => setValues({ ...values, name: e.target.value })}
-          aria-invalid={touched && !!nameError}
-          disabled={pending}
-        />
-        <small className="muted">
-          {[...values.name].length} / {ROOM_NAME_MAX}文字
-        </small>
-        {touched && nameError && <small className="error">{nameError}</small>}
-      </div>
+    <form className="grid max-w-2xl gap-4" onSubmit={submit} noValidate>
+      <Card className="grid gap-4">
+        {editableId && (
+          <Field
+            label="ルーム ID"
+            hint="半角英数字と - _、64文字以内。作成した後は変えられません。"
+            error={touched ? idError : undefined}
+          >
+            <Input
+              value={values.room_id}
+              onChange={(e) => setValues({ ...values, room_id: e.target.value })}
+              maxLength={64}
+              autoComplete="off"
+              disabled={pending}
+            />
+          </Field>
+        )}
+        <Field
+          label="名前"
+          hint={`${[...values.name].length} / ${ROOM_NAME_MAX}文字`}
+          error={touched ? nameError : undefined}
+        >
+          <Input value={values.name} onChange={(e) => setValues({ ...values, name: e.target.value })} disabled={pending} />
+        </Field>
+      </Card>
       <MemberEditor
         memberIds={values.member_ids}
         onChange={(member_ids) => setValues({ ...values, member_ids })}
         disabled={pending}
       />
-      {serverError && (
-        <p className="error" role="alert">
-          {serverError}
-        </p>
-      )}
-      <div className="row">
+      {serverError && <Alert tone="danger">{serverError}</Alert>}
+      <div>
         {/* 編集では、何も変えていなければ送れないようにする */}
-        <button type="submit" disabled={pending || (!editableId && !changed)}>
+        <Button type="submit" variant="primary" disabled={pending || (!editableId && !changed)}>
           {pending ? "送信中…" : submitLabel}
-        </button>
+        </Button>
       </div>
     </form>
   );

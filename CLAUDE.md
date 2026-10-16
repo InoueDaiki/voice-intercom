@@ -17,6 +17,8 @@
 - クライアントの処理(ルームの状態、字幕、メディアの送受信など)は画面から切り離して共有のパッケージ(`packages/client-core`)に置き、Web 版とモバイル版で使い回す。Web 版を先に作り、モバイル版は後から足す。
   - `packages/client-core` では DOM の API を使わない(`lib` に DOM を入れていない)。端末に依るところ(音声の出し方、ファイルの読み方、動画の変換、ログイン)はインターフェースにして、各アプリから差し込む。
   - テストは Vitest(`mise run test` が pytest と一緒に動かす)。
+- 画面の見た目は、3つのアプリで同じデザインシステムを使う。値の正は `packages/design-tokens`(`mise run gen` で Tailwind のテーマと React Native の値を生成する)。Web の部品は `packages/ui-web`、モバイル版は後から同じ名前と props で `packages/ui-native` を作る。
+  - 画面を書く前に `packages/ui-web/README.md` の決まりを読む。部品を使い、色はトークンの名前(`packages/design-tokens/generated/TOKENS.md`)を Tailwind のクラスで書く。生の色・`dark:`・Tailwind の既定の色は使わない(`mise run lint` が落とす)。
 - 型の共有:
   - データチャネルのメッセージは `proto/` に定義し、`mise run gen` で生成する。生成物(`packages/schema/*`)は手で編集せず、コミットする。
   - REST API は Pydantic のモデルを正にして OpenAPI を出し、TypeScript のクライアントを生成する。

@@ -1,0 +1,22 @@
+{
+  "name": "@voice-intercom/design-tokens",
+  "version": "0.1.0",
+  "private": true,
+  "description": "デザイントークン(色、角丸、書体)。管理コンソール、Web 版、モバイル版で共有する",
+  "type": "module",
+  "exports": {
+    "./theme.css": "./generated/theme.css",
+    "./native": "./generated/native.ts",
+    "./tokens": "./src/tokens.ts"
+  },
+  "scripts": {
+    "gen": "node scripts/gen.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.1",
+    "typescript": "^7.0.2",
+    "vitest": "5.0.3"
+  }
+}

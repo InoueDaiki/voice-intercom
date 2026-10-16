@@ -1,4 +1,4 @@
-# 生成物(packages/schema/*、packages/api-client/*)がコミットされたものと一致するかを確かめる。
+# 生成物(packages/schema/*、packages/api-client/*、packages/design-tokens/generated)がコミットされたものと一致するかを確かめる。
 # gen:api は pnpm dlx を使って重いので、生成に関係するパスが変わったときだけ動かす
 name: 生成物
 
@@ -10,6 +10,7 @@ on:
       - buf.gen.yaml
       - packages/schema/**
       - packages/api-client/**
+      - packages/design-tokens/**
       # OpenAPI は services/api の Pydantic のモデルから出す
       - services/api/**
       - pyproject.toml

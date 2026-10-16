@@ -1,4 +1,5 @@
 import { LANGUAGE_LABELS, LANGUAGES, type Language } from "@voice-intercom/client-core";
+import { Alert, Button, Card, Field, Input, PageHeader, Select } from "@voice-intercom/ui-web";
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 
@@ -45,40 +46,32 @@ export default function Profile() {
   };
 
   return (
-    <section>
-      <h1>プロフィール</h1>
-      {!registered && <p>ルームに入る前に、表示名と言語を登録してください。</p>}
-      <form className="form" onSubmit={onSubmit}>
-        <label className="field">
-          表示名
-          <input
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-            aria-invalid={displayName !== "" && invalid !== undefined}
-            autoComplete="nickname"
-          />
-        </label>
-        <label className="field">
-          言語(話す言語。翻訳音声と字幕もこの言語で受け取る)
-          <select value={language} onChange={(e) => setLanguage(e.target.value as Language)}>
-            {LANGUAGES.map((l) => (
-              <option key={l} value={l}>
-                {LANGUAGE_LABELS[l]}
-              </option>
-            ))}
-          </select>
-        </label>
-        {displayName !== "" && invalid && <p className="error">{invalid}</p>}
-        {put.isError && (
-          <p className="error" role="alert">
-            保存できません: {errorMessage(put.error)}
-          </p>
-        )}
-        {saved && <p className="success">保存しました。</p>}
-        <div className="row">
-          <button type="submit" disabled={put.isPending || invalid !== undefined}>
+    <section className="mx-auto max-w-lg">
+      <PageHeader
+        title="プロフィール"
+        description={registered ? undefined : "ルームに入る前に、表示名と言語を登録してください。"}
+      />
+      <form className="grid gap-4" onSubmit={onSubmit}>
+        <Card className="grid gap-4">
+          <Field label="表示名" error={displayName !== "" ? invalid : undefined}>
+            <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} autoComplete="nickname" />
+          </Field>
+          <Field label="言語" hint="話す言語。翻訳音声と字幕もこの言語で受け取ります。">
+            <Select value={language} onChange={(e) => setLanguage(e.target.value as Language)}>
+              {LANGUAGES.map((l) => (
+                <option key={l} value={l}>
+                  {LANGUAGE_LABELS[l]}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        </Card>
+        {put.isError && <Alert tone="danger">保存できません: {errorMessage(put.error)}</Alert>}
+        {saved && <Alert tone="success">保存しました。</Alert>}
+        <div>
+          <Button type="submit" variant="primary" disabled={put.isPending || invalid !== undefined}>
             {registered ? "保存する" : "登録する"}
-          </button>
+          </Button>
         </div>
       </form>
     </section>

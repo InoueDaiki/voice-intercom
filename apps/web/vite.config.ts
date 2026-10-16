@@ -1,4 +1,5 @@
 import { reactRouter } from "@react-router/dev/vite";
+import tailwindcss from "@tailwindcss/vite";
 import { defineConfig, loadEnv } from "vite";
 
 // 設定は VITE_ で始まる環境変数で渡す(src/config.ts)。
@@ -6,7 +7,7 @@ import { defineConfig, loadEnv } from "vite";
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   return {
-    plugins: [reactRouter()],
+    plugins: [tailwindcss(), reactRouter()],
     define: {
       "import.meta.env.VITE_OIDC_ISSUER": JSON.stringify(env.VITE_OIDC_ISSUER || env.OIDC_ISSUER || ""),
     },

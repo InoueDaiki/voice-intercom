@@ -1,0 +1,81 @@
+/* 生成物。packages/design-tokens/src/tokens.ts から `mise run gen:tokens` で作る。手で編集しない */
+
+/* Tailwind の既定の色と角丸は消し、ここにあるものだけを使えるようにする */
+@theme {
+  --color-*: initial;
+  --color-canvas: oklch(0.985 0.004 215);
+  --color-surface: oklch(1 0 0);
+  --color-surface-muted: oklch(0.96 0.007 215);
+  --color-surface-strong: oklch(0.925 0.01 215);
+  --color-fg: oklch(0.25 0.02 215);
+  --color-fg-muted: oklch(0.48 0.02 215);
+  --color-border: oklch(0.9 0.01 215);
+  --color-border-strong: oklch(0.64 0.015 215);
+  --color-primary: oklch(0.52 0.085 192);
+  --color-primary-hover: oklch(0.46 0.075 192);
+  --color-on-primary: oklch(1 0 0);
+  --color-primary-soft: oklch(0.95 0.03 192);
+  --color-primary-fg: oklch(0.45 0.075 192);
+  --color-danger: oklch(0.54 0.19 27);
+  --color-on-danger: oklch(1 0 0);
+  --color-danger-soft: oklch(0.95 0.025 25);
+  --color-danger-fg: oklch(0.48 0.17 27);
+  --color-warning-soft: oklch(0.95 0.05 85);
+  --color-warning-fg: oklch(0.47 0.1 65);
+  --color-warning: oklch(0.76 0.15 75);
+  --color-success-soft: oklch(0.95 0.04 155);
+  --color-success-fg: oklch(0.45 0.11 155);
+  --color-live: oklch(0.58 0.2 18);
+  --color-on-live: oklch(1 0 0);
+  --color-kind-voice: oklch(0.62 0.1 192);
+  --color-kind-text: oklch(0.62 0.12 155);
+  --color-kind-media: oklch(0.72 0.14 70);
+  --color-overlay: oklch(0.2 0.01 215 / 0.65);
+  --color-on-overlay: oklch(1 0 0);
+
+  --radius-*: initial;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+
+  --font-sans: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+/* 暗い配色。dark は既定で prefers-color-scheme: dark */
+@layer theme {
+  :root {
+    @variant dark {
+      --color-canvas: oklch(0.17 0.012 215);
+      --color-surface: oklch(0.215 0.014 215);
+      --color-surface-muted: oklch(0.255 0.015 215);
+      --color-surface-strong: oklch(0.305 0.016 215);
+      --color-fg: oklch(0.94 0.008 215);
+      --color-fg-muted: oklch(0.72 0.015 215);
+      --color-border: oklch(0.32 0.016 215);
+      --color-border-strong: oklch(0.54 0.018 215);
+      --color-primary: oklch(0.74 0.11 192);
+      --color-primary-hover: oklch(0.8 0.1 192);
+      --color-on-primary: oklch(0.18 0.03 192);
+      --color-primary-soft: oklch(0.3 0.05 192);
+      --color-primary-fg: oklch(0.8 0.1 192);
+      --color-danger: oklch(0.68 0.17 25);
+      --color-on-danger: oklch(0.18 0.04 25);
+      --color-danger-soft: oklch(0.29 0.06 25);
+      --color-danger-fg: oklch(0.78 0.12 25);
+      --color-warning-soft: oklch(0.3 0.05 75);
+      --color-warning-fg: oklch(0.83 0.11 80);
+      --color-warning: oklch(0.78 0.14 75);
+      --color-success-soft: oklch(0.29 0.05 155);
+      --color-success-fg: oklch(0.8 0.12 155);
+      --color-live: oklch(0.58 0.19 18);
+      --color-on-live: oklch(1 0 0);
+      --color-kind-voice: oklch(0.66 0.1 192);
+      --color-kind-text: oklch(0.66 0.12 155);
+      --color-kind-media: oklch(0.74 0.13 70);
+      --color-overlay: oklch(0.1 0.01 215 / 0.7);
+      --color-on-overlay: oklch(1 0 0);
+    }
+  }
+}

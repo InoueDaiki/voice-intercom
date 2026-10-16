@@ -1,4 +1,5 @@
-import { useId, useState } from "react";
+import { Alert, Button, Field, Input, PageHeader, Table, Td, Th } from "@voice-intercom/ui-web";
+import { useState } from "react";
 import { Link } from "react-router";
 
 import { ApiError, type Room } from "../adminApi.ts";
@@ -9,7 +10,6 @@ export default function UserList() {
   const users = useUsers();
   const rooms = useRooms();
   const [filter, setFilter] = useState("");
-  const filterId = useId();
 
   // user_id → 所属しているルーム(ルーム一覧の member_ids と突き合わせる)
   const roomsByUser = new Map<string, Room[]>();
@@ -26,56 +26,52 @@ export default function UserList() {
 
   return (
     <section>
-      <h1>ユーザー</h1>
-      <p className="muted">アプリでプロフィール(表示名と言語)を登録したユーザーです。</p>
-      {users.isPending && <p>読み込み中…</p>}
+      <PageHeader title="ユーザー" description="アプリでプロフィール(表示名と言語)を登録したユーザーです。" />
+      {users.isPending && <p className="text-fg-muted">読み込み中…</p>}
       {users.isError && (
-        <div className="error" role="alert">
-          <p>
-            ユーザーの一覧を取得できません:{" "}
-            {users.error instanceof ApiError && users.error.status === 403
-              ? "ユーザーの一覧を見る権限がありません。"
-              : errorMessage(users.error)}
-          </p>
-          <button type="button" onClick={() => void users.refetch()}>
-            再読み込み
-          </button>
-        </div>
+        <Alert
+          tone="danger"
+          action={
+            <Button size="sm" onClick={() => void users.refetch()}>
+              再読み込み
+            </Button>
+          }
+        >
+          ユーザーの一覧を取得できません:{" "}
+          {users.error instanceof ApiError && users.error.status === 403
+            ? "ユーザーの一覧を見る権限がありません。"
+            : errorMessage(users.error)}
+        </Alert>
       )}
       {users.isSuccess &&
         (users.data.length === 0 ? (
-          <p className="muted">登録したユーザーはまだいません。</p>
+          <p className="text-fg-muted">登録したユーザーはまだいません。</p>
         ) : (
-          <>
-            <div className="row filters">
-              <label htmlFor={filterId}>名前で絞り込む</label>
-              <input
-                id={filterId}
-                type="search"
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                placeholder="表示名の一部"
-              />
-              <span className="muted">
+          <div className="grid gap-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <Field label="名前で絞り込む" className="w-full max-w-xs">
+                <Input type="search" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="表示名の一部" />
+              </Field>
+              <span className="pb-2 text-sm text-fg-muted">
                 {users.data.length}人中 {shown.length}人
               </span>
             </div>
             {rooms.isError && (
-              <p className="error" role="alert">
+              <Alert tone="danger">
                 ルームの一覧を取得できないため、所属しているルームを出せません: {errorMessage(rooms.error)}
-              </p>
+              </Alert>
             )}
             {shown.length === 0 ? (
-              <p className="muted">「{filter}」に当てはまるユーザーはいません。</p>
+              <p className="text-fg-muted">「{filter}」に当てはまるユーザーはいません。</p>
             ) : (
-              <table className="table">
+              <Table>
                 <thead>
                   <tr>
-                    <th>表示名</th>
-                    <th>言語</th>
-                    <th>ユーザー ID</th>
-                    <th>登録日時</th>
-                    <th>所属しているルーム</th>
+                    <Th>表示名</Th>
+                    <Th>言語</Th>
+                    <Th>ユーザー ID</Th>
+                    <Th>登録日時</Th>
+                    <Th>所属しているルーム</Th>
                   </tr>
                 </thead>
                 <tbody>
@@ -83,19 +79,19 @@ export default function UserList() {
                     const joined = roomsByUser.get(user.user_id) ?? [];
                     return (
                       <tr key={user.user_id}>
-                        <td>{user.display_name}</td>
-                        <td>{LANGUAGE_LABELS[user.language]}</td>
-                        <td>
+                        <Td className="font-medium">{user.display_name}</Td>
+                        <Td>{LANGUAGE_LABELS[user.language]}</Td>
+                        <Td>
                           <code>{user.user_id}</code>
-                        </td>
-                        <td>{formatDateTime(user.created_at)}</td>
-                        <td>
-                          {rooms.isPending && <span className="muted">読み込み中…</span>}
+                        </Td>
+                        <Td className="text-fg-muted">{formatDateTime(user.created_at)}</Td>
+                        <Td>
+                          {rooms.isPending && <span className="text-fg-muted">読み込み中…</span>}
                           {rooms.isSuccess &&
                             (joined.length === 0 ? (
-                              <span className="muted">なし</span>
+                              <span className="text-fg-muted">なし</span>
                             ) : (
-                              <ul className="inline-list">
+                              <ul className="flex flex-wrap gap-x-3 gap-y-1">
                                 {joined.map((room) => (
                                   <li key={room.room_id}>
                                     <Link to={`/rooms/${encodeURIComponent(room.room_id)}`}>{room.name}</Link>
@@ -103,14 +99,14 @@ export default function UserList() {
                                 ))}
                               </ul>
                             ))}
-                        </td>
+                        </Td>
                       </tr>
                     );
                   })}
                 </tbody>
-              </table>
+              </Table>
             )}
-          </>
+          </div>
         ))}
     </section>
   );

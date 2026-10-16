@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Badge, Card, PageHeader } from "@voice-intercom/ui-web";
 
 import { api } from "../api.ts";
 
@@ -16,15 +17,17 @@ export default function Home() {
 
   return (
     <section>
-      <h1>ホーム</h1>
-      <dl>
-        <dt>API</dt>
-        <dd>
-          {health.isPending && "確認中…"}
-          {health.isError && `接続できません(${health.error.message})`}
-          {health.isSuccess && health.data.status}
-        </dd>
-      </dl>
+      <PageHeader title="ホーム" />
+      <Card className="max-w-md">
+        <dl className="flex items-center justify-between gap-4 text-sm">
+          <dt className="font-medium">API</dt>
+          <dd>
+            {health.isPending && <Badge>確認中…</Badge>}
+            {health.isError && <Badge tone="danger">接続できません({health.error.message})</Badge>}
+            {health.isSuccess && <Badge tone="success">{health.data.status}</Badge>}
+          </dd>
+        </dl>
+      </Card>
     </section>
   );
 }

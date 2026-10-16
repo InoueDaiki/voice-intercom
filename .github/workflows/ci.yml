@@ -34,7 +34,7 @@ jobs:
           mise-cache-prefix: mise-v1-lint
           python: "true"
           node: "true"
-      # buf lint、ruff check、ruff format --check、pyright、pnpm -r typecheck(client-core、admin、web など)
+      # buf lint、ruff check、ruff format --check、pyright、pnpm -r typecheck(client-core、admin、web など)、oxlint(デザインの規則)
       - run: mise run lint
       - run: uv cache prune --ci
 

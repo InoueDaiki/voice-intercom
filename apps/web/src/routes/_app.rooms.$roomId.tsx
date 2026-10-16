@@ -15,6 +15,8 @@ import {
   type TimelineEvent,
   type User,
 } from "@voice-intercom/client-core";
+import { Alert, Badge, Button, cx, PttButton, Textarea } from "@voice-intercom/ui-web";
+import { FileText, Paperclip, SendHorizontal } from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -50,27 +52,25 @@ export default function RoomPage() {
   const myIdentity = user?.profile.sub;
 
   if (room.isPending || me.isPending) {
-    return <p>読み込み中…</p>;
+    return <p className="text-fg-muted">読み込み中…</p>;
   }
   if (room.isError) {
     return (
-      <section>
+      <section className="mx-auto grid max-w-3xl gap-3">
         <BackLink />
-        <p className="error" role="alert">
-          ルームを開けません: {errorMessage(room.error)}
-        </p>
+        <Alert tone="danger">ルームを開けません: {errorMessage(room.error)}</Alert>
       </section>
     );
   }
   if (!me.data || !myIdentity) {
-    return <p className="error">プロフィールが登録されていません。</p>;
+    return <Alert tone="danger">プロフィールが登録されていません。</Alert>;
   }
   return <RoomScreen key={roomId} roomId={roomId} roomName={room.data.name} me={me.data} myIdentity={myIdentity} />;
 }
 
 function BackLink() {
   return (
-    <Link to="/" className="back">
+    <Link to="/" className="text-sm">
       ← ルームの一覧
     </Link>
   );
@@ -151,7 +151,11 @@ function RoomScreen({ roomId, roomName, me, myIdentity }: { roomId: string; room
 
   return (
     <section
-      className={dragging ? "room dragging" : "room"}
+      className={cx(
+        "mx-auto flex h-full max-w-3xl flex-col gap-3 rounded-lg",
+        // ファイルを落とせることを示す
+        dragging && "outline-2 outline-offset-4 outline-primary outline-dashed",
+      )}
       onDragOver={onDragOver}
       onDragLeave={(e) => {
         if (e.currentTarget === e.target) {
@@ -160,29 +164,27 @@ function RoomScreen({ roomId, roomName, me, myIdentity }: { roomId: string; room
       }}
       onDrop={onDrop}
     >
-      <div className="room-header">
+      <div className="grid gap-1">
         <BackLink />
-        <h1>{roomName}</h1>
-        {session && <RoomStatus session={session} />}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <h1>{roomName}</h1>
+          {session && <RoomStatus session={session} />}
+        </div>
       </div>
-      {joinError && (
-        <p className="error" role="alert">
-          {joinError}
-        </p>
-      )}
-      {session?.error && !joinError && (
-        <p className="error" role="alert">
-          {session.error}
-        </p>
-      )}
-      {session?.warning && <p className="muted">{session.warning}</p>}
+      {joinError && <Alert tone="danger">{joinError}</Alert>}
+      {session?.error && !joinError && <Alert tone="danger">{session.error}</Alert>}
+      {session?.warning && <p className="text-sm text-fg-muted">{session.warning}</p>}
       {session && !session.canPlaybackAudio && (
-        <p className="notice">
+        <Alert
+          tone="warning"
+          action={
+            <Button size="sm" variant="primary" onClick={() => void session.startAudio()}>
+              音を出す
+            </Button>
+          }
+        >
           ブラウザが音の再生を止めています。
-          <button type="button" onClick={() => void session.startAudio()}>
-            音を出す
-          </button>
-        </p>
+        </Alert>
       )}
       {session && <Timeline session={session} myLanguage={me.language} />}
       {session && <OutgoingTexts session={session} />}
@@ -194,17 +196,17 @@ function RoomScreen({ roomId, roomName, me, myIdentity }: { roomId: string; room
 
 function RoomStatus({ session }: { session: RoomSession }) {
   if (!session.connected) {
-    return <span className="tag">{session.error ? "切断" : "入室中…"}</span>;
+    return <Badge tone={session.error ? "danger" : "neutral"}>{session.error ? "切断" : "入室中…"}</Badge>;
   }
   return (
-    <span className="row">
-      <span className="tag">{session.participantCount}人</span>
-      <span className={session.agentPresent ? "tag" : "tag muted"}>
+    <span className="flex flex-wrap gap-1.5">
+      <Badge>{session.participantCount}人</Badge>
+      <Badge tone={session.agentPresent ? "primary" : "neutral"}>
         {session.agentPresent ? "翻訳あり" : "翻訳の準備中"}
-      </span>
+      </Badge>
       {!session.agentPresent && (
         // dev では使っていない間 Agent を止めているので、起動を待つことがある(設計メモの「Agent の scale to zero」)
-        <span className="muted hint">翻訳の Agent の起動に1〜2分かかることがあります</span>
+        <span className="text-xs text-fg-muted">翻訳の Agent の起動に1〜2分かかることがあります</span>
       )}
     </span>
   );
@@ -252,7 +254,7 @@ function Timeline({ session, myLanguage }: { session: RoomSession; myLanguage: L
 
   return (
     <ol
-      className="feed"
+      className="flex min-h-32 flex-1 flex-col gap-2 overflow-y-auto pr-1"
       ref={listRef}
       onScroll={(e) => {
         const el = e.currentTarget;
@@ -262,7 +264,7 @@ function Timeline({ session, myLanguage }: { session: RoomSession; myLanguage: L
         }
       }}
     >
-      <li className="feed-edge muted">
+      <li className="py-1 text-center text-xs text-fg-muted">
         {!timeline.loaded || timeline.loadingOlder
           ? "読み込み中…"
           : timeline.hasOlder
@@ -270,15 +272,17 @@ function Timeline({ session, myLanguage }: { session: RoomSession; myLanguage: L
             : "これより前はありません"}
       </li>
       {timeline.error && (
-        <li className="feed-edge error">
+        <li className="flex flex-wrap items-center justify-center gap-2 text-center text-sm text-danger-fg">
           {timeline.error}
-          <button type="button" className="link-button" onClick={() => void timeline.syncLatest()}>
+          <Button variant="link" onClick={() => void timeline.syncLatest()}>
             読み直す
-          </button>
+          </Button>
         </li>
       )}
       {timeline.loaded && entries.length === 0 && (
-        <li className="muted">まだ何もありません。PTT を押して話すか、テキストやファイルを送ってください。</li>
+        <li className="py-8 text-center text-sm text-fg-muted">
+          まだ何もありません。PTT を押して話すか、テキストやファイルを送ってください。
+        </li>
       )}
       {entries.map((entry) =>
         entry.type === "caption" ? (
@@ -327,36 +331,49 @@ function CaptionItem({
   const translation = entry.originalLanguage === myLanguage ? undefined : entry.translations.get(myLanguage);
 
   return (
-    <li className={`feed-item ${entry.isText ? "kind-text" : "kind-utterance"}`}>
-      <div className="feed-head">
-        <span className="sender">{session.displayName(entry.speakerIdentity)}</span>
-        <span className="muted">{formatTime(entry.at)}</span>
-        {entry.isText && <span className="tag">テキスト</span>}
+    <li className={cx(feedItemClass, entry.isText ? "border-l-kind-text" : "border-l-kind-voice")}>
+      <div className={feedHeadClass}>
+        <span className="text-sm font-semibold">{session.displayName(entry.speakerIdentity)}</span>
+        <span className="text-fg-muted">{formatTime(entry.at)}</span>
+        {entry.isText && <Badge>テキスト</Badge>}
         {entry.originalLanguage && (
-          <span className="tag">{LANGUAGE_LABELS[entry.originalLanguage as Language] ?? entry.originalLanguage}</span>
+          <Badge>{LANGUAGE_LABELS[entry.originalLanguage as Language] ?? entry.originalLanguage}</Badge>
         )}
-        {remove.can && (
-          <button type="button" className="link-button" disabled={remove.deleting} onClick={() => void remove.run()}>
-            削除
-          </button>
-        )}
+        {remove.can && <DeleteButton remove={remove} />}
       </div>
       {entry.deleted ? (
-        <p className="deleted">{DELETED_TEXT_LABEL}</p>
+        <p className={deletedTextClass}>{DELETED_TEXT_LABEL}</p>
       ) : (
         <>
+          {/* 確定する前の字幕は薄く出す */}
           {entry.original && (
-            <p className={entry.original.isFinal ? "original" : "original pending"}>
-              {entry.original.text || <span className="muted">(聞き取れませんでした)</span>}
+            <p className={cx("whitespace-pre-wrap", !entry.original.isFinal && "opacity-60")}>
+              {entry.original.text || <span className="text-fg-muted">(聞き取れませんでした)</span>}
             </p>
           )}
           {translation && (
-            <p className={translation.isFinal ? "translation" : "translation pending"}>{translation.text}</p>
+            <p className={cx("font-semibold whitespace-pre-wrap", !translation.isFinal && "opacity-60")}>
+              {translation.text}
+            </p>
           )}
         </>
       )}
-      {remove.error && <p className="error">{remove.error}</p>}
+      {remove.error && <p className="text-sm text-danger-fg">{remove.error}</p>}
     </li>
+  );
+}
+
+// タイムラインの1件の枠。左の線の色で種類(音声・テキスト・画像など)を見分ける
+const feedItemClass = "grid gap-1 rounded-md border border-l-4 border-border bg-surface px-3 py-2";
+const feedHeadClass = "flex flex-wrap items-center gap-x-2 gap-y-1 text-xs";
+const deletedTextClass = "text-sm text-fg-muted italic";
+const mediaClass = "block max-h-60 max-w-60 rounded-md border border-border object-cover";
+
+function DeleteButton({ remove }: { remove: ReturnType<typeof useDelete> }) {
+  return (
+    <Button variant="link" className="ml-auto text-xs" disabled={remove.deleting} onClick={() => void remove.run()}>
+      削除
+    </Button>
   );
 }
 
@@ -366,18 +383,14 @@ function MediaItem({ session, entry }: { session: RoomSession; entry: Extract<Ti
   const remove = useDelete(session, entry, deletionWhat(event));
 
   return (
-    <li className="feed-item kind-media">
-      <div className="feed-head">
-        <span className="sender">{session.displayName(event.sender_id)}</span>
-        <span className="muted">{formatTime(entry.at)}</span>
-        {remove.can && (
-          <button type="button" className="link-button" disabled={remove.deleting} onClick={() => void remove.run()}>
-            削除
-          </button>
-        )}
+    <li className={cx(feedItemClass, "border-l-kind-media")}>
+      <div className={feedHeadClass}>
+        <span className="text-sm font-semibold">{session.displayName(event.sender_id)}</span>
+        <span className="text-fg-muted">{formatTime(entry.at)}</span>
+        {remove.can && <DeleteButton remove={remove} />}
       </div>
       <MediaBody event={event} />
-      {remove.error && <p className="error">{remove.error}</p>}
+      {remove.error && <p className="text-sm text-danger-fg">{remove.error}</p>}
     </li>
   );
 }
@@ -386,19 +399,19 @@ function MediaBody({ event }: { event: TimelineEvent }) {
   const [failed, setFailed] = useState(false);
   const media = event.media;
   if (event.deleted || !media) {
-    return <p className="deleted">{deletedLabel(event)}</p>;
+    return <p className={deletedTextClass}>{deletedLabel(event)}</p>;
   }
   if (media.media_type === "file" || failed) {
     // ファイルはダウンロードだけ(Content-Disposition: attachment で置いてある)。
     // 画像・動画を表示できなかったときも、ダウンロードのリンクにする。
     // 配信の応答にヘッダーが無くても、ルームの画面から離れないよう、新しいタブで開く
     return (
-      <p className="file">
-        <span aria-hidden="true">📄</span>{" "}
+      <p className="flex items-center gap-2 text-sm break-all">
+        <FileText aria-hidden="true" className="size-4 shrink-0 text-fg-muted" />
         <a href={media.url} download={media.file_name ?? true} target="_blank" rel="noreferrer">
           {media.file_name ?? (media.media_type === "file" ? "ファイル" : "ダウンロード")}
-        </a>{" "}
-        <span className="muted">{formatBytes(media.size_bytes)}</span>
+        </a>
+        <span className="shrink-0 text-fg-muted">{formatBytes(media.size_bytes)}</span>
       </p>
     );
   }
@@ -407,9 +420,9 @@ function MediaBody({ event }: { event: TimelineEvent }) {
   if (media.media_type === "video") {
     // 一覧ではサムネイル(無ければ枠)だけを読み、本体は再生してから読む
     return (
-      <div className="media-box">
+      <div className="relative w-fit">
         <video
-          className="media"
+          className={mediaClass}
           style={{ aspectRatio: aspect }}
           src={media.url}
           poster={media.thumbnail_url ?? undefined}
@@ -417,14 +430,18 @@ function MediaBody({ event }: { event: TimelineEvent }) {
           preload="none"
           onError={() => setFailed(true)}
         />
-        {media.duration_ms != null && <span className="duration">{formatDuration(media.duration_ms)}</span>}
+        {media.duration_ms != null && (
+          <span className="pointer-events-none absolute right-1.5 bottom-1.5 rounded-sm bg-overlay px-1.5 text-xs text-on-overlay">
+            {formatDuration(media.duration_ms)}
+          </span>
+        )}
       </div>
     );
   }
   return (
-    <a href={media.url} target="_blank" rel="noreferrer">
+    <a href={media.url} target="_blank" rel="noreferrer" className="w-fit">
       <img
-        className="media"
+        className={mediaClass}
         style={{ aspectRatio: aspect }}
         src={media.thumbnail_url ?? media.url}
         alt="送られた画像"
@@ -445,11 +462,11 @@ function OutgoingTexts({ session }: { session: RoomSession }) {
     return null;
   }
   return (
-    <ul className="outgoing">
+    <ul className={outgoingListClass}>
       {items.map(({ t, label }) => (
-        <li key={t.messageId}>
-          <span className="outgoing-text">{t.text}</span>
-          <span className={t.state === "sending" || t.state === "delivered" ? "tag" : "tag error"}>{label}</span>
+        <li key={t.messageId} className={outgoingRowClass}>
+          <span className="min-w-0 truncate">{t.text}</span>
+          <Badge tone={t.state === "sending" || t.state === "delivered" ? "neutral" : "danger"}>{label}</Badge>
         </li>
       ))}
     </ul>
@@ -463,29 +480,32 @@ function OutgoingMediaList({ uploader }: { uploader: Uploader }) {
     return null;
   }
   return (
-    <ul className="outgoing">
+    <ul className={outgoingListClass}>
       {items.map((item) => (
-        <li key={item.localId}>
-          <span className="outgoing-text">{item.source.name}</span>
-          <span className={item.state === "failed" ? "tag error" : "tag"}>{outgoingMediaLabel(item)}</span>
+        <li key={item.localId} className={outgoingRowClass}>
+          <span className="min-w-0 truncate">{item.source.name}</span>
+          <Badge tone={item.state === "failed" ? "danger" : "neutral"}>{outgoingMediaLabel(item)}</Badge>
           {item.state !== "failed" && item.progress !== undefined && (
-            <progress max={1} value={item.progress} aria-label="進み具合" />
+            <progress className="w-24" max={1} value={item.progress} aria-label="進み具合" />
           )}
           {item.state === "failed" && item.retryable && (
-            <button type="button" className="link-button" onClick={() => uploader.retry(item)}>
+            <Button variant="link" className="text-xs" onClick={() => uploader.retry(item)}>
               やり直す
-            </button>
+            </Button>
           )}
           {item.state === "failed" && (
-            <button type="button" className="link-button" onClick={() => uploader.dismiss(item)}>
+            <Button variant="link" className="text-xs" onClick={() => uploader.dismiss(item)}>
               取り消す
-            </button>
+            </Button>
           )}
         </li>
       ))}
     </ul>
   );
 }
+
+const outgoingListClass = "grid gap-1 text-sm";
+const outgoingRowClass = "flex items-center gap-2";
 
 function outgoingMediaLabel(item: OutgoingMedia<File, Blob>): string {
   switch (item.state) {
@@ -557,10 +577,9 @@ function Controls({ session, onFiles }: { session: RoomSession; onFiles: (files:
 
   const disabled = !session.connected;
   return (
-    <div className="controls">
-      <button
-        type="button"
-        className={session.talking ? "ptt talking" : session.pressing ? "ptt pressing" : "ptt"}
+    <div className="grid gap-3 border-t border-border pt-3 sm:grid-cols-[auto_1fr] sm:items-stretch">
+      <PttButton
+        state={session.talking ? "talking" : session.pressing ? "pressing" : "idle"}
         disabled={disabled}
         aria-pressed={session.pressing}
         onPointerDown={(e) => {
@@ -573,18 +592,17 @@ function Controls({ session, onFiles }: { session: RoomSession; onFiles: (files:
         onContextMenu={(e) => e.preventDefault()}
       >
         {session.talking ? "話しています" : "押して話す(Space)"}
-      </button>
-      <form className="text-form" onSubmit={onSubmit}>
-        <button
-          type="button"
-          className="attach"
+      </PttButton>
+      <form className="grid grid-cols-[auto_1fr_auto] items-end gap-2" onSubmit={onSubmit}>
+        <Button
+          className="px-3"
           title="画像・動画・ファイルを送る(10GB まで)"
           aria-label="画像・動画・ファイルを送る"
           disabled={disabled}
           onClick={() => fileInput.current?.click()}
         >
-          📎
-        </button>
+          <Paperclip aria-hidden="true" className="size-4" />
+        </Button>
         <input
           ref={fileInput}
           type="file"
@@ -595,17 +613,20 @@ function Controls({ session, onFiles }: { session: RoomSession; onFiles: (files:
             e.target.value = "";
           }}
         />
-        <textarea
+        <Textarea
+          className="resize-y"
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onTextKeyDown}
           placeholder="テキストを入力(Enter で送信、Shift+Enter で改行)"
+          aria-label="テキスト"
           rows={2}
           disabled={disabled}
         />
-        <button type="submit" disabled={disabled || text.trim() === ""}>
+        <Button type="submit" variant="primary" disabled={disabled || text.trim() === ""}>
+          <SendHorizontal aria-hidden="true" className="size-4" />
           送信
-        </button>
+        </Button>
       </form>
     </div>
   );

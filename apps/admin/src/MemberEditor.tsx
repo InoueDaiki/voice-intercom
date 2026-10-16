@@ -1,4 +1,5 @@
-import { useId, useState } from "react";
+import { Alert, Button, Field, Select, Table, Td, Th } from "@voice-intercom/ui-web";
+import { useState } from "react";
 
 import { errorMessage, LANGUAGE_LABELS } from "./rooms.ts";
 import { useUsers } from "./queries.ts";
@@ -13,7 +14,6 @@ interface Props {
 export function MemberEditor({ memberIds, onChange, disabled }: Props) {
   const users = useUsers();
   const [selected, setSelected] = useState("");
-  const selectId = useId();
 
   const byId = new Map((users.data ?? []).map((u) => [u.user_id, u]));
   const candidates = (users.data ?? [])
@@ -28,18 +28,18 @@ export function MemberEditor({ memberIds, onChange, disabled }: Props) {
   };
 
   return (
-    <fieldset className="members" disabled={disabled}>
-      <legend>メンバー({memberIds.length}人)</legend>
-      {users.isError && <p className="error">ユーザー一覧を取得できません: {errorMessage(users.error)}</p>}
+    <fieldset className="grid gap-3 rounded-lg border border-border bg-surface p-4" disabled={disabled}>
+      <legend className="px-1 text-sm font-medium">メンバー({memberIds.length}人)</legend>
+      {users.isError && <Alert tone="danger">ユーザー一覧を取得できません: {errorMessage(users.error)}</Alert>}
       {memberIds.length === 0 ? (
-        <p className="muted">メンバーはいません。</p>
+        <p className="text-sm text-fg-muted">メンバーはいません。</p>
       ) : (
-        <table className="table">
+        <Table>
           <thead>
             <tr>
-              <th>表示名</th>
-              <th>言語</th>
-              <th aria-label="操作" />
+              <Th>表示名</Th>
+              <Th>言語</Th>
+              <Th shrink aria-label="操作" />
             </tr>
           </thead>
           <tbody>
@@ -47,48 +47,52 @@ export function MemberEditor({ memberIds, onChange, disabled }: Props) {
               const user = byId.get(id);
               return (
                 <tr key={id}>
-                  <td>
+                  <Td>
                     {user ? (
                       user.display_name
                     ) : (
                       // ユーザー一覧にいない(読み込み中か、削除されたユーザー)ときは sub を出す
-                      <span className="muted" title={id}>
+                      <span className="text-fg-muted" title={id}>
                         {users.isPending ? "読み込み中…" : `不明なユーザー(${id})`}
                       </span>
                     )}
-                  </td>
-                  <td>{user ? LANGUAGE_LABELS[user.language] : ""}</td>
-                  <td className="actions">
-                    <button type="button" onClick={() => onChange(memberIds.filter((m) => m !== id))}>
+                  </Td>
+                  <Td className="text-fg-muted">{user ? LANGUAGE_LABELS[user.language] : ""}</Td>
+                  <Td shrink>
+                    <Button size="sm" variant="ghost" onClick={() => onChange(memberIds.filter((m) => m !== id))}>
                       外す
-                    </button>
-                  </td>
+                    </Button>
+                  </Td>
                 </tr>
               );
             })}
           </tbody>
-        </table>
+        </Table>
       )}
-      <div className="row">
-        <label htmlFor={selectId}>追加するユーザー</label>
-        <select
-          id={selectId}
-          value={selected}
-          onChange={(e) => setSelected(e.target.value)}
-          disabled={!users.isSuccess || candidates.length === 0}
-        >
-          <option value="">
-            {users.isPending ? "読み込み中…" : candidates.length === 0 ? "追加できるユーザーはいません" : "選んでください"}
-          </option>
-          {candidates.map((u) => (
-            <option key={u.user_id} value={u.user_id}>
-              {u.display_name}({LANGUAGE_LABELS[u.language]})
+      <div className="flex flex-wrap items-end gap-2">
+        <Field label="追加するユーザー" className="min-w-60 flex-1">
+          <Select
+            value={selected}
+            onChange={(e) => setSelected(e.target.value)}
+            disabled={!users.isSuccess || candidates.length === 0}
+          >
+            <option value="">
+              {users.isPending
+                ? "読み込み中…"
+                : candidates.length === 0
+                  ? "追加できるユーザーはいません"
+                  : "選んでください"}
             </option>
-          ))}
-        </select>
-        <button type="button" onClick={add} disabled={!selected}>
+            {candidates.map((u) => (
+              <option key={u.user_id} value={u.user_id}>
+                {u.display_name}({LANGUAGE_LABELS[u.language]})
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Button onClick={add} disabled={!selected}>
           追加
-        </button>
+        </Button>
       </div>
     </fieldset>
   );

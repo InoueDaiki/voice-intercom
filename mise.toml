@@ -29,8 +29,13 @@ description = "依存関係をインストールする"
 run = ["uv sync --all-packages", "pnpm install"]
 
 [tasks.gen]
-description = "proto と REST API から Python / TypeScript のコードを生成する"
-depends = ["gen:proto", "gen:api"]
+description = "proto と REST API から Python / TypeScript のコードを、デザイントークンから CSS と TS を生成する"
+depends = ["gen:proto", "gen:api", "gen:tokens"]
+
+[tasks."gen:tokens"]
+description = "デザイントークン(packages/design-tokens/src/tokens.ts)から、Tailwind のテーマ・React Native の値・一覧を生成する"
+# 依存のパッケージを使わないので、pnpm install の前でも動く
+run = "node packages/design-tokens/scripts/gen.ts"
 
 [tasks."gen:proto"]
 description = "proto から Python / TypeScript の型を生成する"
@@ -46,13 +51,14 @@ run = [
 ]
 
 [tasks.lint]
-description = "lint と型検査(JS は各パッケージの typecheck。React Router のルートの型も作る)"
+description = "lint と型検査(JS は各パッケージの typecheck。React Router のルートの型も作る。デザインの規則は oxlint)"
 run = [
   "buf lint",
   "uv run ruff check",
   "uv run ruff format --check",
   "uv run pyright",
   "pnpm -r typecheck",
+  "pnpm lint:design",
 ]
 
 [tasks.fmt]

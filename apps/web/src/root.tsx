@@ -3,6 +3,8 @@ import { useState, type ReactNode } from "react";
 import { AuthProvider } from "react-oidc-context";
 import { Links, Meta, Outlet, Scripts, ScrollRestoration, useNavigate } from "react-router";
 
+import { FullScreenMessage } from "@voice-intercom/ui-web";
+
 import { getUserManager } from "./auth.ts";
 import "./index.css";
 
@@ -32,7 +34,7 @@ export function clientLoader() {
 }
 
 export function HydrateFallback() {
-  return <main className="centered">読み込み中…</main>;
+  return <FullScreenMessage>読み込み中…</FullScreenMessage>;
 }
 
 export default function App() {

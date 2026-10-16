@@ -1,0 +1,26 @@
+{
+  "name": "@voice-intercom/ui-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Web(管理コンソールと Web 版)の UI 部品と、Tailwind の入口の CSS。モバイル版は同じ名前と props で ui-native を作る",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./styles.css"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@voice-intercom/design-tokens": "workspace:*",
+    "tailwindcss": "4.3.3"
+  },
+  "peerDependencies": {
+    "react": "^19.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "react": "^19.3.0",
+    "typescript": "^7.0.2"
+  }
+}
