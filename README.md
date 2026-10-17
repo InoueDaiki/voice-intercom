@@ -236,10 +236,10 @@ SSM の値を変えたときは、新しいタスクでないと読み直さな�
 | --- | --- | --- |
 | `GET /health` | 死活監視 | だれでも |
 | `GET /rooms` | ルームの一覧(`{items}`) | 管理者はすべて、それ以外は自分がメンバーのルーム |
-| `POST /rooms` | ルームを作る。同じ `room_id` があれば 409 | 管理者 |
+| `POST /rooms` | ルームを作る。同じ `room_id` があれば 409。同じ `room_id` の前のルームの履歴とメディアが残っていれば消す | 管理者 |
 | `GET /rooms/{room_id}` | ルームを取る | 管理者、メンバー |
-| `PATCH /rooms/{room_id}` | 名前とメンバー(`member_ids`、Cognito の sub)を変える。`member_ids` は user_id の順で返す | 管理者 |
-| `DELETE /rooms/{room_id}` | ルームを消す(204) | 管理者 |
+| `PATCH /rooms/{room_id}` | 名前とメンバー(`member_ids`、Cognito の sub)を変える。`member_ids` は user_id の順で返す。外した人が LiveKit のルームにいれば出す | 管理者 |
+| `DELETE /rooms/{room_id}` | ルームを消す(204)。LiveKit のルームを消して全員(Agent も)を切り、履歴(timeline)と S3 の `rooms/<room_id>/` を消して CloudFront を無効にする。無いルームは 404 だが、後始末はやり直す | 管理者 |
 | `GET /users/me` | 自分のプロフィール(表示名、言語)。未登録なら 404 | 本人 |
 | `PUT /users/me` | プロフィールを登録・更新する | 本人 |
 | `PUT /users/me/devices` | push 通知の端末トークンを登録する(`{token, platform: "ios" \| "android"}`、204)。アプリの起動時とトークンの更新時に呼ぶ | 本人 |
@@ -308,6 +308,16 @@ complete で履歴に保存した後に、API が LiveKit の Server API でル�
 - 消した後に、画像・動画の配信と同じく `ListParticipants` と `SendData` で topic `deletion`、reliable に `DeletionMessage`(`proto/voiceintercom/v1/deletion.proto`)を送る。受け手は送信元の参加者があるものを捨て、無いものも `GET .../timeline/event` で行が消されていることを確かめてから表示を変える(なりすましで他人のものを消したように見せられない)。
 - 画像・動画は、S3 の本体とサムネイルを消し、CloudFront を `/rooms/<room_id>/<media_id>/*` の1パスで無効にする(`MEDIA_DISTRIBUTION_ID`。ローカルでは空で、無効化を飛ばす)。Lambda には `s3:DeleteObject` と `cloudfront:CreateInvalidation` を許してある。
 - 知らせや後始末が失敗しても DELETE は 200 で墓石を返す。もう一度呼べばやり直す。push 通知は取り消さない。
+
+### メンバーを外したとき・ルームを消したとき
+
+入室の権限は LiveKit のトークンを出すときにしか確かめず、接続した後のトークンは LiveKit サーバーが更新し続ける。そのため API が LiveKit の Server API で後始末をする(`services/api` の `room_cleanup.py`。決めた理由は設計メモの「メンバーを外したとき・ルームを消したときの後始末」)。
+
+- メンバーを外したら、`ListParticipants` で今ルームにいる人を取り、外した人を `RemoveParticipant` で出す。管理者もメンバーから外せば出る(入り直せる)。
+- ルームを消したら、`DeleteRoom` で全員(Agent も)を切り、timeline テーブルのルームのパーティション(履歴、`media-upload#<room_id>`、`notify#<room_id>`)と S3 の `rooms/<room_id>/` の下(途中のマルチパートも)を消し、CloudFront を `/rooms/<room_id>/*` で無効にする。録音のバケットは消さない。
+- 後始末が失敗しても、PATCH と DELETE は成功で返す(ログに残す)。履歴とメディアの削除は6秒で打ち切り、残りは同じ `room_id` でルームを作るとき(か DELETE のやり直し)に消す。
+- Lambda には `s3:ListBucketMultipartUploads` も許してある(ほかは画像・動画の削除と同じ権限)。
+- 出した人も、出す前に受け取ったトークン(15分)で入り直すことはできる(アプリは入り直さない)。
 
 ### push 通知
 

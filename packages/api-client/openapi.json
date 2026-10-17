@@ -93,7 +93,7 @@
         "tags": [
           "rooms"
         ],
-        "summary": "ルームを消す(管理者)",
+        "summary": "ルームを消す(管理者)。LiveKit のルームにいる全員を切り、履歴とメディアも消す",
         "operationId": "deleteRoom",
         "parameters": [
           {
@@ -165,7 +165,7 @@
         "tags": [
           "rooms"
         ],
-        "summary": "ルームの名前とメンバーを変える(管理者)",
+        "summary": "ルームの名前とメンバーを変える(管理者)。外した人が LiveKit のルームにいれば出す",
         "operationId": "updateRoom",
         "parameters": [
           {
@@ -1259,7 +1259,7 @@
         "tags": [
           "rooms"
         ],
-        "summary": "ルームを作る(管理者)",
+        "summary": "ルームを作る(管理者)。同じ room_id の前のルームの履歴とメディアが残っていれば消す",
         "operationId": "createRoom",
         "requestBody": {
           "content": {

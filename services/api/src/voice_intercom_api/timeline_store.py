@@ -35,8 +35,12 @@ push 通知を最後に送った時刻(room_push.py の間引き):
   更新に勝つのは1回だけなので二重に送らない。
 - TTL(expires_at_epoch)は間隔が過ぎたあとにする。TTL の削除は遅れることがあるが、判定は
   sent_at_epoch で行うので、消えるのが遅れても結果は変わらない。
+
+ルームを消したときは、この3つのパーティション(room_id、`media-upload#<room_id>`、
+`notify#<room_id>`)をすべて消す(purge_room。room_cleanup.py)。
 """
 
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -66,6 +70,9 @@ _NOTIFY_PREFIX = "notify#"
 
 # 通知の時刻の行を、間隔が過ぎてからどれだけ残すか(TTL)
 _NOTIFY_TTL_MARGIN = timedelta(hours=1)
+
+# purge_room で1回の Query で読む行の数(この単位で残り時間を確かめる)
+_PURGE_PAGE_SIZE = 500
 
 
 def _timeline() -> Any:
@@ -480,3 +487,40 @@ def release_notifications(room_id: str, recipient_ids: list[str], *, now_epoch: 
         except ClientError as e:
             if not store._is_conditional_check_failed(e):  # pyright: ignore[reportPrivateUsage]
                 raise
+
+
+# ルームを消したときの後始末
+
+
+def room_partitions(room_id: str) -> list[str]:
+    """ルームの行を置くパーティション(履歴、アップロード中の仮の行、push 通知の時刻)。"""
+    return [room_id, _PENDING_PREFIX + room_id, _NOTIFY_PREFIX + room_id]
+
+
+def purge_room(room_id: str, *, deadline: float) -> bool:
+    """ルームの行をすべて消す。消しきれたら True。
+
+    deadline(time.monotonic の値)を過ぎたら、残りを消さずに False を返す。何度呼んでもよい
+    (残った行から続きを消す)。
+    """
+    table = _timeline()
+    for partition in room_partitions(room_id):
+        kwargs: dict[str, Any] = {
+            "KeyConditionExpression": Key("room_id").eq(partition),
+            "ProjectionExpression": "room_id, event_id",
+            "Limit": _PURGE_PAGE_SIZE,
+        }
+        while True:
+            if time.monotonic() > deadline:
+                return False
+            res = table.query(**kwargs)
+            # 25件ずつの BatchWriteItem にし、処理しきれなかった行も送り直す
+            with table.batch_writer() as batch:
+                for item in res.get("Items", []):
+                    batch.delete_item(
+                        Key={"room_id": item["room_id"], "event_id": item["event_id"]}
+                    )
+            if "LastEvaluatedKey" not in res:
+                break
+            kwargs["ExclusiveStartKey"] = res["LastEvaluatedKey"]
+    return True

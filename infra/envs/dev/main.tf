@@ -212,13 +212,15 @@ data "aws_iam_policy_document" "api" {
     resources = ["${module.media.bucket_arn}/*"]
   }
 
-  # 送った本人が消した画像・動画の本体とサムネイルを消す(services/api の deletion.py)
+  # 送った本人が消した画像・動画の本体とサムネイルを消す(services/api の deletion.py)。
+  # ルームを消したときの rooms/<room_id>/ の一括削除(DeleteObjects。room_cleanup.py)も同じ権限で動く
   statement {
     actions   = ["s3:DeleteObject"]
     resources = ["${module.media.bucket_arn}/rooms/*"]
   }
 
-  # 消した画像・動画の CloudFront のキャッシュを無効にする(media_id ごとに1パス)
+  # 消した画像・動画の CloudFront のキャッシュを無効にする(media_id ごとに1パス。
+  # ルームを消したときは /rooms/<room_id>/* の1パス)
   statement {
     actions   = ["cloudfront:CreateInvalidation"]
     resources = [module.media.distribution_arn]
@@ -234,9 +236,10 @@ data "aws_iam_policy_document" "api" {
   }
 
   # ListBucket がないと、ないオブジェクトの HeadObject が 404 ではなく 403 になり、
-  # メディアの complete で「まだ置かれていない」(409)を見分けられない
+  # メディアの complete で「まだ置かれていない」(409)を見分けられない。
+  # ルームを消したときは、rooms/<room_id>/ の下のオブジェクトと途中のマルチパートを一覧する(room_cleanup.py)
   statement {
-    actions   = ["s3:ListBucket"]
+    actions   = ["s3:ListBucket", "s3:ListBucketMultipartUploads"]
     resources = [module.media.bucket_arn]
   }
 

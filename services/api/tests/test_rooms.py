@@ -5,12 +5,41 @@ from typing import Any
 import pytest
 from conftest import auth_headers, http_event
 
-from voice_intercom_api import migrate_room_members, store
+from voice_intercom_api import migrate_room_members, room_cleanup, store
 from voice_intercom_api.app import handler
 
 pytestmark = pytest.mark.usefixtures("tables")
 
 Token = Callable[..., str]
+
+
+class FakeCleanup:
+    """room_cleanup の代わり(中身は test_room_cleanup.py で確かめる)。"""
+
+    def __init__(self) -> None:
+        self.evicted: list[tuple[str, list[str]]] = []
+        self.purged: list[str] = []
+        self.deleted: list[str] = []
+
+    def evict(self, room_id: str, user_ids: list[str]) -> list[str]:
+        self.evicted.append((room_id, user_ids))
+        return user_ids
+
+    def purge(self, room_id: str, *, always_invalidate: bool) -> bool:
+        self.purged.append(room_id)
+        return True
+
+    def after_delete(self, room_id: str) -> None:
+        self.deleted.append(room_id)
+
+
+@pytest.fixture(autouse=True)
+def cleanup(monkeypatch: pytest.MonkeyPatch) -> FakeCleanup:
+    fake = FakeCleanup()
+    monkeypatch.setattr(room_cleanup, "evict", fake.evict)
+    monkeypatch.setattr(room_cleanup, "purge", fake.purge)
+    monkeypatch.setattr(room_cleanup, "after_delete", fake.after_delete)
+    return fake
 
 
 @pytest.fixture(autouse=True)
@@ -91,6 +120,17 @@ def test_admin_creates_room(admin: str) -> None:
     assert call("GET", "/rooms/room-c", admin) == (200, body)
 
 
+def test_create_purges_leftovers(admin: str, cleanup: FakeCleanup) -> None:
+    # 同じ room_id の前のルームの履歴とメディアが残っていても消す
+    assert call("POST", "/rooms", admin, {"room_id": "room-c", "name": "C"})[0] == 201
+    assert cleanup.purged == ["room-c"]
+
+
+def test_create_conflict_does_not_purge(admin: str, cleanup: FakeCleanup) -> None:
+    assert call("POST", "/rooms", admin, {"room_id": "room-a", "name": "A2"})[0] == 409
+    assert cleanup.purged == []
+
+
 def test_member_ids_default_to_empty(admin: str) -> None:
     status, body = call("POST", "/rooms", admin, {"room_id": "room-c", "name": "C"})
 
@@ -148,7 +188,7 @@ def test_get_unknown_room(admin: str, member: str) -> None:
 # 更新
 
 
-def test_admin_updates_room(admin: str) -> None:
+def test_admin_updates_room(admin: str, cleanup: FakeCleanup) -> None:
     before = store.get_room("room-a")
     assert before is not None
 
@@ -159,12 +199,22 @@ def test_admin_updates_room(admin: str) -> None:
     assert body["member_ids"] == ["member-3"]
     assert body["created_at"] == before.created_at
     assert body["updated_at"] >= before.updated_at
+    # 外した人を LiveKit のルームから出す
+    assert cleanup.evicted == [("room-a", ["member-1", "member-2"])]
 
     status, body = call("PATCH", "/rooms/room-a", admin, {"name": "A2"})
 
     assert status == 200
     assert body["name"] == "A2"
     assert body["member_ids"] == ["member-3"]
+    # メンバーを変えなければ、誰も出さない
+    assert cleanup.evicted[1:] == [("room-a", [])]
+
+
+def test_update_evicts_only_removed_members(admin: str, cleanup: FakeCleanup) -> None:
+    call("PATCH", "/rooms/room-a", admin, {"member_ids": ["member-2", "member-3"]})
+
+    assert cleanup.evicted == [("room-a", ["member-1"])]
 
 
 def test_member_list_follows_membership(admin: str, member: str) -> None:
@@ -208,12 +258,13 @@ def test_update_unknown_room(admin: str) -> None:
 # 削除
 
 
-def test_admin_deletes_room(admin: str) -> None:
+def test_admin_deletes_room(admin: str, cleanup: FakeCleanup) -> None:
     status, body = call("DELETE", "/rooms/room-a", admin)
 
     assert (status, body) == (204, None)
     assert store.get_room("room-a") is None
     assert store._member_ids("room-a") == []  # pyright: ignore[reportPrivateUsage]
+    assert cleanup.deleted == ["room-a"]
 
 
 def test_recreated_room_drops_leftover_members(admin: str, member: str) -> None:
@@ -252,10 +303,13 @@ def test_migrate_member_ids(member: str) -> None:
     assert body["items"][1]["member_ids"] == ["member-1", "member-9"]
 
 
-def test_delete_requires_admin(member: str) -> None:
+def test_delete_requires_admin(member: str, cleanup: FakeCleanup) -> None:
     assert call("DELETE", "/rooms/room-a", member)[0] == 403
     assert store.get_room("room-a") is not None
+    assert cleanup.deleted == []
 
 
-def test_delete_unknown_room(admin: str) -> None:
+def test_delete_unknown_room(admin: str, cleanup: FakeCleanup) -> None:
     assert call("DELETE", "/rooms/room-x", admin)[0] == 404
+    # 前の DELETE の後始末が途中で終わっていても、やり直せる
+    assert cleanup.deleted == ["room-x"]

@@ -15,11 +15,11 @@ export interface paths {
         get: operations["getRoom"];
         put?: never;
         post?: never;
-        /** ルームを消す(管理者) */
+        /** ルームを消す(管理者)。LiveKit のルームにいる全員を切り、履歴とメディアも消す */
         delete: operations["deleteRoom"];
         options?: never;
         head?: never;
-        /** ルームの名前とメンバーを変える(管理者) */
+        /** ルームの名前とメンバーを変える(管理者)。外した人が LiveKit のルームにいれば出す */
         patch: operations["updateRoom"];
         trace?: never;
     };
@@ -211,7 +211,7 @@ export interface paths {
         /** ルームの一覧。管理者にはすべて、それ以外の人には自分がメンバーのルームを返す */
         get: operations["listRooms"];
         put?: never;
-        /** ルームを作る(管理者) */
+        /** ルームを作る(管理者)。同じ room_id の前のルームの履歴とメディアが残っていれば消す */
         post: operations["createRoom"];
         delete?: never;
         options?: never;

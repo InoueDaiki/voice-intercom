@@ -60,7 +60,7 @@ def teardown_timeline() -> None:
 
 
 class FakeLiveKit:
-    """LiveKit の RoomService(ListParticipants と SendData)の代わり。
+    """LiveKit の RoomService(ListParticipants、SendData、RemoveParticipant、DeleteRoom)の代わり。
 
     participants は (identity, kind) の並び。kind は ParticipantInfo.Kind の値。
     """
@@ -69,8 +69,12 @@ class FakeLiveKit:
         self.participants: list[tuple[str, int]] = []
         self.list_error: Exception | None = None
         self.send_error: Exception | None = None
+        self.remove_errors: dict[str, Exception] = {}
+        self.delete_error: Exception | None = None
         self.listed: list[str] = []
         self.sent: list[livekit.SendDataRequest] = []
+        self.removed: list[tuple[str, str]] = []
+        self.deleted_rooms: list[str] = []
 
     async def list_participants(
         self, req: livekit.ListParticipantsRequest
@@ -90,6 +94,20 @@ class FakeLiveKit:
             raise self.send_error
         self.sent.append(req)
         return livekit.SendDataResponse()
+
+    async def remove_participant(
+        self, req: livekit.RoomParticipantIdentity
+    ) -> livekit.RemoveParticipantResponse:
+        if (error := self.remove_errors.get(req.identity)) is not None:
+            raise error
+        self.removed.append((req.room, req.identity))
+        return livekit.RemoveParticipantResponse()
+
+    async def delete_room(self, req: livekit.DeleteRoomRequest) -> livekit.DeleteRoomResponse:
+        if self.delete_error is not None:
+            raise self.delete_error
+        self.deleted_rooms.append(req.room)
+        return livekit.DeleteRoomResponse()
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         @asynccontextmanager

@@ -6,11 +6,13 @@
 キーはルームと media_id から決める。
 - 本体: rooms/<room_id>/<media_id>/original
 - サムネイル: rooms/<room_id>/<media_id>/thumbnail
+ルームを消したときは、rooms/<room_id>/ の下をすべて消す(purge_prefix。room_cleanup.py)。
 本体を rooms/<room_id>/<media_id> にすると、サムネイルのキーがその「下」になる。
 SeaweedFS(ファイラーがディレクトリを持つ)では、同じ名前のファイルとディレクトリを両方は
 作れないので、どちらも1段下げる。
 """
 
+import time
 from dataclasses import dataclass
 from datetime import timedelta
 from functools import cache
@@ -37,6 +39,11 @@ def thumbnail_key(room_id: str, media_id: str) -> str:
 def media_prefix(room_id: str, media_id: str) -> str:
     """本体とサムネイルを含む、media_id ごとのキーの前置き(CloudFront の無効化に使う)。"""
     return f"rooms/{room_id}/{media_id}/"
+
+
+def room_prefix(room_id: str) -> str:
+    """ルームのすべてのオブジェクトのキーの前置き(ルームを消したときに使う)。"""
+    return f"rooms/{room_id}/"
 
 
 def public_url(key: str) -> str:
@@ -167,6 +174,46 @@ def delete(keys: list[str]) -> None:
     bucket = get_timeline_settings().media_bucket
     for key in keys:
         _s3().delete_object(Bucket=bucket, Key=key)
+
+
+class PurgeError(Exception):
+    """DeleteObjects で消せないオブジェクトがあった。"""
+
+
+def purge_prefix(prefix: str, *, deadline: float) -> tuple[bool, int]:
+    """prefix の下のオブジェクトをすべて消し、途中のマルチパートアップロードも取りやめる。
+
+    (消しきれたか, 消したオブジェクトの数)を返す。deadline(time.monotonic の値)を過ぎたら、
+    残りを消さずに False を返す。何度呼んでもよい。
+    """
+    s3 = _s3()
+    bucket = get_timeline_settings().media_bucket
+    # 先に取りやめる(この後で完了して、オブジェクトが置き直されないように)
+    uploads: dict[str, Any] = {"Bucket": bucket, "Prefix": prefix}
+    while True:
+        if time.monotonic() > deadline:
+            return False, 0
+        res = s3.list_multipart_uploads(**uploads)
+        for upload in res.get("Uploads", []):
+            abort_multipart(upload["Key"], upload["UploadId"])
+        if not res.get("IsTruncated"):
+            break
+        uploads["KeyMarker"] = res.get("NextKeyMarker", "")
+        uploads["UploadIdMarker"] = res.get("NextUploadIdMarker", "")
+    deleted = 0
+    while True:
+        if time.monotonic() > deadline:
+            return False, deleted
+        # 消した分は一覧から無くなるので、毎回先頭から読む(1回 1000 件まで)
+        res = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
+        objects = [{"Key": obj["Key"]} for obj in res.get("Contents", [])]
+        if not objects:
+            return True, deleted
+        out = s3.delete_objects(Bucket=bucket, Delete={"Objects": objects, "Quiet": True})
+        if errors := out.get("Errors"):
+            # 同じものを読み直し続けないよう、ここでやめる
+            raise PurgeError(f"{len(errors)} 件を消せなかった: {errors[0]}")
+        deleted += len(objects)
 
 
 @cache

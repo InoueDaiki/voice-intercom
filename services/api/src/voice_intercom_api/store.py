@@ -146,16 +146,20 @@ def _all_member_ids() -> dict[str, list[str]]:
     return {room_id: sorted(ids) for room_id, ids in members.items()}
 
 
-def _set_members(room_id: str, member_ids: list[str]) -> list[str]:
-    """ルームのメンバーを member_ids にする。今ある行との差分だけを書き、新しいメンバーを返す。"""
+def _set_members(room_id: str, member_ids: list[str]) -> tuple[list[str], list[str]]:
+    """ルームのメンバーを member_ids にする。今ある行との差分だけを書く。
+
+    (新しいメンバー, 外した人)を返す(どちらも user_id の順)。
+    """
     current = set(_member_ids(room_id))
     wanted = set(member_ids)
+    removed = sorted(current - wanted)
     with _members().batch_writer() as batch:
         for user_id in sorted(wanted - current):
             batch.put_item(Item={"room_id": room_id, "user_id": user_id})
-        for user_id in sorted(current - wanted):
+        for user_id in removed:
             batch.delete_item(Key={"room_id": room_id, "user_id": user_id})
-    return sorted(wanted)
+    return sorted(wanted), removed
 
 
 # ルーム
@@ -203,11 +207,17 @@ def create_room(room_id: str, name: str, member_ids: list[str]) -> Room:
             raise AlreadyExistsError(room_id) from e
         raise
     # 同じ room_id の前のルームを消したときに、メンバーの行が残っていても消える
-    members = _set_members(room_id, member_ids)
+    members, _ = _set_members(room_id, member_ids)
     return Room(room_id=room_id, name=name, member_ids=members, created_at=ts, updated_at=ts)
 
 
-def update_room(room_id: str, *, name: str | None, member_ids: list[str] | None) -> Room:
+def update_room(
+    room_id: str, *, name: str | None, member_ids: list[str] | None
+) -> tuple[Room, list[str]]:
+    """名前とメンバーを変える。(変えた後のルーム, 外した人)を返す。
+
+    外した人は、呼び出し側が LiveKit のルームから出す(room_cleanup.py)。
+    """
     values: dict[str, Any] = {"updated_at": now()}
     if name is not None:
         values["name"] = name
@@ -225,11 +235,15 @@ def update_room(room_id: str, *, name: str | None, member_ids: list[str] | None)
         if _is_conditional_check_failed(e):
             raise NotFoundError(room_id) from e
         raise
-    members = _member_ids(room_id) if member_ids is None else _set_members(room_id, member_ids)
-    return _room(res["Attributes"], members)
+    if member_ids is None:
+        members, removed = _member_ids(room_id), []
+    else:
+        members, removed = _set_members(room_id, member_ids)
+    return _room(res["Attributes"], members), removed
 
 
 def delete_room(room_id: str) -> None:
+    """rooms とメンバーの行を消す。履歴とメディアは呼び出し側が消す(room_cleanup.py)。"""
     try:
         _rooms().delete_item(Key={"room_id": room_id}, ConditionExpression=Attr("room_id").exists())
     except ClientError as e:

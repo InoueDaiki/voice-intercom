@@ -22,7 +22,15 @@ from aws_lambda_powertools.utilities.typing import LambdaContext
 from livekit import api as livekit
 from pydantic import BaseModel, Field
 
-from voice_intercom_api import agent_wake, devices, media, notifications, store, timeline
+from voice_intercom_api import (
+    agent_wake,
+    devices,
+    media,
+    notifications,
+    room_cleanup,
+    store,
+    timeline,
+)
 from voice_intercom_api.auth import AdminUser, CurrentUser
 from voice_intercom_api.config import get_settings
 from voice_intercom_api.models import (
@@ -89,7 +97,7 @@ def list_rooms(user: CurrentUser) -> RoomList:
 
 @app.post(
     "/rooms",
-    summary="ルームを作る(管理者)",
+    summary="ルームを作る(管理者)。同じ room_id の前のルームの履歴とメディアが残っていれば消す",
     operation_id="createRoom",
     tags=["rooms"],
     security=_AUTH,
@@ -100,9 +108,12 @@ def list_rooms(user: CurrentUser) -> RoomList:
 )
 def create_room(body: Annotated[CreateRoomRequest, Body()], _admin: AdminUser) -> Room:
     try:
-        return store.create_room(body.room_id, body.name, body.member_ids)
+        room = store.create_room(body.room_id, body.name, body.member_ids)
     except store.AlreadyExistsError as e:
         raise ServiceError(HTTPStatus.CONFLICT, "同じ room_id のルームが既にある") from e
+    # 同じ room_id の前のルームの履歴とメディアが残っていれば消す(room_cleanup.py)
+    room_cleanup.purge(room.room_id, always_invalidate=False)
+    return room
 
 
 @app.get(
@@ -119,7 +130,7 @@ def get_room(room_id: RoomIdPath, user: CurrentUser) -> Room:
 
 @app.patch(
     "/rooms/<room_id>",
-    summary="ルームの名前とメンバーを変える(管理者)",
+    summary="ルームの名前とメンバーを変える(管理者)。外した人が LiveKit のルームにいれば出す",
     operation_id="updateRoom",
     tags=["rooms"],
     security=_AUTH,
@@ -129,14 +140,17 @@ def update_room(
     room_id: RoomIdPath, body: Annotated[UpdateRoomRequest, Body()], _admin: AdminUser
 ) -> Room:
     try:
-        return store.update_room(room_id, name=body.name, member_ids=body.member_ids)
+        room, removed = store.update_room(room_id, name=body.name, member_ids=body.member_ids)
     except store.NotFoundError as e:
         raise NotFoundError("ルームがない") from e
+    # 接続中の人のトークンは LiveKit が更新し続けるので、外した人は LiveKit のルームから出す
+    room_cleanup.evict(room_id, removed)
+    return room
 
 
 @app.delete(
     "/rooms/<room_id>",
-    summary="ルームを消す(管理者)",
+    summary="ルームを消す(管理者)。LiveKit のルームにいる全員を切り、履歴とメディアも消す",
     operation_id="deleteRoom",
     tags=["rooms"],
     security=_AUTH,
@@ -147,7 +161,11 @@ def delete_room(room_id: RoomIdPath, _admin: AdminUser) -> Response[str]:
     try:
         store.delete_room(room_id)
     except store.NotFoundError as e:
+        # 前の DELETE の後始末が途中で終わっていても、やり直せるようにする
+        room_cleanup.after_delete(room_id)
         raise NotFoundError("ルームがない") from e
+    # LiveKit のルームを消して全員を切り、履歴とメディアを消す(room_cleanup.py)
+    room_cleanup.after_delete(room_id)
     return Response(status_code=204, body="", content_type=None)
 
 
