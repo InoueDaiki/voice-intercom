@@ -9,14 +9,17 @@ export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "link
 export type ButtonSize = "sm" | "md" | "lg";
 
 const baseClass =
-  "inline-flex items-center justify-center gap-2 font-medium whitespace-nowrap no-underline transition-colors select-none hover:no-underline disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex items-center justify-center gap-2 font-medium whitespace-nowrap no-underline transition-[color,background-color,translate] select-none hover:no-underline disabled:cursor-not-allowed disabled:opacity-50";
 
 const variantClasses: Record<ButtonVariant, string> = {
-  primary: "rounded-md bg-primary text-on-primary not-disabled:hover:bg-primary-hover",
-  secondary: "rounded-md border border-border-strong bg-surface text-fg not-disabled:hover:bg-surface-muted",
-  ghost: "rounded-md text-fg not-disabled:hover:bg-surface-muted",
-  danger: "rounded-md bg-danger text-on-danger not-disabled:hover:opacity-90",
-  link: "rounded-sm text-primary-fg underline-offset-2 not-disabled:hover:underline",
+  // 点灯したキー。下の縁を濃くしてキーの厚みを出し、押すと沈める
+  primary:
+    "rounded-md border-b-2 border-primary-hover bg-primary font-bold text-on-primary not-disabled:hover:bg-primary-hover not-disabled:active:translate-y-px",
+  secondary:
+    "rounded-md border border-border-strong bg-surface text-fg not-disabled:hover:bg-surface-muted not-disabled:active:bg-surface-strong",
+  ghost: "rounded-md text-fg not-disabled:hover:bg-surface-muted not-disabled:active:bg-surface-strong",
+  danger: "rounded-md bg-danger font-bold text-on-danger not-disabled:hover:opacity-90",
+  link: "rounded-sm text-fg underline decoration-border-strong underline-offset-3 not-disabled:hover:decoration-fg",
 };
 
 const sizeClasses: Record<ButtonSize, string> = {

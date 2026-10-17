@@ -16,6 +16,9 @@
 - **テストで確かめる**(`src/tokens.test.ts`、`mise run test:js` で動く)。
   - どの色も sRGB に収まる(収まらないと、Web と React Native で見え方がずれる)。
   - 文字と地の組み合わせ(`contrastPairs`)が WCAG 2 の AA のコントラスト比(本文 4.5、線 3)を満たす。組み合わせを足したら `contrastPairs` にも足す。
+- **色は無線機の文法で選ぶ。** 主な操作は点灯したキーの琥珀(`primary`)、送話は赤(`live`)、受信は緑(`rx`)、PTT のキーの面はグラファイト(`key`)。意図は [ui-web の README](../ui-web/README.md) の「見た目の方向」。
+- **琥珀の塗りの上の文字は暗い色(`on-primary`)。** 琥珀は白い地との明るさの差が小さいので、塗りの境目ではなく上の文字で見分ける(`primary` と地のコントラスト比は確かめていない)。
+- **書体は IBM Plex Sans JP。** Web は `@fontsource/ibm-plex-sans-jp` を `ui-web/styles.css` で読み込む。モバイル版を作るときに、同じ書体を組み込む。
 - **余白と文字の大きさは Tailwind の既定を使う。** Uniwind も同じ物差しなので、Web とモバイルで同じクラスになる。
 
 ## トークンを足す・変える

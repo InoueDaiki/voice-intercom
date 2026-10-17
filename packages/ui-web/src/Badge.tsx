@@ -2,8 +2,8 @@ import type { ComponentProps } from "react";
 
 import { cx } from "./cx.ts";
 
-// neutral: 件数や種類などの添え書き。live: 送話中
-export type BadgeTone = "neutral" | "primary" | "success" | "warning" | "danger" | "live";
+// neutral: 件数や種類などの添え書き。live: 送話中(TX)。rx: 受信中
+export type BadgeTone = "neutral" | "primary" | "success" | "warning" | "danger" | "live" | "rx";
 
 const toneClasses: Record<BadgeTone, string> = {
   neutral: "bg-surface-muted text-fg-muted",
@@ -12,6 +12,7 @@ const toneClasses: Record<BadgeTone, string> = {
   warning: "bg-warning-soft text-warning-fg",
   danger: "bg-danger-soft text-danger-fg",
   live: "bg-live text-on-live",
+  rx: "bg-rx-soft text-rx-fg",
 };
 
 export interface BadgeProps extends ComponentProps<"span"> {
@@ -23,7 +24,7 @@ export function Badge({ tone = "neutral", className, ...props }: BadgeProps) {
   return (
     <span
       className={cx(
-        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap",
+        "inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs font-medium whitespace-nowrap",
         toneClasses[tone],
         className,
       )}

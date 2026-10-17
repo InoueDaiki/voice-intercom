@@ -48,7 +48,7 @@ export function Field({ label, hint, error, className, children }: FieldProps) {
 }
 
 const controlClass =
-  "w-full rounded-md border border-border-strong bg-surface px-3 text-sm text-fg placeholder:text-fg-muted disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-danger";
+  "w-full rounded-md border border-border-strong bg-surface px-3 text-base text-fg placeholder:text-fg-muted focus-visible:border-fg focus-visible:outline-1 focus-visible:outline-offset-0 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-danger sm:text-sm";
 
 // Field の中なら、id・説明・誤りの属性を足す(props で渡したものが先)
 function useFieldProps<P extends { id?: string; "aria-describedby"?: string; "aria-invalid"?: ComponentProps<"input">["aria-invalid"] }>(

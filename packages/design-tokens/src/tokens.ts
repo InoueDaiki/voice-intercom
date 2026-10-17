@@ -10,80 +10,100 @@ export interface ColorToken {
   usage: string;
 }
 
-// 基調の色相。青緑(インカムの「通じている」色)。灰色もわずかにこの色相に寄せる
-const BRAND = 192;
-const GRAY = 215;
+// 色の考え方は無線機・放送卓のキーと表示灯から取る。
+// - 主な操作は「点灯したキー」の琥珀色。押すと灯るキーのように、画面の主な操作だけを灯す
+// - 送話(TX)は赤、受信(RX)は緑。無線機の表示灯と同じ意味で、ほかの用途には使わない
+// - 地と文字は、わずかに青に寄せたグラファイト
+const AMBER = 72;
+const GRAPHITE = 255;
 
 export const colors = {
   // ---- 地と面 ----
   canvas: {
-    light: oklch(0.985, 0.004, GRAY),
-    dark: oklch(0.17, 0.012, GRAY),
+    light: oklch(0.962, 0.004, GRAPHITE),
+    dark: oklch(0.185, 0.012, GRAPHITE),
     usage: "ページの地(body)",
   },
   surface: {
     light: oklch(1, 0, 0),
-    dark: oklch(0.215, 0.014, GRAY),
-    usage: "カード、表、入力欄、ヘッダーなど、地の上に置く面",
+    dark: oklch(0.225, 0.014, GRAPHITE),
+    usage: "表、入力欄、ヘッダー、操作の台など、地の上に置く面",
   },
   "surface-muted": {
-    light: oklch(0.96, 0.007, GRAY),
-    dark: oklch(0.255, 0.015, GRAY),
-    usage: "控えめな塗り(表の見出し、選んでいるナビ、コードの地)",
+    light: oklch(0.942, 0.006, GRAPHITE),
+    dark: oklch(0.262, 0.015, GRAPHITE),
+    usage: "控えめな塗り(表の見出し、マウスを載せた行、コードの地)",
   },
   "surface-strong": {
-    light: oklch(0.925, 0.01, GRAY),
-    dark: oklch(0.305, 0.016, GRAY),
+    light: oklch(0.905, 0.008, GRAPHITE),
+    dark: oklch(0.31, 0.016, GRAPHITE),
     usage: "控えめな塗りの上で押したとき・重ねたとき",
   },
 
   // ---- 文字と線 ----
   fg: {
-    light: oklch(0.25, 0.02, GRAY),
-    dark: oklch(0.94, 0.008, GRAY),
-    usage: "本文の文字",
+    light: oklch(0.235, 0.018, GRAPHITE),
+    dark: oklch(0.945, 0.006, GRAPHITE),
+    usage: "本文の文字。フォーカスの輪",
   },
   "fg-muted": {
-    light: oklch(0.48, 0.02, GRAY),
-    dark: oklch(0.72, 0.015, GRAY),
-    usage: "補足の文字(時刻、件数、入力の説明)",
+    light: oklch(0.47, 0.016, GRAPHITE),
+    dark: oklch(0.72, 0.014, GRAPHITE),
+    usage: "補足の文字(時刻、件数、入力の説明、字幕の原文)",
   },
   border: {
-    light: oklch(0.9, 0.01, GRAY),
-    dark: oklch(0.32, 0.016, GRAY),
-    usage: "区切り線、カードと表の枠",
+    light: oklch(0.885, 0.007, GRAPHITE),
+    dark: oklch(0.32, 0.016, GRAPHITE),
+    usage: "区切り線、面と表の枠",
   },
   "border-strong": {
-    light: oklch(0.64, 0.015, GRAY),
-    dark: oklch(0.54, 0.018, GRAY),
+    light: oklch(0.6, 0.014, GRAPHITE),
+    dark: oklch(0.54, 0.016, GRAPHITE),
     usage: "入力欄と、押せる部品の枠",
   },
 
-  // ---- 主な操作(基調色) ----
+  // ---- 主な操作(点灯したキー) ----
   primary: {
-    light: oklch(0.52, 0.085, BRAND),
-    dark: oklch(0.74, 0.11, BRAND),
-    usage: "主なボタンの塗り、フォーカスの輪、選んでいる状態",
+    light: oklch(0.8, 0.15, AMBER),
+    dark: oklch(0.8, 0.145, AMBER),
+    usage: "主なボタンの塗り、選んでいる印、PTT を押して準備している間の灯り",
   },
   "primary-hover": {
-    light: oklch(0.46, 0.075, BRAND),
-    dark: oklch(0.8, 0.1, BRAND),
+    light: oklch(0.75, 0.15, AMBER - 4),
+    dark: oklch(0.85, 0.13, AMBER + 6),
     usage: "主なボタンにマウスを載せたとき",
   },
   "on-primary": {
-    light: oklch(1, 0, 0),
-    dark: oklch(0.18, 0.03, BRAND),
+    light: oklch(0.22, 0.03, AMBER - 12),
+    dark: oklch(0.2, 0.03, AMBER - 12),
     usage: "primary の塗りの上の文字",
   },
   "primary-soft": {
-    light: oklch(0.95, 0.03, BRAND),
-    dark: oklch(0.3, 0.05, BRAND),
-    usage: "基調色の淡い塗り(バッジ、知らせ)",
+    light: oklch(0.955, 0.035, AMBER + 10),
+    dark: oklch(0.3, 0.055, AMBER),
+    usage: "基調色の淡い塗り(札、知らせ、選んでいるナビ)",
   },
   "primary-fg": {
-    light: oklch(0.45, 0.075, BRAND),
-    dark: oklch(0.8, 0.1, BRAND),
-    usage: "基調色の文字(リンク、primary-soft の上の文字)",
+    light: oklch(0.47, 0.105, AMBER - 12),
+    dark: oklch(0.84, 0.12, AMBER + 8),
+    usage: "基調色の文字(primary-soft の上の文字)",
+  },
+
+  // ---- キー(PTT の面) ----
+  key: {
+    light: oklch(0.27, 0.018, GRAPHITE),
+    dark: oklch(0.36, 0.018, GRAPHITE),
+    usage: "押して使う大きなキーの面(PTT を押していないとき)",
+  },
+  "on-key": {
+    light: oklch(0.97, 0.004, GRAPHITE),
+    dark: oklch(0.97, 0.004, GRAPHITE),
+    usage: "key の面の上の文字",
+  },
+  "key-hover": {
+    light: oklch(0.33, 0.02, GRAPHITE),
+    dark: oklch(0.41, 0.02, GRAPHITE),
+    usage: "key の面にマウスを載せたとき",
   },
 
   // ---- 状態 ----
@@ -108,19 +128,14 @@ export const colors = {
     usage: "誤り・失敗の文字",
   },
   "warning-soft": {
-    light: oklch(0.95, 0.05, 85),
-    dark: oklch(0.3, 0.05, 75),
+    light: oklch(0.945, 0.032, 55),
+    dark: oklch(0.29, 0.05, 50),
     usage: "注意の淡い塗り(音が止められている、モック API など)",
   },
   "warning-fg": {
-    light: oklch(0.47, 0.1, 65),
-    dark: oklch(0.83, 0.11, 80),
+    light: oklch(0.47, 0.11, 45),
+    dark: oklch(0.83, 0.1, 55),
     usage: "注意の文字",
-  },
-  warning: {
-    light: oklch(0.76, 0.15, 75),
-    dark: oklch(0.78, 0.14, 75),
-    usage: "注意の線(PTT を押したがまだ話せていない)",
   },
   "success-soft": {
     light: oklch(0.95, 0.04, 155),
@@ -133,39 +148,37 @@ export const colors = {
     usage: "成功の文字(保存しました)",
   },
 
-  // ---- 通話 ----
+  // ---- 通話の表示灯 ----
   live: {
-    light: oklch(0.58, 0.2, 18),
-    dark: oklch(0.58, 0.19, 18),
-    usage: "送話中(PTT で声を送っている)の塗りと線",
+    light: oklch(0.565, 0.205, 25),
+    dark: oklch(0.57, 0.2, 25),
+    usage: "送話(TX)。自分が PTT で声を送っている間の塗りと灯り",
   },
   "on-live": {
     light: oklch(1, 0, 0),
     dark: oklch(1, 0, 0),
     usage: "live の塗りの上の文字",
   },
-
-  // ---- タイムラインの種類 ----
-  "kind-voice": {
-    light: oklch(0.62, 0.1, BRAND),
-    dark: oklch(0.66, 0.1, BRAND),
-    usage: "タイムラインの、音声の発話の印",
+  rx: {
+    light: oklch(0.64, 0.16, 150),
+    dark: oklch(0.74, 0.16, 150),
+    usage: "受信(RX)の灯り。ほかの人が話している間",
   },
-  "kind-text": {
-    light: oklch(0.62, 0.12, 155),
-    dark: oklch(0.66, 0.12, 155),
-    usage: "タイムラインの、テキスト入力の印",
+  "rx-soft": {
+    light: oklch(0.955, 0.04, 150),
+    dark: oklch(0.27, 0.045, 150),
+    usage: "受信中の字幕の帯の塗り",
   },
-  "kind-media": {
-    light: oklch(0.72, 0.14, 70),
-    dark: oklch(0.74, 0.13, 70),
-    usage: "タイムラインの、画像・動画・ファイルの印",
+  "rx-fg": {
+    light: oklch(0.43, 0.1, 150),
+    dark: oklch(0.82, 0.12, 150),
+    usage: "受信の文字(受信中の帯の見出し)",
   },
 
   // ---- 重ね ----
   overlay: {
-    light: oklch(0.2, 0.01, GRAY, 0.65),
-    dark: oklch(0.1, 0.01, GRAY, 0.7),
+    light: oklch(0.2, 0.01, GRAPHITE, 0.65),
+    dark: oklch(0.1, 0.01, GRAPHITE, 0.7),
     usage: "画像・動画に重ねる帯(動画の長さ)",
   },
   "on-overlay": {
@@ -190,6 +203,8 @@ export const contrastPairs: { fg: ColorName; bg: ColorName; min: number }[] = [
   ]),
   { fg: "on-primary", bg: "primary", min: 4.5 },
   { fg: "on-primary", bg: "primary-hover", min: 4.5 },
+  { fg: "on-key", bg: "key", min: 4.5 },
+  { fg: "on-key", bg: "key-hover", min: 4.5 },
   { fg: "on-danger", bg: "danger", min: 4.5 },
   { fg: "on-live", bg: "live", min: 4.5 },
   { fg: "on-overlay", bg: "overlay", min: 4.5 },
@@ -197,25 +212,33 @@ export const contrastPairs: { fg: ColorName; bg: ColorName; min: number }[] = [
   { fg: "danger-fg", bg: "danger-soft", min: 4.5 },
   { fg: "warning-fg", bg: "warning-soft", min: 4.5 },
   { fg: "success-fg", bg: "success-soft", min: 4.5 },
+  { fg: "rx-fg", bg: "rx-soft", min: 4.5 },
+  { fg: "fg", bg: "rx-soft", min: 4.5 },
   { fg: "fg", bg: "primary-soft", min: 4.5 },
   { fg: "fg", bg: "warning-soft", min: 4.5 },
   // 線と、押せる部品の見分け
   { fg: "border-strong", bg: "surface", min: 3 },
-  { fg: "primary", bg: "canvas", min: 3 },
+  // 琥珀のキーは地との明るさの差が小さいので、塗りの上の文字(on-primary)で見分ける。
+  // 選んでいる印などの線には primary-fg を使う。フォーカスの輪は fg(地の上に出る)
+  { fg: "primary-fg", bg: "surface", min: 3 },
   { fg: "danger", bg: "surface", min: 3 },
   { fg: "live", bg: "surface", min: 3 },
+  // key は暗い配色では地との差を小さくしてある(浮いたキー)。キーは上の文字(on-key)で見分ける
 ];
 
 // 角丸(rem)。Tailwind の rounded-sm / md / lg / xl になる
+// 大きさで役割を分ける: sm は札とコード、md はボタンと入力欄、lg は面と表、xl は PTT のキー
 export const radius = {
-  sm: 0.25,
-  md: 0.5,
-  lg: 0.75,
+  sm: 0.1875,
+  md: 0.375,
+  lg: 0.625,
   xl: 1,
 };
 
-// 書体。React Native では端末の既定の書体を使う(ここの値は Web だけ)
+// 書体。IBM Plex Sans JP の1つに絞る(機器の表示のような、組み立てた感じの形で、和文と欧文がそろう)。
+// Web は @fontsource/ibm-plex-sans-jp を ui-web の styles.css で読み込む。
+// React Native では、モバイル版を作るときに同じ書体を組み込む(それまでは端末の既定の書体)
 export const fontFamily = {
-  sans: 'system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif',
+  sans: '"IBM Plex Sans JP", system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif',
   mono: 'ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace',
 };

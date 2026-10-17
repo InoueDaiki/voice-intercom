@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-sans-jp": "5.3.1",
     "@voice-intercom/design-tokens": "workspace:*",
     "tailwindcss": "4.3.3"
   },
