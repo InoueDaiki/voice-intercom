@@ -355,3 +355,48 @@ module "agent" {
   vpc_cidr           = "10.10.0.0/16"
   log_retention_days = 14
 }
+
+# AWS の予算のアラート。予算はアカウント単位なので、dev と prod を合わせた全体の請求を見る(dev にだけ置く)。
+# OpenAI と LiveKit の料金は AWS の請求に入らないので、ここでは見えない。
+# 使わない間はほぼ0円なので、少しでもかかったら気づけるよう低くしている
+locals {
+  budget_alert_emails = compact([for e in split(",", var.budget_alert_emails) : trimspace(e)])
+}
+
+resource "aws_budgets_budget" "account_monthly" {
+  name         = "voice-intercom-account-monthly"
+  budget_type  = "COST"
+  limit_amount = "1"
+  limit_unit   = "USD"
+  time_unit    = "MONTHLY"
+
+  # クレジットや返金で相殺された分も、使った額として数える
+  cost_types {
+    include_credit = false
+    include_refund = false
+  }
+
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = 50
+    threshold_type             = "PERCENTAGE"
+    notification_type          = "ACTUAL"
+    subscriber_email_addresses = local.budget_alert_emails
+  }
+
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = 100
+    threshold_type             = "PERCENTAGE"
+    notification_type          = "ACTUAL"
+    subscriber_email_addresses = local.budget_alert_emails
+  }
+
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = 100
+    threshold_type             = "PERCENTAGE"
+    notification_type          = "FORECASTED"
+    subscriber_email_addresses = local.budget_alert_emails
+  }
+}
