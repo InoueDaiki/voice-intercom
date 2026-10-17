@@ -29,7 +29,7 @@ function cellClass({ align = "start", shrink }: CellOptions): string {
 export function Th({ align, shrink, className, ...props }: Omit<ComponentProps<"th">, "align"> & CellOptions) {
   return (
     <th
-      className={cx(cellClass({ align, shrink }), "border-b border-border bg-surface-muted font-medium text-fg-muted", className)}
+      className={cx(cellClass({ align, shrink }), "border-b border-border bg-surface-muted text-xs font-medium text-fg-muted", className)}
       {...props}
     />
   );
@@ -38,7 +38,7 @@ export function Th({ align, shrink, className, ...props }: Omit<ComponentProps<"
 export function Td({ align, shrink, className, ...props }: Omit<ComponentProps<"td">, "align"> & CellOptions) {
   return (
     <td
-      className={cx(cellClass({ align, shrink }), "border-b border-border align-middle in-[tr:last-child]:border-b-0", className)}
+      className={cx(cellClass({ align, shrink }), "border-b border-border align-middle in-[tr:last-child]:border-b-0 in-[tbody_tr:hover]:bg-surface-muted", className)}
       {...props}
     />
   );

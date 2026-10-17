@@ -16,7 +16,7 @@ import {
   type User,
 } from "@voice-intercom/client-core";
 import { Alert, Badge, Button, cx, PttButton, Textarea } from "@voice-intercom/ui-web";
-import { FileText, Paperclip, SendHorizontal } from "lucide-react";
+import { ChevronLeft, FileText, Image, Keyboard, Mic, Paperclip, SendHorizontal, Users } from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -25,6 +25,7 @@ import {
   type DragEvent,
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from "react";
 import { useAuth } from "react-oidc-context";
 import { Link, useParams } from "react-router";
@@ -42,6 +43,9 @@ const PAGE_LIMIT = 50;
 // 上端からこれより近づいたら、古いほうを読み足す(ピクセル)
 const LOAD_OLDER_THRESHOLD = 200;
 
+// 同じ人の続けての発言を、名前を出さずにまとめる間隔(ミリ秒)
+const GROUP_WINDOW_MS = 60_000;
+
 type Uploader = MediaUploader<File, Blob>;
 
 export default function RoomPage() {
@@ -52,26 +56,33 @@ export default function RoomPage() {
   const myIdentity = user?.profile.sub;
 
   if (room.isPending || me.isPending) {
-    return <p className="text-fg-muted">読み込み中…</p>;
+    return <p className={roomMessageClass}>読み込み中…</p>;
   }
   if (room.isError) {
     return (
-      <section className="mx-auto grid max-w-3xl gap-3">
+      <section className={cx(roomMessageClass, "grid gap-3")}>
         <BackLink />
         <Alert tone="danger">ルームを開けません: {errorMessage(room.error)}</Alert>
       </section>
     );
   }
   if (!me.data || !myIdentity) {
-    return <Alert tone="danger">プロフィールが登録されていません。</Alert>;
+    return (
+      <div className={roomMessageClass}>
+        <Alert tone="danger">プロフィールが登録されていません。</Alert>
+      </div>
+    );
   }
   return <RoomScreen key={roomId} roomId={roomId} roomName={room.data.name} me={me.data} myIdentity={myIdentity} />;
 }
 
+const roomMessageClass = "mx-auto max-w-3xl px-4 py-6 text-fg-muted";
+
 function BackLink() {
   return (
-    <Link to="/" className="text-sm">
-      ← ルームの一覧
+    <Link to="/" className="inline-flex items-center gap-0.5 text-sm text-fg-muted no-underline hover:text-fg">
+      <ChevronLeft aria-hidden="true" className="size-4" />
+      ルーム
     </Link>
   );
 }
@@ -152,9 +163,9 @@ function RoomScreen({ roomId, roomName, me, myIdentity }: { roomId: string; room
   return (
     <section
       className={cx(
-        "mx-auto flex h-full max-w-3xl flex-col gap-3 rounded-lg",
+        "flex h-full flex-col",
         // ファイルを落とせることを示す
-        dragging && "outline-2 outline-offset-4 outline-primary outline-dashed",
+        dragging && "outline-2 -outline-offset-4 outline-fg outline-dashed",
       )}
       onDragOver={onDragOver}
       onDragLeave={(e) => {
@@ -164,49 +175,60 @@ function RoomScreen({ roomId, roomName, me, myIdentity }: { roomId: string; room
       }}
       onDrop={onDrop}
     >
-      <div className="grid gap-1">
-        <BackLink />
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <h1>{roomName}</h1>
-          {session && <RoomStatus session={session} />}
+      <header className="border-b border-border">
+        <div className={cx(columnClass, "grid gap-1 py-3")}>
+          <BackLink />
+          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            <h1>{roomName}</h1>
+            {session && <RoomStatus session={session} />}
+          </div>
         </div>
-      </div>
-      {joinError && <Alert tone="danger">{joinError}</Alert>}
-      {session?.error && !joinError && <Alert tone="danger">{session.error}</Alert>}
-      {session?.warning && <p className="text-sm text-fg-muted">{session.warning}</p>}
-      {session && !session.canPlaybackAudio && (
-        <Alert
-          tone="warning"
-          action={
-            <Button size="sm" variant="primary" onClick={() => void session.startAudio()}>
-              音を出す
-            </Button>
-          }
-        >
-          ブラウザが音の再生を止めています。
-        </Alert>
+      </header>
+      {(joinError || session?.error || session?.warning || (session && !session.canPlaybackAudio)) && (
+        <div className={cx(columnClass, "grid gap-2 pt-3")}>
+          {joinError && <Alert tone="danger">{joinError}</Alert>}
+          {session?.error && !joinError && <Alert tone="danger">{session.error}</Alert>}
+          {session?.warning && <p className="text-sm text-fg-muted">{session.warning}</p>}
+          {session && !session.canPlaybackAudio && (
+            <Alert
+              tone="warning"
+              action={
+                <Button size="sm" variant="primary" onClick={() => void session.startAudio()}>
+                  音を出す
+                </Button>
+              }
+            >
+              ブラウザが音の再生を止めています。
+            </Alert>
+          )}
+        </div>
       )}
       {session && <Timeline session={session} myLanguage={me.language} />}
-      {session && <OutgoingTexts session={session} />}
-      {uploader && <OutgoingMediaList uploader={uploader} />}
-      {session && <Controls session={session} onFiles={sendFiles} />}
+      {session && (
+        <Console session={session} uploader={uploader} myIdentity={myIdentity} myLanguage={me.language} onFiles={sendFiles} />
+      )}
     </section>
   );
 }
+
+// 画面の中身の列。タイムラインと操作の台で、同じ幅と余白にそろえる
+const columnClass = "mx-auto w-full max-w-3xl px-4 sm:px-6";
 
 function RoomStatus({ session }: { session: RoomSession }) {
   if (!session.connected) {
     return <Badge tone={session.error ? "danger" : "neutral"}>{session.error ? "切断" : "入室中…"}</Badge>;
   }
   return (
-    <span className="flex flex-wrap gap-1.5">
-      <Badge>{session.participantCount}人</Badge>
-      <Badge tone={session.agentPresent ? "primary" : "neutral"}>
-        {session.agentPresent ? "翻訳あり" : "翻訳の準備中"}
-      </Badge>
-      {!session.agentPresent && (
+    <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-fg-muted">
+      <span className="inline-flex items-center gap-1">
+        <Users aria-hidden="true" className="size-4" />
+        {session.participantCount}人
+      </span>
+      {session.agentPresent ? (
+        <span>翻訳あり</span>
+      ) : (
         // dev では使っていない間 Agent を止めているので、起動を待つことがある(設計メモの「Agent の scale to zero」)
-        <span className="text-xs text-fg-muted">翻訳の Agent の起動に1〜2分かかることがあります</span>
+        <span title="翻訳の Agent の起動に1〜2分かかることがあります">翻訳の準備中(1〜2分かかることがあります)</span>
       )}
     </span>
   );
@@ -217,7 +239,7 @@ function RoomStatus({ session }: { session: RoomSession }) {
 function Timeline({ session, myLanguage }: { session: RoomSession; myLanguage: Language }) {
   const entries = session.entries;
   const timeline = session.timeline;
-  const listRef = useRef<HTMLOListElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   // 読み足す前の高さ。読み足した後に、見ていた位置がずれないよう同じだけ下げる
   const heightBeforeOlder = useRef<number | undefined>(undefined);
@@ -253,8 +275,8 @@ function Timeline({ session, myLanguage }: { session: RoomSession; myLanguage: L
   });
 
   return (
-    <ol
-      className="flex min-h-32 flex-1 flex-col gap-2 overflow-y-auto pr-1"
+    <div
+      className="min-h-32 flex-1 overflow-y-auto"
       ref={listRef}
       onScroll={(e) => {
         const el = e.currentTarget;
@@ -264,34 +286,52 @@ function Timeline({ session, myLanguage }: { session: RoomSession; myLanguage: L
         }
       }}
     >
-      <li className="py-1 text-center text-xs text-fg-muted">
-        {!timeline.loaded || timeline.loadingOlder
-          ? "読み込み中…"
-          : timeline.hasOlder
-            ? "上へ戻ると、古いものを読み込みます"
-            : "これより前はありません"}
-      </li>
-      {timeline.error && (
-        <li className="flex flex-wrap items-center justify-center gap-2 text-center text-sm text-danger-fg">
-          {timeline.error}
-          <Button variant="link" onClick={() => void timeline.syncLatest()}>
-            読み直す
-          </Button>
+      <ol className={cx(columnClass, "flex min-h-full flex-col py-4")}>
+        <li className="py-2 text-center text-xs text-fg-muted">
+          {!timeline.loaded || timeline.loadingOlder
+            ? "読み込み中…"
+            : timeline.hasOlder
+              ? "上へ戻ると、古いものを読み込みます"
+              : "これより前はありません"}
         </li>
-      )}
-      {timeline.loaded && entries.length === 0 && (
-        <li className="py-8 text-center text-sm text-fg-muted">
-          まだ何もありません。PTT を押して話すか、テキストやファイルを送ってください。
-        </li>
-      )}
-      {entries.map((entry) =>
-        entry.type === "caption" ? (
-          <CaptionItem key={entry.key} session={session} entry={entry} myLanguage={myLanguage} />
-        ) : (
-          <MediaItem key={entry.key} session={session} entry={entry} />
-        ),
-      )}
-    </ol>
+        {timeline.error && (
+          <li className="flex flex-wrap items-center justify-center gap-2 py-2 text-center text-sm text-danger-fg">
+            {timeline.error}
+            <Button variant="link" onClick={() => void timeline.syncLatest()}>
+              読み直す
+            </Button>
+          </li>
+        )}
+        {timeline.loaded && entries.length === 0 && (
+          <li className="my-auto py-12 text-center text-fg-muted">
+            まだ誰も話していません。
+            <br />
+            下のキーを押している間、声がルームの全員に届きます。
+          </li>
+        )}
+        {entries.map((entry, i) => {
+          const continued = continuesPrevious(entries[i - 1], entry);
+          return entry.type === "caption" ? (
+            <CaptionItem key={entry.key} session={session} entry={entry} myLanguage={myLanguage} continued={continued} />
+          ) : (
+            <MediaItem key={entry.key} session={session} entry={entry} continued={continued} />
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+function senderOf(entry: TimelineEntry): string {
+  return entry.type === "caption" ? entry.speakerIdentity : entry.event.sender_id;
+}
+
+// 前の行と同じ人の、間を置かない続きなら、名前と時刻を省いて1つの発言のように見せる
+function continuesPrevious(prev: TimelineEntry | undefined, entry: TimelineEntry): boolean {
+  return (
+    prev !== undefined &&
+    senderOf(prev) === senderOf(entry) &&
+    entry.at.getTime() - prev.at.getTime() < GROUP_WINDOW_MS
   );
 }
 
@@ -316,82 +356,172 @@ function useDelete(session: RoomSession, entry: TimelineEntry, what: string) {
   return { deleting, error, run, can: session.canDeleteEntry(entry) };
 }
 
-// 音声の発話とテキスト入力。履歴の行も、届いたばかりの字幕も同じ形で出す
+// タイムラインの1行。左に時刻、右に話した人と中身を置く(議事録のように、時刻の列で追える)。
+// 続きの行は名前と時刻を省く
+function FeedRow({
+  at,
+  head,
+  continued,
+  children,
+}: {
+  at: Date;
+  head: ReactNode;
+  continued: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <li className={cx("group grid gap-x-4 sm:grid-cols-[4.5rem_1fr]", continued ? "pt-2.5" : "mt-3 border-t border-border pt-3")}>
+      <time
+        dateTime={at.toISOString()}
+        className={cx("hidden pt-0.5 text-right text-xs text-fg-muted sm:block", continued && "sm:invisible")}
+      >
+        {formatTime(at)}
+      </time>
+      <div className="grid min-w-0 gap-1">
+        {!continued && head}
+        {children}
+      </div>
+    </li>
+  );
+}
+
+function FeedHead({
+  name,
+  at,
+  icon,
+  children,
+  remove,
+}: {
+  name: string;
+  at: Date;
+  icon: ReactNode;
+  children?: ReactNode;
+  remove: ReturnType<typeof useDelete>;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+      <span className="font-bold">{name}</span>
+      <span className="text-fg-muted">{icon}</span>
+      {/* 幅の狭い画面では、時刻を名前の横に出す */}
+      <span className="text-xs text-fg-muted sm:hidden">{formatTime(at)}</span>
+      {children}
+      {remove.can && (
+        <Button
+          variant="link"
+          className="ml-auto text-xs text-fg-muted sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100"
+          disabled={remove.deleting}
+          onClick={() => void remove.run()}
+        >
+          削除
+        </Button>
+      )}
+    </div>
+  );
+}
+
+const kindIconClass = "size-3.5";
+
+// 音声の発話とテキスト入力。履歴の行も、届いたばかりの字幕も同じ形で出す。
+// 訳があれば訳を大きく、原文を小さく添える(読むのは訳で、原文は確かめるため)
 function CaptionItem({
   session,
   entry,
   myLanguage,
+  continued,
 }: {
   session: RoomSession;
   entry: Extract<TimelineEntry, { type: "caption" }>;
   myLanguage: Language;
+  continued: boolean;
 }) {
   const remove = useDelete(session, entry, "テキスト");
   // 話者と同じ言語なら訳は無い(Agent が作らない)
   const translation = entry.originalLanguage === myLanguage ? undefined : entry.translations.get(myLanguage);
+  const language = entry.originalLanguage
+    ? (LANGUAGE_LABELS[entry.originalLanguage as Language] ?? entry.originalLanguage)
+    : undefined;
 
   return (
-    <li className={cx(feedItemClass, entry.isText ? "border-l-kind-text" : "border-l-kind-voice")}>
-      <div className={feedHeadClass}>
-        <span className="text-sm font-semibold">{session.displayName(entry.speakerIdentity)}</span>
-        <span className="text-fg-muted">{formatTime(entry.at)}</span>
-        {entry.isText && <Badge>テキスト</Badge>}
-        {entry.originalLanguage && (
-          <Badge>{LANGUAGE_LABELS[entry.originalLanguage as Language] ?? entry.originalLanguage}</Badge>
-        )}
-        {remove.can && <DeleteButton remove={remove} />}
-      </div>
+    <FeedRow
+      at={entry.at}
+      continued={continued}
+      head={
+        <FeedHead
+          name={session.displayName(entry.speakerIdentity)}
+          at={entry.at}
+          remove={remove}
+          icon={
+            entry.isText ? (
+              <Keyboard aria-label="テキスト" className={kindIconClass} />
+            ) : (
+              <Mic aria-label="音声" className={kindIconClass} />
+            )
+          }
+        >
+          {language && <span className="text-xs text-fg-muted">{language}</span>}
+        </FeedHead>
+      }
+    >
       {entry.deleted ? (
         <p className={deletedTextClass}>{DELETED_TEXT_LABEL}</p>
       ) : (
         <>
           {/* 確定する前の字幕は薄く出す */}
-          {entry.original && (
-            <p className={cx("whitespace-pre-wrap", !entry.original.isFinal && "opacity-60")}>
-              {entry.original.text || <span className="text-fg-muted">(聞き取れませんでした)</span>}
+          {translation && (
+            <p className={cx("text-lg leading-snug font-medium whitespace-pre-wrap", !translation.isFinal && "opacity-55")}>
+              {translation.text}
             </p>
           )}
-          {translation && (
-            <p className={cx("font-semibold whitespace-pre-wrap", !translation.isFinal && "opacity-60")}>
-              {translation.text}
+          {entry.original && (
+            <p
+              className={cx(
+                "whitespace-pre-wrap",
+                translation ? "text-sm text-fg-muted" : "text-lg leading-snug font-medium",
+                !entry.original.isFinal && "opacity-55",
+              )}
+            >
+              {entry.original.text || <span className="text-fg-muted">(聞き取れませんでした)</span>}
             </p>
           )}
         </>
       )}
       {remove.error && <p className="text-sm text-danger-fg">{remove.error}</p>}
-    </li>
+    </FeedRow>
   );
 }
 
-// タイムラインの1件の枠。左の線の色で種類(音声・テキスト・画像など)を見分ける
-const feedItemClass = "grid gap-1 rounded-md border border-l-4 border-border bg-surface px-3 py-2";
-const feedHeadClass = "flex flex-wrap items-center gap-x-2 gap-y-1 text-xs";
 const deletedTextClass = "text-sm text-fg-muted italic";
-const mediaClass = "block max-h-60 max-w-60 rounded-md border border-border object-cover";
-
-function DeleteButton({ remove }: { remove: ReturnType<typeof useDelete> }) {
-  return (
-    <Button variant="link" className="ml-auto text-xs" disabled={remove.deleting} onClick={() => void remove.run()}>
-      削除
-    </Button>
-  );
-}
+const mediaClass = "block max-h-72 max-w-full rounded-md border border-border object-cover sm:max-w-80";
 
 // 画像・動画・ファイル
-function MediaItem({ session, entry }: { session: RoomSession; entry: Extract<TimelineEntry, { type: "media" }> }) {
+function MediaItem({
+  session,
+  entry,
+  continued,
+}: {
+  session: RoomSession;
+  entry: Extract<TimelineEntry, { type: "media" }>;
+  continued: boolean;
+}) {
   const event = entry.event;
   const remove = useDelete(session, entry, deletionWhat(event));
 
   return (
-    <li className={cx(feedItemClass, "border-l-kind-media")}>
-      <div className={feedHeadClass}>
-        <span className="text-sm font-semibold">{session.displayName(event.sender_id)}</span>
-        <span className="text-fg-muted">{formatTime(entry.at)}</span>
-        {remove.can && <DeleteButton remove={remove} />}
-      </div>
+    <FeedRow
+      at={entry.at}
+      continued={continued}
+      head={
+        <FeedHead
+          name={session.displayName(event.sender_id)}
+          at={entry.at}
+          remove={remove}
+          icon={<Image aria-label="画像・動画・ファイル" className={kindIconClass} />}
+        />
+      }
+    >
       <MediaBody event={event} />
       {remove.error && <p className="text-sm text-danger-fg">{remove.error}</p>}
-    </li>
+    </FeedRow>
   );
 }
 
@@ -406,7 +536,7 @@ function MediaBody({ event }: { event: TimelineEvent }) {
     // 画像・動画を表示できなかったときも、ダウンロードのリンクにする。
     // 配信の応答にヘッダーが無くても、ルームの画面から離れないよう、新しいタブで開く
     return (
-      <p className="flex items-center gap-2 text-sm break-all">
+      <p className="flex w-fit max-w-full items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-sm break-all">
         <FileText aria-hidden="true" className="size-4 shrink-0 text-fg-muted" />
         <a href={media.url} download={media.file_name ?? true} target="_blank" rel="noreferrer">
           {media.file_name ?? (media.media_type === "file" ? "ファイル" : "ダウンロード")}
@@ -431,7 +561,7 @@ function MediaBody({ event }: { event: TimelineEvent }) {
           onError={() => setFailed(true)}
         />
         {media.duration_ms != null && (
-          <span className="pointer-events-none absolute right-1.5 bottom-1.5 rounded-sm bg-overlay px-1.5 text-xs text-on-overlay">
+          <span className="pointer-events-none absolute top-1.5 right-1.5 rounded-sm bg-overlay px-1.5 text-xs text-on-overlay">
             {formatDuration(media.duration_ms)}
           </span>
         )}
@@ -522,6 +652,87 @@ function outgoingMediaLabel(item: OutgoingMedia<File, Blob>): string {
   }
 }
 
+// 画面の下の操作の台。上から、いまの通話の表示灯、送信中のもの、テキスト入力、PTT のキー
+function Console({
+  session,
+  uploader,
+  myIdentity,
+  myLanguage,
+  onFiles,
+}: {
+  session: RoomSession;
+  uploader: Uploader | undefined;
+  myIdentity: string;
+  myLanguage: Language;
+  onFiles: (files: Iterable<File>) => void;
+}) {
+  return (
+    <div className="border-t border-border bg-surface">
+      <div className={cx(columnClass, "grid gap-3 pt-3 pb-4")}>
+        <OnAir session={session} myIdentity={myIdentity} myLanguage={myLanguage} />
+        <OutgoingTexts session={session} />
+        {uploader && <OutgoingMediaList uploader={uploader} />}
+        <Controls session={session} onFiles={onFiles} />
+      </div>
+    </div>
+  );
+}
+
+// いま声が流れているか。自分が送っていれば TX(赤)、ほかの人の確定していない字幕が流れていれば RX(緑)、
+// どちらでもなければ消灯。高さを変えず、灯りが替わるだけにする(下のキーが動かないように)
+function OnAir({ session, myIdentity, myLanguage }: { session: RoomSession; myIdentity: string; myLanguage: Language }) {
+  const receiving = session.entries.findLast(
+    (e): e is Extract<TimelineEntry, { type: "caption" }> =>
+      e.type === "caption" &&
+      !e.isText &&
+      e.speakerIdentity !== myIdentity &&
+      e.original !== undefined &&
+      !e.original.isFinal,
+  );
+
+  let lampClass = "bg-border-strong";
+  let label = "待機中";
+  let detail: ReactNode = <span className="text-fg-muted">話している人はいません</span>;
+  let rowClass = "bg-surface-muted";
+  if (session.talking) {
+    lampClass = "bg-live motion-safe:animate-pulse";
+    label = "送話中";
+    detail = "あなたの声がルームの全員に届いています";
+    rowClass = "bg-surface-muted";
+  } else if (receiving) {
+    const translation =
+      receiving.originalLanguage === myLanguage ? undefined : receiving.translations.get(myLanguage);
+    lampClass = "bg-rx motion-safe:animate-pulse";
+    label = "受信中";
+    detail = (
+      <>
+        <span className="font-bold">{session.displayName(receiving.speakerIdentity)}</span>{" "}
+        <span className="text-fg-muted">{(translation ?? receiving.original)?.text}</span>
+      </>
+    );
+    rowClass = "bg-rx-soft";
+  }
+
+  return (
+    <div
+      className={cx("flex h-10 items-center gap-3 rounded-md px-3 text-sm transition-colors", rowClass)}
+      role="status"
+      aria-live="polite"
+    >
+      <span aria-hidden="true" className={cx("size-2.5 shrink-0 rounded-full", lampClass)} />
+      <span
+        className={cx(
+          "shrink-0 font-bold",
+          session.talking ? "text-live" : receiving ? "text-rx-fg" : "text-fg-muted",
+        )}
+      >
+        {label}
+      </span>
+      <span className="min-w-0 truncate">{detail}</span>
+    </div>
+  );
+}
+
 // PTT、テキスト入力、ファイルの添付。PTT はボタンを押している間か、テキスト欄の外で Space を押している間
 function Controls({ session, onFiles }: { session: RoomSession; onFiles: (files: Iterable<File>) => void }) {
   const [text, setText] = useState("");
@@ -577,22 +788,7 @@ function Controls({ session, onFiles }: { session: RoomSession; onFiles: (files:
 
   const disabled = !session.connected;
   return (
-    <div className="grid gap-3 border-t border-border pt-3 sm:grid-cols-[auto_1fr] sm:items-stretch">
-      <PttButton
-        state={session.talking ? "talking" : session.pressing ? "pressing" : "idle"}
-        disabled={disabled}
-        aria-pressed={session.pressing}
-        onPointerDown={(e) => {
-          e.currentTarget.setPointerCapture(e.pointerId);
-          void session.startAudio();
-          session.setPressing(true);
-        }}
-        onPointerUp={() => session.setPressing(false)}
-        onPointerCancel={() => session.setPressing(false)}
-        onContextMenu={(e) => e.preventDefault()}
-      >
-        {session.talking ? "話しています" : "押して話す(Space)"}
-      </PttButton>
+    <>
       <form className="grid grid-cols-[auto_1fr_auto] items-end gap-2" onSubmit={onSubmit}>
         <Button
           className="px-3"
@@ -614,20 +810,38 @@ function Controls({ session, onFiles }: { session: RoomSession; onFiles: (files:
           }}
         />
         <Textarea
-          className="resize-y"
+          className="max-h-40 min-h-10 resize-none field-sizing-content"
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onTextKeyDown}
-          placeholder="テキストを入力(Enter で送信、Shift+Enter で改行)"
+          placeholder="テキストを送る"
+          title="Enter で送信、Shift+Enter で改行"
           aria-label="テキスト"
-          rows={2}
+          rows={1}
           disabled={disabled}
         />
-        <Button type="submit" variant="primary" disabled={disabled || text.trim() === ""}>
+        <Button type="submit" disabled={disabled || text.trim() === ""}>
           <SendHorizontal aria-hidden="true" className="size-4" />
           送信
         </Button>
       </form>
-    </div>
+      <PttButton
+        className="w-full"
+        state={session.talking ? "talking" : session.pressing ? "pressing" : "idle"}
+        shortcut="Space"
+        disabled={disabled}
+        aria-pressed={session.pressing}
+        onPointerDown={(e) => {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          void session.startAudio();
+          session.setPressing(true);
+        }}
+        onPointerUp={() => session.setPressing(false)}
+        onPointerCancel={() => session.setPressing(false)}
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        {session.talking ? "送話中" : session.pressing ? "マイクを準備中…" : "押して話す"}
+      </PttButton>
+    </>
   );
 }

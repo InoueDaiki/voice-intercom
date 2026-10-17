@@ -2,6 +2,10 @@
    色・角丸・書体はトークン(design-tokens)からだけ来る。ここやアプリで色を足さない */
 @import "tailwindcss";
 @import "@voice-intercom/design-tokens/theme.css";
+/* 書体(design-tokens の fontFamily.sans)。和文は unicode-range で分けてあり、使う字の分だけ読む */
+@import "@fontsource/ibm-plex-sans-jp/400.css";
+@import "@fontsource/ibm-plex-sans-jp/500.css";
+@import "@fontsource/ibm-plex-sans-jp/700.css";
 
 /* 部品のクラスも拾う(アプリの外にあるので、自動では探されない) */
 @source "./src";
@@ -13,18 +17,27 @@
 
   body {
     @apply bg-canvas font-sans text-fg antialiased;
+    /* 数字の幅をそろえる(時刻・人数・進み具合が動いても横にずれない) */
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 見出しは約物を詰める(palt)。本文は詰めない(読みやすさを優先する) */
+  h1,
+  h2 {
+    font-feature-settings: "palt";
   }
 
   h1 {
-    @apply text-2xl font-bold tracking-tight;
+    @apply text-2xl leading-tight font-bold;
   }
 
   h2 {
-    @apply text-lg font-semibold;
+    @apply text-base font-bold;
   }
 
+  /* リンクは文字の色を変えず、下線で示す(琥珀は主な操作のために取っておく) */
   a {
-    @apply text-primary-fg underline-offset-2 hover:underline;
+    @apply text-fg underline decoration-border-strong decoration-1 underline-offset-3 hover:decoration-fg;
   }
 
   code {
@@ -32,10 +45,10 @@
   }
 
   :focus-visible {
-    @apply outline-2 outline-offset-2 outline-primary;
+    @apply outline-2 outline-offset-2 outline-fg;
   }
 
   progress {
-    @apply accent-primary;
+    @apply accent-fg;
   }
 }

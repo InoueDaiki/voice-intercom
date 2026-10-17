@@ -2,6 +2,18 @@
 
 管理コンソール(`apps/admin`)と Web 版(`apps/web`)の UI 部品と、Tailwind の入口の CSS([styles.css](styles.css))。色などの値は [design-tokens](../design-tokens/README.md) から来る。
 
+## 見た目の方向
+
+無線機や放送卓の、キーと表示灯の文法を借りる。利用者は、いろいろな言語の人と現場でやり取りしている。片手で押して話し、訳された字幕を目で追う。
+
+- **色の意味を守る。** 琥珀(`primary`)は「点灯したキー」で、画面の主な操作だけに使う。赤(`live`)は自分の送話(TX)、緑(`rx`)はほかの人の声の受信(RX)。この2つは通話の状態のためだけに使い、飾りや成功の印には使わない。
+- **目立たせるのは1か所。** ルームの画面では PTT のキー(`key` の面)がいちばん重い。ほかの操作は `secondary` にして、キーと競わせない。
+- **カードを並べない。** 同じ種類のものの並び(タイムライン、ルームの一覧)は、1枚の面を線で区切るか、線だけで区切る。`Card` は入力欄をまとめるときなど、まとまりに意味があるときに使う。
+- **字幕は訳を大きく、原文を小さく。** 読むのは訳で、原文は確かめるために添える。
+- **書体は IBM Plex Sans JP の1つ。** 太さ(400・500・700)と大きさで階層を作る。見出しは約物を詰める(`palt`)。数字は幅をそろえる(`tabular-nums`、body に指定済み)。
+- **リンクは下線で示す。** 文字の色は変えない(琥珀は主な操作のために取っておく)。
+- **フォーカスの輪は `fg`。** 琥珀は白い地の上で見えにくいため。
+
 ## 画面を書くときの決まり
 
 人も AI もこの決まりで書く。`mise run lint` の `pnpm lint:design`(oxlint。設定は [/.oxlintrc.json](../../.oxlintrc.json))が守れていないものを落とす。
@@ -23,13 +35,13 @@
 | --- | --- |
 | `Button`、`buttonClass()` | 操作。`variant` は `primary`(画面の主な操作。1画面に1つ)、`secondary`(既定)、`ghost`(ヘッダーなど)、`danger`(削除)、`link`(文字だけ)。`<Link>` をボタンの見た目にするときは `buttonClass()` |
 | `Field` + `Input`・`Textarea`・`Select` | ラベル・説明(`hint`)・誤り(`error`)と入力欄の組。`id` と `aria-*` は `Field` が付ける |
-| `Badge` | 短い状態の札。`tone` は `neutral`・`primary`・`success`・`warning`・`danger`・`live` |
+| `Badge` | 短い状態の札。`tone` は `neutral`・`primary`・`success`・`warning`・`danger`・`live`(送話)・`rx`(受信) |
 | `Alert` | 画面の中の知らせ。`tone` は `info`・`success`・`warning`・`danger`(`danger` は `role="alert"`)。`action` に再読み込みなどのボタン |
 | `Card` | 地の上に置く面。`tone="danger"` は削除をまとめる面 |
 | `Table`、`Th`、`Td` | 表。数値の列は `align="end"`、操作の列は `shrink` |
 | `PageHeader` | 画面の題。`back`(戻るリンク)、`actions`(右の操作)、`description` |
 | `FullScreenMessage` | 画面全体の真ん中の知らせ(読み込み中、ログインの失敗) |
-| `PttButton` | PTT のボタン。`state` は `idle`・`pressing`・`talking` |
+| `PttButton` | PTT のキー。画面でいちばん大きく置く。`state` は `idle`(消灯)・`pressing`(琥珀。マイクの準備中)・`talking`(赤。送話中)。`shortcut` にキーボードの操作(`Space`)を添える |
 
 ## モバイル版(React Native)
 

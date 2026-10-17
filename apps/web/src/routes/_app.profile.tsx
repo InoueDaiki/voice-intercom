@@ -46,7 +46,7 @@ export default function Profile() {
   };
 
   return (
-    <section className="mx-auto max-w-lg">
+    <section className="mx-auto max-w-lg px-4 py-8 sm:px-6">
       <PageHeader
         title="プロフィール"
         description={registered ? undefined : "ルームに入る前に、表示名と言語を登録してください。"}

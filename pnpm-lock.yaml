@@ -351,6 +351,9 @@ importers:
 
   packages/ui-web:
     dependencies:
+      '@fontsource/ibm-plex-sans-jp':
+        specifier: 5.3.1
+        version: 5.3.1
       '@voice-intercom/design-tokens':
         specifier: workspace:*
         version: link:../design-tokens
@@ -449,6 +452,9 @@ packages:
   '@eslint/css-tree@4.1.1':
     resolution: {integrity: sha512-A+s89eP+yDAPkKjnIOfjlkGifg5J7GPn01nWx14UjBVWktfkxOU4975F9ZZ13xNxkGiblNcBaAqgKhnQrW6SWA==}
     engines: {node: ^20.19.0 || ^22.13.0 || >=24}
+
+  '@fontsource/ibm-plex-sans-jp@5.3.1':
+    resolution: {integrity: sha512-lFejXBGcWN/htaffKJryghb/zd2WKwFKyJWJRTcRP57/HUAGEdjNHI0UtIUN8pv4A5F9hPBxZ0dY8oILd88xIA==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -1800,6 +1806,8 @@ snapshots:
     dependencies:
       mdn-data: 2.35.0
       source-map-js: 1.2.2
+
+  '@fontsource/ibm-plex-sans-jp@5.3.1': {}
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
