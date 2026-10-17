@@ -1,5 +1,6 @@
 {
   "interactiveLogin": true,
+  "loginPagePath": "/config/mock-oidc-login.html",
   "httpServer": "NettyWrapper",
   "tokenCallbacks": [
     {
@@ -14,6 +15,27 @@
             "client_id": "${clientId}",
             "token_use": "access",
             "scope": "voice-intercom/agent"
+          }
+        },
+        {
+          "requestParam": "subject",
+          "match": "admin.*",
+          "claims": {
+            "sub": "${subject}",
+            "client_id": "${clientId}",
+            "token_use": "access",
+            "cognito:groups": ["admin"],
+            "email": "${subject}@example.com"
+          }
+        },
+        {
+          "requestParam": "grant_type",
+          "match": "*",
+          "claims": {
+            "sub": "${subject}",
+            "client_id": "${clientId}",
+            "token_use": "access",
+            "email": "${subject}@example.com"
           }
         }
       ]

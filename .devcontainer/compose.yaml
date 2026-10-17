@@ -29,6 +29,7 @@ services:
       JSON_CONFIG_PATH: /config/mock-oidc.json
     volumes:
       - ./mock-oidc.json:/config/mock-oidc.json:ro
+      - ./mock-oidc-login.html:/config/mock-oidc-login.html:ro
     ports:
       - "8090:8090"
 

@@ -1,0 +1,184 @@
+<!doctype html>
+<!--
+  模擬 OIDC(mock-oauth2-server)のログイン画面。mock-oidc.json の loginPagePath で差し替える。
+  フォームは今の URL(/default/authorize?...)に username と claims を POST する。
+  claims は mock-oidc.json の requestMappings で username から決まるので、ここでは送らなくてよい。
+-->
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ローカルのログイン</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f6f7f9;
+        --surface: #ffffff;
+        --text: #1b1f24;
+        --muted: #5b636e;
+        --border: #d6dae0;
+        --accent: #2457c5;
+        --accent-text: #ffffff;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #15181c;
+          --surface: #1f2328;
+          --text: #e6e8eb;
+          --muted: #9aa3ad;
+          --border: #353b43;
+          --accent: #6f9bff;
+          --accent-text: #0d1117;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 32px 16px;
+        background: var(--bg);
+        color: var(--text);
+        font-family: system-ui, -apple-system, "Hiragino Sans", sans-serif;
+        line-height: 1.5;
+      }
+      main {
+        max-width: 420px;
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 1.25rem;
+        margin: 0 0 4px;
+      }
+      p {
+        margin: 0 0 16px;
+        color: var(--muted);
+        font-size: 0.875rem;
+      }
+      code {
+        font-size: 0.85em;
+      }
+      .users {
+        display: grid;
+        gap: 8px;
+        margin-bottom: 24px;
+      }
+      .users button {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        width: 100%;
+        padding: 12px 16px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface);
+        color: var(--text);
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .users button:hover,
+      .users button:focus-visible {
+        border-color: var(--accent);
+      }
+      .users .name {
+        font-weight: 600;
+      }
+      .users .note {
+        color: var(--muted);
+        font-size: 0.8125rem;
+      }
+      fieldset {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        margin: 0;
+        background: var(--surface);
+      }
+      legend {
+        padding: 0 4px;
+        font-size: 0.875rem;
+        font-weight: 600;
+      }
+      label {
+        display: block;
+        font-size: 0.8125rem;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+      input,
+      textarea {
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--bg);
+        color: var(--text);
+        font: inherit;
+        margin-bottom: 12px;
+      }
+      textarea {
+        font-family: ui-monospace, monospace;
+        font-size: 0.8125rem;
+      }
+      .submit {
+        padding: 8px 16px;
+        border: none;
+        border-radius: 6px;
+        background: var(--accent);
+        color: var(--accent-text);
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>ローカルのログイン</h1>
+      <p>模擬 OIDC です。ユーザーを選ぶとログインします。<span id="client"></span></p>
+
+      <!-- username がトークンの sub(users テーブルの user_id、ルームの member_ids)になる -->
+      <div class="users">
+        <form method="post">
+          <button name="username" value="admin">
+            <span class="name">admin</span><span class="note">管理者(管理コンソール用)</span>
+          </button>
+        </form>
+        <form method="post">
+          <button name="username" value="user1">
+            <span class="name">user1</span><span class="note">メンバー</span>
+          </button>
+        </form>
+        <form method="post">
+          <button name="username" value="user2">
+            <span class="name">user2</span><span class="note">メンバー</span>
+          </button>
+        </form>
+        <form method="post">
+          <button name="username" value="user3">
+            <span class="name">user3</span><span class="note">メンバー</span>
+          </button>
+        </form>
+      </div>
+
+      <form method="post">
+        <fieldset>
+          <legend>ほかのユーザー</legend>
+          <label for="username">ユーザー名(<code>admin</code> で始まると管理者)</label>
+          <input id="username" name="username" required autocomplete="off" />
+          <label for="claims">足す claims(JSON。任意。username から決まる claims は上書きできない)</label>
+          <textarea id="claims" name="claims" rows="4" placeholder='{ "custom": "value" }'></textarea>
+          <button class="submit" type="submit">ログイン</button>
+        </fieldset>
+      </form>
+    </main>
+    <script>
+      // どのアプリからのログインかを出す(client_id は認可リクエストの URL にある)
+      const clientId = new URLSearchParams(location.search).get("client_id");
+      if (clientId) {
+        document.getElementById("client").textContent = `ログイン先のクライアント: ${clientId}`;
+      }
+    </script>
+  </body>
+</html>

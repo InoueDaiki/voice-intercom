@@ -367,13 +367,20 @@ result = notify.send_to_users(
 本番は Cognito を標準の OIDC(認可コード + PKCE)で使う。ローカルでは、devContainer と一緒に起動する [mock-oauth2-server](https://github.com/navikt/mock-oauth2-server) に差し替える。
 
 - issuer: `http://${DEV_HOST}:8090/default`(探索用の URL は `/.well-known/openid-configuration`)
-- ログイン画面では任意のユーザー名と claims を入力できる。Cognito に寄せた claims の例:
+- ログイン画面は自前のもの([.devcontainer/mock-oidc-login.html](.devcontainer/mock-oidc-login.html))。ユーザーのボタンを押すとログインする。claims は打たなくてよい。
 
-  ```json
-  { "cognito:groups": ["admin"], "token_use": "access", "client_id": "mobile" }
-  ```
+  | ユーザー | 役割 |
+  | --- | --- |
+  | `admin` | 管理者(`cognito:groups` に `admin`)。管理コンソールで使う |
+  | `user1`、`user2`、`user3` | メンバー。Web 版・モバイル版で使う |
 
-- client credentials(Agent から API を呼ぶとき)では、Cognito のアクセストークンと同じ形(`client_id`、`token_use`、`scope`)の claims を返す。設定は [.devcontainer/mock-oidc.json](.devcontainer/mock-oidc.json)。
+  ほかの名前も「ほかのユーザー」の欄で入れられる。`admin` で始まる名前は管理者になる。
+- username が `sub`(users テーブルの `user_id`、LiveKit の identity、ルームの `member_ids`)になる。
+- claims は、username と、ログインしたアプリの `client_id` から決まる(設定は [.devcontainer/mock-oidc.json](.devcontainer/mock-oidc.json) の `requestMappings`)。Cognito のアクセストークンに寄せて、`sub`、`client_id`、`token_use: "access"`、`email`(`<username>@example.com`)を入れる。
+  - 「ほかのユーザー」の欄では claims(JSON)を足せる(`cognito:groups` を足せば `admin` で始まらない名前も管理者になる)。ただし上の claims は上書きできない。
+  - mapping は上から見て最初に当たった1つだけが効く。足すときは順番に気を付ける。
+- client credentials(Agent から API を呼ぶとき)では、Cognito のアクセストークンと同じ形(`client_id`、`token_use`、`scope`)の claims を返す。
+- 設定やログイン画面を変えたら、devContainer を作り直す(Rebuild Container)。`oidc` は起動するときにだけ設定を読む。
 - トークンの `iss` はリクエストの Host から決まる。そのため、クライアントは必ず `DEV_HOST` で接続する。コンテナ内から鍵(JWKS)を取るときは、`http://oidc:8090/default/jwks` を使う。
 
 ## React のアプリの作り(管理コンソールと Web 版)
@@ -392,11 +399,7 @@ result = notify.send_to_users(
 
 `mise run admin` で起動し、ホストのブラウザで `http://localhost:5173` を開く(Cognito のリダイレクト先に合わせて、`localhost` で開く)。
 
-- ログインは標準の OIDC(認可コード + PKCE)。ローカルでは模擬 OIDC のログイン画面が出るので、claims に次を入れる。`admin` グループがないと、ログインできても画面は見られない。
-
-  ```json
-  { "cognito:groups": ["admin"], "token_use": "access", "client_id": "admin", "email": "admin@example.com" }
-  ```
+- ログインは標準の OIDC(認可コード + PKCE)。ローカルでは模擬 OIDC のログイン画面で `admin` を押す([ローカルの認証](#ローカルの認証模擬-oidc-サーバー))。管理者でないユーザーは、ログインできても画面は見られない。
 
 - 画面:
 
@@ -428,11 +431,11 @@ result = notify.send_to_users(
 
 `mise run web` で起動し、ホストのブラウザで `http://localhost:5174` を開く(Cognito の web クライアントの戻り先に合わせて、`localhost` で開く。マイクも `localhost` か HTTPS でないと使えない)。ルームの処理は `packages/client-core` の `RoomSession` で、画面は `apps/web/src/routes`。
 
-- ログインは標準の OIDC(認可コード + PKCE)。ローカルでは模擬 OIDC のログイン画面で、claims に次を入れる。`username` が LiveKit の identity(ルームの `member_ids` の sub)になる。
-
-  ```json
-  { "token_use": "access", "client_id": "web", "email": "user1@example.com" }
-  ```
+- ログインは標準の OIDC(認可コード + PKCE)。ローカルでは模擬 OIDC のログイン画面で `user1` などを押す([ローカルの認証](#ローカルの認証模擬-oidc-サーバー))。username が LiveKit の identity(ルームの `member_ids` の sub)になる。
+- ローカルで入室を試す順番。管理コンソールのメンバーの候補は、プロフィールを登録した人だけなので、先に Web 版で登録する。
+  1. Web 版に `user1` でログインし、`/profile` で表示名と言語を登録する(2人で試すなら、別のブラウザかシークレットウィンドウで `user2` も)。
+  2. 管理コンソールに `admin` でログインし、ルームを作って `user1`(と `user2`)をメンバーに足す。
+  3. Web 版のルームの一覧から入室する。
 
 - ローカルの API が `web` のトークンを受け付けるよう、`.env` の `OIDC_CLIENT_IDS` に `web` を入れておく(`.env.example` には入っている)。
 - ログインは `localStorage` に持ち、タブを閉じても続く(Cognito の web クライアントのリフレッシュトークンは30日)。
@@ -506,11 +509,10 @@ AWS に接続せずに API を動かせるように、devContainer と一緒に�
 ```sh
 oidc="http://${DEV_HOST}:8090/default"
 
-# 利用者のトークン。ログイン画面のフォームを curl で送り、認可コードを交換する(claims は上の例と同じ)
+# 利用者のトークン。ログイン画面のフォームを curl で送り、認可コードを交換する(claims は username と client_id から決まる)
 code=$(curl -s -o /dev/null -w '%{redirect_url}' -X POST \
   "$oidc/authorize?client_id=admin&response_type=code&scope=openid&state=x&redirect_uri=http://localhost:5173/cb" \
-  --data-urlencode username=admin-1 \
-  --data-urlencode 'claims={"cognito:groups":["admin"],"token_use":"access","client_id":"admin"}' \
+  --data-urlencode username=admin \
   | sed -E 's/.*[?&]code=([^&]+).*/\1/')
 token=$(curl -s "$oidc/token" -d grant_type=authorization_code -d code="$code" \
   -d client_id=admin -d redirect_uri=http://localhost:5173/cb | jq -r .access_token)
@@ -522,4 +524,4 @@ agent=$(curl -s "$oidc/token" -d grant_type=client_credentials -d client_id=agen
   | jq -r .access_token)
 ```
 
-`username` はトークンの `sub`(users テーブルの `user_id`、ルームの `member_ids`)になる。管理者でない利用者のトークンは、claims から `cognito:groups` を外し、`client_id` を `mobile` にして取る。
+`username` はトークンの `sub`(users テーブルの `user_id`、ルームの `member_ids`)になる。管理者でない利用者のトークンは、username を `user1` などに、`client_id` を `mobile` にして取る。
