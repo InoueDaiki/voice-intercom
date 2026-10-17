@@ -41,3 +41,13 @@ variable "agent_idle_shutdown_minutes" {
   type        = number
   default     = 15
 }
+
+variable "budget_alert_emails" {
+  description = "AWS の予算のアラートを送るメールアドレス。複数はカンマ区切り(例: TF_VAR_budget_alert_emails=a@example.com,b@example.com)。アドレスはリポジトリに書かない"
+  type        = string
+
+  validation {
+    condition     = trimspace(replace(var.budget_alert_emails, ",", "")) != ""
+    error_message = "メールアドレスを1つ以上渡す。"
+  }
+}

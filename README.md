@@ -168,6 +168,8 @@ PR と main への push で動く。ツールは mise で `mise.toml` と同じ�
 
 LiveKit の URL と API キーは `TF_VAR_livekit_client_url`、`TF_VAR_livekit_api_key` で渡す。
 
+AWS の予算のアラート(アカウント全体で月 1 USD。実績の 50%・100% と、予測の 100% でメールを送る)は dev の Terraform に置く。宛先は `.env` の `TF_VAR_budget_alert_emails=you@example.com` で渡す(必須。複数はカンマ区切り)。OpenAI と LiveKit の料金は AWS の請求に入らないので、それぞれの管理画面で上限を設ける。
+
 ### Cognito のログイン画面
 
 ログイン画面は Cognito のマネージドログイン(ドメインの `managed_login_version = 2`)。
