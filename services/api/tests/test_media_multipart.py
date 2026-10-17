@@ -102,7 +102,7 @@ def in_progress() -> list[str]:
 def put_thumbnail(media_id: str) -> None:
     boto3.client("s3").put_object(
         Bucket=MEDIA_BUCKET,
-        Key=f"rooms/room-a/{media_id}/thumbnail",
+        Key=f"rooms/room-a/{media_id}/upload-thumbnail",
         Body=b"jpg",
         ContentType="image/jpeg",
     )
@@ -134,7 +134,7 @@ def test_large_upload_is_multipart(member: str) -> None:
     assert body["multipart"] == {"part_size": 8 * MIB, "part_count": 1280}
     # サムネイルは1回の PUT のまま
     assert urlparse(body["thumbnail_upload_url"]).path.endswith(
-        f"rooms/room-a/{body['media_id']}/thumbnail"
+        f"rooms/room-a/{body['media_id']}/upload-thumbnail"
     )
     assert in_progress() == [key(body["media_id"])]
     # UploadId はクライアントに返さず、仮の行に持つ
@@ -172,7 +172,7 @@ def test_part_urls(member: str) -> None:
     assert status == 200
     assert body["parts"] == []
     assert urlparse(body["thumbnail_upload_url"]).path.endswith(
-        f"rooms/room-a/{media_id}/thumbnail"
+        f"rooms/room-a/{media_id}/upload-thumbnail"
     )
 
 

@@ -9,8 +9,10 @@ CloudFront の URL で配信するので、HTML や SVG をブラウザで開か
 1. アプリ(か管理コンソール)が uploads で署名付き URL をもらい、S3 に本体(とサムネイル)を
    直接 PUT する。本体が 16MB 以上ならマルチパートにし、パートの署名付き URL を parts で取って、
    パートを並べて PUT する(下の「マルチパート」)。
-2. complete を呼ぶと、(マルチパートなら完了させてから)置かれたことを確かめ、履歴(kind media)に
-   保存する。
+2. complete を呼ぶと、(マルチパートなら完了させてから)置かれたことと大きさを確かめ、履歴
+   (kind media)に保存する。
+   1回の PUT(本体が 16MB 未満、サムネイル)は仮置きのキーに置かせ、確かめてから配信するキーへ
+   コピーし、仮置きを消す(下の「仮置き」)。
 3. 保存した後に、今ルームにいる人へデータチャネル(topic "media")で知らせ、いない人には
    push 通知を送る(media_broadcast.py)。2回目からは、知らせ直すだけで push 通知は送らない。
 4. 受け取った側は、履歴の media.url(CloudFront)で表示・再生する。
@@ -22,6 +24,15 @@ complete を呼べるのはアップロードした本人だけ。uploads のと
 - キーに sub を入れる方法は、公開する URL に sub が出るうえ、他人が complete したときに
   「本人ではない」(403)と「まだ置かれていない」(409)を見分けられない。
 仮の行には Content-Type や大きさも持たせるので、complete でクライアントに送り直させずに済む。
+
+仮置き(media_store.py のキー):
+- 署名付き URL は期限まで何度でも PUT できる。配信するキーに直接向けると、complete の後や削除の
+  後に PUT し直して、確かめていない中身に置き換えたり、消したものを戻したりできてしまう。
+  仮置きのキーにすれば、置き直しは配信するキーに届かない(仮置きは CloudFront から読めない)。
+- コピーは、HeadObject で確かめたときの ETag に合うときだけ行う(CopySourceIfMatch)。確かめた後に
+  置き直されたら 409 にし、complete をやり直させる。
+- 仮置きに無く配信するキーにあるのは、前の complete がコピーして仮置きを消した後、履歴を書く前に
+  落ちた(か同時に呼ばれた)とき。配信するキーのものを確かめて進む。
 
 マルチパート(docs/設計メモ.md の「画像・動画のアップロード」):
 - 分けるかと、パートの大きさは API が決める(16MB 以上、パートは 8MB。10,000 個を超えるなら
@@ -35,6 +46,7 @@ complete を呼べるのはアップロードした本人だけ。uploads のと
 
 import urllib.parse
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import Annotated
@@ -123,8 +135,46 @@ def _unprocessable(message: str) -> ServiceError:
 
 def _thumbnail_url(room_id: str, media_id: str) -> str:
     return media_store.presign_put(
-        media_store.thumbnail_key(room_id, media_id), THUMBNAIL_CONTENT_TYPE
+        media_store.staging_thumbnail_key(room_id, media_id), THUMBNAIL_CONTENT_TYPE
     )
+
+
+@dataclass(frozen=True)
+class _Uploaded:
+    """1回の PUT で置かれたもの。staging_key が None なら、もう配信するキーにある。"""
+
+    info: media_store.ObjectInfo
+    key: str
+    staging_key: str | None
+
+
+def _find_uploaded(staging_key: str, key: str) -> _Uploaded | None:
+    """1回の PUT で置かれたものを、仮置きのキー、配信するキーの順に探す。無ければ None。
+
+    配信するキーにだけあるのは、前の complete がコピーして仮置きを消した後に、履歴を書く前に
+    落ちた(か同時に呼ばれた)とき。
+    """
+    info = media_store.head(staging_key)
+    if info is not None:
+        return _Uploaded(info, key, staging_key)
+    info = media_store.head(key)
+    return None if info is None else _Uploaded(info, key, None)
+
+
+def _publish(uploaded: _Uploaded) -> None:
+    """確かめた仮置きのものを配信するキーへコピーし、仮置きを消す。
+
+    確かめた後に置き直されていたら 409。元が無いのは、同時に呼ばれた complete がコピーして
+    消した後なので、そのまま進む。
+    """
+    if uploaded.staging_key is None:
+        return
+    try:
+        copied = media_store.copy(uploaded.staging_key, uploaded.key, etag=uploaded.info.etag)
+    except media_store.ChangedError as e:
+        raise _conflict("確かめている間に置き直された。complete をやり直す") from e
+    if copied:
+        media_store.delete([uploaded.staging_key])
 
 
 def _own_pending(room_id: str, media_id: str, user_sub: str) -> timeline_store.PendingUpload:
@@ -185,7 +235,10 @@ def create_media_upload(
     )
     return MediaUpload(
         media_id=media_id,
-        upload_url=media_store.presign_put(key, body.content_type, disposition)
+        # 1回の PUT は仮置きのキーに置かせる(complete で確かめてから配信するキーへコピーする)
+        upload_url=media_store.presign_put(
+            media_store.staging_media_key(room_id, media_id), body.content_type, disposition
+        )
         if part_size is None
         else None,
         content_disposition=disposition if part_size is None else None,
@@ -249,6 +302,7 @@ def create_upload_part_urls(
     summary="アップロードした画像・動画・ファイルを履歴に保存する(アップロードした本人)",
     description="本体(とサムネイル)が置かれていなければ 409。"
     "置かれた本体の大きさが uploads の size_bytes と違えば 409(マルチパートでは 410)。"
+    "確かめている間に PUT し直されたときも 409(complete をやり直す)。"
     "マルチパートなら、本文の parts に全パートの番号と ETag を入れる(完了させてから確かめる)。"
     "完了できない(ETag が合わない、アップロードが取りやめられた・期限で消えた)なら 410 で、"
     "uploads からやり直す。"
@@ -282,23 +336,30 @@ def complete_media_upload(
     if pending.completed_event_id is not None:
         return _announce_again(room, _completed_event(room_id, pending.completed_event_id))
 
+    thumbnail: _Uploaded | None = None
     if pending.has_thumbnail:
         # マルチパートの完了は取り消せないので、サムネイルを先に確かめる
-        thumbnail = media_store.head(media_store.thumbnail_key(room_id, media_id))
+        thumbnail = _find_uploaded(
+            media_store.staging_thumbnail_key(room_id, media_id),
+            media_store.thumbnail_key(room_id, media_id),
+        )
         if thumbnail is None:
             raise _conflict("サムネイルがまだ置かれていない")
-        if thumbnail.size_bytes > MAX_THUMBNAIL_BYTES:
+        if thumbnail.info.size_bytes > MAX_THUMBNAIL_BYTES:
             raise _conflict("サムネイルが上限(10MB)より大きい")
     multipart = pending.upload_id is not None
+    key = media_store.media_key(room_id, media_id)
+    single: _Uploaded | None = None
     if multipart:
         _complete_multipart(pending, body)
-
-    key = media_store.media_key(room_id, media_id)
-    original = media_store.head(key)
-    if original is None:
-        if multipart:
+        original = media_store.head(key)
+        if original is None:
             raise _gone("マルチパートのアップロードが無い(取りやめた、期限で消えた)")
-        raise _conflict("本体がまだ置かれていない")
+    else:
+        single = _find_uploaded(media_store.staging_media_key(room_id, media_id), key)
+        if single is None:
+            raise _conflict("本体がまだ置かれていない")
+        original = single.info
     # 署名付き URL では大きさを縛れないので、申告どおりかを確かめる(上限は uploads で確かめた)
     if original.size_bytes != pending.size_bytes or original.size_bytes > MAX_MEDIA_BYTES:
         if multipart:
@@ -306,6 +367,12 @@ def complete_media_upload(
             media_store.delete([key])
             raise _gone("本体の大きさが uploads の size_bytes と違う")
         raise _conflict("本体の大きさが uploads の size_bytes と違う")
+
+    # 確かめたので、配信するキーへ移す
+    if thumbnail is not None:
+        _publish(thumbnail)
+    if single is not None:
+        _publish(single)
 
     # push 通知の本文に表示名を使う
     profile = store.get_user(user.sub)
@@ -348,8 +415,8 @@ def _complete_multipart(
 def _announce_again(room: Room, event: TimelineEvent) -> TimelineEvent:
     """2回目からの complete。配信だけをやり直す(push 通知は送らない)。
 
-    送った本人が消した後なら、配信もせず墓石を返す。このとき S3 の後始末(本体とサムネイルを消す、
-    マルチパートを取りやめる)もやり直す。同時に呼ばれた complete が、削除の後に
+    送った本人が消した後なら、配信もせず墓石を返す。このとき S3 の後始末(本体とサムネイルと
+    仮置きを消す、マルチパートを取りやめる)もやり直す。同時に呼ばれた complete が、削除の後に
     CompleteMultipartUpload で本体を置き直したかもしれないため。CloudFront の無効化は DELETE で
     済んでいるので、やり直さない。
     """

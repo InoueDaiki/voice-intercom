@@ -206,14 +206,16 @@ data "aws_iam_policy_document" "api" {
 
   # 署名付き URL の発行(アップロードと、必要なら直接の取得)。HeadObject は GetObject の権限で動く。
   # マルチパートの開始・パートの PUT・完了は PutObject の権限で動く。取りやめ(完了できないとき、
-  # 消したとき)には AbortMultipartUpload が要る
+  # 消したとき)には AbortMultipartUpload が要る。complete で仮置きから配信するキーへ移す
+  # CopyObject は、元の GetObject と先の PutObject で動く
   statement {
     actions   = ["s3:PutObject", "s3:GetObject", "s3:AbortMultipartUpload"]
     resources = ["${module.media.bucket_arn}/*"]
   }
 
-  # 送った本人が消した画像・動画の本体とサムネイルを消す(services/api の deletion.py)。
-  # ルームを消したときの rooms/<room_id>/ の一括削除(DeleteObjects。room_cleanup.py)も同じ権限で動く
+  # 送った本人が消した画像・動画の本体とサムネイル(と仮置き)を消す(services/api の deletion.py)。
+  # complete で移した後の仮置きも消す。ルームを消したときの rooms/<room_id>/ の一括削除
+  # (DeleteObjects。room_cleanup.py)も同じ権限で動く
   statement {
     actions   = ["s3:DeleteObject"]
     resources = ["${module.media.bucket_arn}/rooms/*"]

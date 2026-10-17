@@ -6,7 +6,8 @@ docs/設計メモ.md の「送ったものの削除」。DELETE /rooms/{room_id}
 1. 今ルームにいる人へ、データチャネル(topic "deletion"、reliable)で DeletionMessage
    (proto/voiceintercom/v1/deletion.proto)を送る。送り方は画像・動画の配信と同じ
    (media_broadcast.send_to_room。人がいなければ送らない)。
-2. 画像・動画なら、S3 の本体とサムネイルを消す。マルチパートで上げたものは、アップロードも
+2. 画像・動画なら、S3 の本体とサムネイルと、1回の PUT の仮置き(media_store.py。complete の後に
+   置き直されたもの)を消す。マルチパートで上げたものは、アップロードも
    取りやめる(media.py の complete が消した後に呼ばれたときも、ここを通る)。
 3. 消せたら、CloudFront のキャッシュを無効にする(media_id ごとに1つのパス
    `/rooms/<room_id>/<media_id>/*`)。キャッシュの期間は Managed-CachingOptimized の既定の
@@ -56,7 +57,9 @@ def announce(event: TimelineEvent) -> None:
 
 
 def purge_media(event: TimelineEvent, *, invalidate: bool = True) -> None:
-    """消した画像・動画の、S3 の本体とサムネイルを消し、CloudFront のキャッシュを無効にする。
+    """消した画像・動画の S3 のオブジェクトを消し、CloudFront のキャッシュを無効にする。
+
+    消すのは本体とサムネイルと、1回の PUT の仮置き。
 
     invalidate が False なら S3 だけ(消した後の complete。無効化は DELETE で済んでいる)。
     """
@@ -64,9 +67,13 @@ def purge_media(event: TimelineEvent, *, invalidate: bool = True) -> None:
         media = timeline_store.deleted_media(event.room_id, event.event_id)
         if media is None:
             return
-        keys = [media_store.media_key(event.room_id, media.media_id)]
+        keys = [
+            media_store.media_key(event.room_id, media.media_id),
+            media_store.staging_media_key(event.room_id, media.media_id),
+        ]
         if media.has_thumbnail:
             keys.append(media_store.thumbnail_key(event.room_id, media.media_id))
+            keys.append(media_store.staging_thumbnail_key(event.room_id, media.media_id))
         # マルチパートなら、先に取りやめる(この後で同時に呼ばれた complete が完了させて、
         # 本体を置き直さないように)。完了した後は S3 に無い(NoSuchUpload)ので何もしない
         pending = timeline_store.get_pending_upload(event.room_id, media.media_id)

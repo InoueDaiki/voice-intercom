@@ -79,6 +79,18 @@ data "aws_cloudfront_cache_policy" "caching_optimized" {
   name = "Managed-CachingOptimized"
 }
 
+# 配信の応答に X-Content-Type-Options: nosniff を付け、ブラウザに Content-Type どおりに扱わせる
+# (中身から HTML などと推測させない)。Content-Type は署名付き URL の署名に入れて縛っている
+resource "aws_cloudfront_response_headers_policy" "this" {
+  name = var.bucket_name
+
+  security_headers_config {
+    content_type_options {
+      override = true
+    }
+  }
+}
+
 resource "aws_cloudfront_distribution" "this" {
   enabled         = true
   comment         = var.bucket_name
@@ -93,12 +105,13 @@ resource "aws_cloudfront_distribution" "this" {
   }
 
   default_cache_behavior {
-    target_origin_id       = "s3"
-    viewer_protocol_policy = "redirect-to-https"
-    allowed_methods        = ["GET", "HEAD"]
-    cached_methods         = ["GET", "HEAD"]
-    compress               = true
-    cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
+    target_origin_id           = "s3"
+    viewer_protocol_policy     = "redirect-to-https"
+    allowed_methods            = ["GET", "HEAD"]
+    cached_methods             = ["GET", "HEAD"]
+    compress                   = true
+    cache_policy_id            = data.aws_cloudfront_cache_policy.caching_optimized.id
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.this.id
   }
 
   restrictions {
@@ -127,6 +140,21 @@ data "aws_iam_policy_document" "bucket" {
       test     = "StringEquals"
       variable = "AWS:SourceArn"
       values   = [aws_cloudfront_distribution.this.arn]
+    }
+  }
+
+  # 1回の PUT の仮置き(rooms/<room_id>/<media_id>/upload-*)は配信しない。complete で大きさを
+  # 確かめてから、配信するキーへコピーする(services/api の media_store.py)。complete の後に
+  # 署名付き URL で置き直されたものを、CloudFront から読ませないため
+  statement {
+    sid       = "DenyCloudFrontReadStaging"
+    effect    = "Deny"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.this.arn}/rooms/*/*/upload-*"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudfront.amazonaws.com"]
     }
   }
 

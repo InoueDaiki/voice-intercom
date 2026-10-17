@@ -118,10 +118,14 @@ def upload_media(
     )
     media_id = created["media_id"]
     s3 = boto3.client("s3")
-    s3.put_object(Bucket=MEDIA_BUCKET, Key=media_store.media_key("room-a", media_id), Body=b"abc")
+    s3.put_object(
+        Bucket=MEDIA_BUCKET, Key=media_store.staging_media_key("room-a", media_id), Body=b"abc"
+    )
     if has_thumbnail:
         s3.put_object(
-            Bucket=MEDIA_BUCKET, Key=media_store.thumbnail_key("room-a", media_id), Body=b"t"
+            Bucket=MEDIA_BUCKET,
+            Key=media_store.staging_thumbnail_key("room-a", media_id),
+            Body=b"t",
         )
     status, event = call("POST", f"/rooms/room-a/media/{media_id}/complete", token, {})
     assert status == 200
@@ -289,6 +293,23 @@ def test_sender_deletes_media(member: str, cloudfront: FakeCloudFront) -> None:
             },
         }
     ]
+
+
+def test_delete_purges_staged_upload(member: str, cloudfront: FakeCloudFront) -> None:
+    # complete の後に仮置きへ置き直したものも消す
+    event = upload_media(member)
+    media_id = event["media"]["media_id"]
+    s3 = boto3.client("s3")
+    staged = [
+        media_store.staging_media_key("room-a", media_id),
+        media_store.staging_thumbnail_key("room-a", media_id),
+    ]
+    for key in staged:
+        s3.put_object(Bucket=MEDIA_BUCKET, Key=key, Body=b"again")
+
+    assert delete(member, event["event_id"])[0] == 200
+
+    assert [media_store.head(key) for key in staged] == [None, None]
 
 
 def test_deleted_video_says_video(member: str, cloudfront: FakeCloudFront) -> None:

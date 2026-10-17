@@ -10,6 +10,18 @@
 本体を rooms/<room_id>/<media_id> にすると、サムネイルのキーがその「下」になる。
 SeaweedFS(ファイラーがディレクトリを持つ)では、同じ名前のファイルとディレクトリを両方は
 作れないので、どちらも1段下げる。
+
+1回の PUT(本体が 16MB 未満、サムネイル)の署名付き URL は、配信するキーではなく仮置きのキー
+(rooms/<room_id>/<media_id>/upload-original、upload-thumbnail)に向ける。complete で大きさを
+確かめてから、配信するキーへコピーする(media.py)。署名付き URL は期限(1時間)まで何度でも
+PUT できるので、配信するキーに直接向けると、complete の後や削除の後に PUT し直して、
+大きさの確かめを通らない中身に置き換えたり、消したものを戻したりできてしまうため。
+- complete の後に仮置きのキーへ PUT し直しても、配信するキーは変わらない。
+- 仮置きのキーは、CloudFront からは読めない(バケットポリシーで拒む。infra/modules/media)。
+- 置き直された仮置きのキーは残るが、media_id の前置きの下にあるので、削除(deletion.py)と
+  ルームの削除で一緒に消える。ライフサイクルルールは前置きでしか絞れず、仮置きのキーだけを
+  選べないので使わない(残るのは本人が1時間のうちに置き直したものだけ)。
+- マルチパートの本体は、配信するキーのまま。完了した後の UploadPart は失敗する(NoSuchUpload)。
 """
 
 import time
@@ -34,6 +46,16 @@ def media_key(room_id: str, media_id: str) -> str:
 
 def thumbnail_key(room_id: str, media_id: str) -> str:
     return f"rooms/{room_id}/{media_id}/thumbnail"
+
+
+def staging_media_key(room_id: str, media_id: str) -> str:
+    """1回の PUT の本体の仮置きのキー(配信しない)。"""
+    return f"rooms/{room_id}/{media_id}/upload-original"
+
+
+def staging_thumbnail_key(room_id: str, media_id: str) -> str:
+    """サムネイルの仮置きのキー(配信しない)。"""
+    return f"rooms/{room_id}/{media_id}/upload-thumbnail"
 
 
 def media_prefix(room_id: str, media_id: str) -> str:
@@ -152,6 +174,7 @@ def abort_multipart(key: str, upload_id: str) -> None:
 class ObjectInfo:
     content_type: str
     size_bytes: int
+    etag: str
 
 
 def head(key: str) -> ObjectInfo | None:
@@ -166,7 +189,41 @@ def head(key: str) -> ObjectInfo | None:
         if e.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
             return None
         raise
-    return ObjectInfo(content_type=res.get("ContentType", ""), size_bytes=res["ContentLength"])
+    return ObjectInfo(
+        content_type=res.get("ContentType", ""),
+        size_bytes=res["ContentLength"],
+        etag=res.get("ETag", ""),
+    )
+
+
+class ChangedError(Exception):
+    """コピーの元が、確かめた後に置き直された(ETag が違う)。"""
+
+
+def copy(source: str, dest: str, *, etag: str) -> bool:
+    """同じバケットの中でオブジェクトをコピーする(5GB まで)。元が無ければ False。
+
+    etag は HeadObject で確かめたときの ETag。確かめた後に元が置き直されていたら、コピーせずに
+    ChangedError にする(CopySourceIfMatch)。確かめていない中身を配信するキーに置かないため。
+    MetadataDirective は既定の COPY なので、Content-Type と Content-Disposition もそのまま移る。
+    IAM では、元に s3:GetObject、先に s3:PutObject が要る。
+    """
+    bucket = get_timeline_settings().media_bucket
+    try:
+        _s3().copy_object(
+            Bucket=bucket,
+            Key=dest,
+            CopySource={"Bucket": bucket, "Key": source},
+            CopySourceIfMatch=etag,
+        )
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code")
+        if code in ("404", "NoSuchKey", "NotFound"):
+            return False
+        if code in ("412", "PreconditionFailed"):
+            raise ChangedError(source) from e
+        raise
+    return True
 
 
 def delete(keys: list[str]) -> None:

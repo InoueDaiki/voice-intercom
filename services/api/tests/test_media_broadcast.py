@@ -104,14 +104,14 @@ def upload(
     s3 = boto3.client("s3")
     s3.put_object(
         Bucket=MEDIA_BUCKET,
-        Key=f"rooms/{room_id}/{media_id}/original",
+        Key=f"rooms/{room_id}/{media_id}/upload-original",
         Body=b"abc",
         ContentType=content_type,
     )
     if has_thumbnail:
         s3.put_object(
             Bucket=MEDIA_BUCKET,
-            Key=f"rooms/{room_id}/{media_id}/thumbnail",
+            Key=f"rooms/{room_id}/{media_id}/upload-thumbnail",
             Body=b"t",
             ContentType="image/jpeg",
         )
