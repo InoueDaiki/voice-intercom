@@ -116,6 +116,10 @@ docker run --rm --name voice-intercom-livekit \
   --dev --bind 0.0.0.0 --node-ip {{env.DEV_HOST}}
 """
 
+[tasks.catalog]
+description = "UI 部品とデザイントークンの見本帳(packages/ui-web/catalog)の開発サーバーを起動する(http://localhost:5175)"
+run = "pnpm --dir packages/ui-web/catalog dev"
+
 [tasks.api]
 description = "REST API をローカルで起動する(http://localhost:3000。ローカルの DynamoDB・S3・模擬 OIDC につなぐ)"
 run = "scripts/with-local-aws.sh uv run python -m voice_intercom_api.local_server"

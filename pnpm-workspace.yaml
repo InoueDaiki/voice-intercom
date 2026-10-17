@@ -5,4 +5,5 @@ packages:
   - packages/client-core
   - packages/design-tokens
   - packages/ui-web
+  - packages/ui-web/catalog
   - packages/schema/ts
