@@ -74,6 +74,23 @@ export function Textarea({ className, ...props }: ComponentProps<"textarea">) {
   return <textarea className={cx(controlClass, "py-2 leading-relaxed", className)} {...useFieldProps(props)} />;
 }
 
+// 矢印はブラウザのものを消して自前で描く(ブラウザの矢印は枠の右端に寄りすぎ、位置も変えられない)
 export function Select({ className, ...props }: ComponentProps<"select">) {
-  return <select className={cx(controlClass, "h-10", className)} {...useFieldProps(props)} />;
+  return (
+    <div className="relative">
+      <select className={cx(controlClass, "peer h-10 appearance-none pr-10", className)} {...useFieldProps(props)} />
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-fg-muted peer-disabled:opacity-50"
+      >
+        <path d="M4 6l4 4 4-4" />
+      </svg>
+    </div>
+  );
 }
