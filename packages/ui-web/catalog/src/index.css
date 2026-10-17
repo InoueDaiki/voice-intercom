@@ -1,0 +1,24 @@
+/* カタログの CSS の入口。アプリと同じく ui-web の styles.css を読み込む */
+@import "@voice-intercom/ui-web/styles.css";
+
+/* 明暗を OS の設定のほかに、画面の切り替え(<html data-theme="light|dark">)でも選べるようにする。
+   部品は dark: を書かないので、これはトークンの切り替え(theme.css の @variant dark)にだけ効く。
+   アプリでは OS の設定に従うだけなので、ここ(カタログ)にだけ置く */
+@custom-variant dark {
+  &[data-theme="dark"] {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:not([data-theme="light"]) {
+      @slot;
+    }
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}

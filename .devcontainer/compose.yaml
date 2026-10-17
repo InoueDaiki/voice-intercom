@@ -17,6 +17,7 @@ services:
       - "3000:3000" # API(ローカル実行)
       - "5173:5173" # 管理コンソール(Vite)
       - "5174:5174" # Web 版クライアント
+      - "5175:5175" # UI 部品の見本帳(packages/ui-web/catalog)
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

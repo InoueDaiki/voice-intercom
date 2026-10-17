@@ -43,6 +43,14 @@
 | `FullScreenMessage` | 画面全体の真ん中の知らせ(読み込み中、ログインの失敗) |
 | `PttButton` | PTT のキー。画面でいちばん大きく置く。`state` は `idle`(消灯)・`pressing`(琥珀。マイクの準備中)・`talking`(赤。送話中)。`shortcut` にキーボードの操作(`Space`)を添える |
 
+## 見本帳(カタログ)
+
+[catalog/](catalog/) は、部品とデザイントークンを一覧で見る開発用のアプリ(Vite + React。配信しない)。`mise run catalog` で起動し、`http://localhost:5175` を開く。明暗は左上で OS の設定・明・暗から選べる。
+
+- 部品を足したり props を変えたりしたら、[catalog/src/sections/Components.tsx](catalog/src/sections/Components.tsx) に見本を足し、[catalog/src/App.tsx](catalog/src/App.tsx) の目次に載せる。
+- 色・コントラスト比・角丸は design-tokens から読むので、トークンを変えれば見本も変わる(色を足すと、`bgClasses`・`textClasses` の書き足しを型の検査が求める)。
+- カタログのコードも、この README の決まりと lint に従う。
+
 ## モバイル版(React Native)
 
 モバイル版を作るときに `packages/ui-native` を足し、**同じ名前と props の部品**を React Native で作る。スタイルは Uniwind(React Native で Tailwind のクラスを使う)で、`design-tokens/generated/theme.css` を読み込む。クラスの書き方は Web とそろう。JS で色が要るとき(アイコンの色など)は `@voice-intercom/design-tokens/native` を使う。
