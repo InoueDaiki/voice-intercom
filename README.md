@@ -100,7 +100,7 @@ flowchart LR
 
 1. Docker Desktop と [mise](https://mise.jdx.dev) を入れる(`brew install mise`)。
 2. `cp .env.example .env` を実行し、`DEV_HOST` と `OIDC_ISSUER` をホストの LAN の IP に書き換える。
-3. `mise install` を実行する。LiveKit サーバーは macOS 向けのバイナリが配布されていないので、ホストには入れず、`mise run livekit` が公式のイメージ(`livekit/livekit-server`)を Docker で動かす。版は `mise.toml` の `[vars]` の `livekit_version` で、devContainer の `livekit-server` と揃えてある。
+3. `mise install` を実行する。LiveKit サーバーは macOS 向けのバイナリが配布されていないので、ホストには入れず、devContainer で動かす(`mise run livekit`)。
 
 ### devContainer
 
@@ -116,11 +116,13 @@ GitHub CLI(`gh`。版は `mise.toml`)を使うときは、初回に `gh auth log
 | `mise run lint` | buf lint、ruff、pyright、tsc(JS の各パッケージの `typecheck`)、oxlint(デザインの規則。`pnpm lint:design`) | devContainer |
 | `mise run fmt` | 整形 | devContainer |
 | `mise run test` | pytest(`test:py`)と、JS の Vitest(`test:js`) | devContainer |
+| `mise run dev` | `livekit`・`api`・`agent`・`admin`・`web` を一度に起動する(出力は行ごとにタスクの名前が付く。Ctrl+C で全部止まる。1つが落ちてもほかは動き続ける) | devContainer |
 | `mise run api` | REST API をローカルで起動する(`http://localhost:3000`。ローカルの DynamoDB・S3・模擬 OIDC につなぐ) | devContainer |
 | `mise run admin` | 管理コンソールの開発サーバーを起動する(`http://localhost:5173`) | devContainer |
 | `mise run web` | Web 版クライアントの開発サーバーを起動する(`http://localhost:5174`) | devContainer |
 | `mise run catalog` | UI 部品とデザイントークンの見本帳(`packages/ui-web/catalog`)を起動する(`http://localhost:5175`) | devContainer |
-| `mise run livekit` | ローカルの LiveKit サーバーを Docker で起動する(`--dev`、LAN に公開。ポートは 7880、7881、7882/udp) | ホスト |
+| `mise run livekit` | ローカルの LiveKit サーバーを起動する(`--dev`。compose が 7880、7881、7882/udp を LAN に公開する) | devContainer |
+| `mise run agent` | LiveKit Agent をローカルで起動する(ローカルの S3 に録音する。`OPENAI_API_KEY` が要る) | devContainer |
 | `mise run build:api` | Lambda に載せるディレクトリ(`.build/api`)を作る | devContainer |
 | `mise run build:agent` | Agent のイメージを linux/arm64 でビルドする(`voice-intercom-agent:local`) | devContainer |
 | `mise run push:agent <env>` | Agent のイメージをビルドして ECR に push し、apply に渡すタグを表示する | devContainer |
