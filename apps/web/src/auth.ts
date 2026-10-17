@@ -1,6 +1,7 @@
 // 標準の OIDC(認可コード + PKCE)でログインする。本番は Cognito、ローカルは模擬 OIDC。
 // ログインのリダイレクトはブラウザに依るので、共有のパッケージ(client-core)には置かず、
 // アクセストークンを返す関数だけを渡す。
+import { loginLanguage } from "@voice-intercom/client-core";
 import { UserManager, WebStorageStateStore } from "oidc-client-ts";
 
 import { config } from "./config.ts";
@@ -20,6 +21,8 @@ export function getUserManager(): UserManager {
     userStore: new WebStorageStateStore({ store: window.localStorage }),
     // アクセストークンの期限が近づいたら、リフレッシュトークンで更新する
     automaticSilentRenew: true,
+    // Cognito のログイン画面を、ブラウザの言語の好みで訳す(lang が無いと英語)
+    extraQueryParams: { lang: loginLanguage(window.navigator.languages) },
     ...(config.oidcLogoutUrl && {
       metadataSeed: { end_session_endpoint: config.oidcLogoutUrl },
     }),

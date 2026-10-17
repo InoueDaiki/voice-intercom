@@ -21,6 +21,8 @@ export function getUserManager(): UserManager {
     userStore: new WebStorageStateStore({ store: window.sessionStorage }),
     // アクセストークンの期限が近づいたら、リフレッシュトークンで更新する
     automaticSilentRenew: true,
+    // Cognito のログイン画面を日本語で出す(lang が無いと英語)。管理コンソールの画面が日本語なので揃える
+    extraQueryParams: { lang: "ja" },
     ...(config.oidcLogoutUrl && {
       metadataSeed: { end_session_endpoint: config.oidcLogoutUrl },
     }),

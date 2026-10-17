@@ -7,6 +7,7 @@
 | [generated/theme.css](generated/theme.css) | Tailwind v4 のテーマ。`packages/ui-web/styles.css` が読み込む。React Native の Uniwind でも読める形(`@layer theme` の中の `@variant dark`)にしてある(Uniwind ではまだ試していない) |
 | [generated/native.ts](generated/native.ts) | React Native で JS から色を使うとき(アイコンの色、アニメーションなど)。`@voice-intercom/design-tokens/native` |
 | [generated/TOKENS.md](generated/TOKENS.md) | トークンの一覧と使う場面。名前を選ぶときに読む |
+| [generated/cognito-branding.json](generated/cognito-branding.json) | Cognito のマネージドログイン(ログイン画面)のブランディングの設定。`infra/modules/cognito` が読む。写し方は [src/cognito.ts](src/cognito.ts) |
 
 ## 決まり
 
@@ -26,3 +27,4 @@
 1. `src/tokens.ts` の `colors` に足す(`light`・`dark`・`usage`)。文字に使う色なら `contrastPairs` にも足す。
 2. `mise run gen:tokens` を実行し、`generated/` をコミットする。
 3. `mise run test:js` で範囲とコントラスト比を確かめる。
+4. ログイン画面に使っている色(`src/cognito.ts`)を変えたら、Terraform の apply で Cognito に当てる。
