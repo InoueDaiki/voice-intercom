@@ -8,6 +8,7 @@ import pytest
 from timeline_env import AGENT_SCOPE, TIMELINE_TABLE, Token, call, setup_timeline, teardown_timeline
 
 from voice_intercom_api import notifications, notify, room_push, store, timeline_store
+from voice_intercom_api.device_store import Device
 from voice_intercom_api.notify import SendResult
 
 PATH = "/rooms/room-n/notifications/speaking"
@@ -28,6 +29,7 @@ class FakeNotify:
         title: str,
         body: str,
         data: Mapping[str, str] | None = None,
+        progress: notify.SendProgress | None = None,
     ) -> SendResult:
         if self.error is not None:
             raise self.error
@@ -243,9 +245,41 @@ def test_slow_send_returns_in_time(
         release.set()
 
     assert status == 200
-    # 送信は続いているものとして数え、時刻も戻さない
-    assert body == {"sent": 2, "skipped": 0}
-    assert speak(agent)[1] == {"sent": 0, "skipped": 2}
+    # 待ちきれなかった送信は打ち切るので数えず、時刻を戻す
+    assert body == {"sent": 0, "skipped": 0}
+    monkeypatch.setattr(notify, "send_to_users", fake.send_to_users)
+    assert speak(agent)[1] == {"sent": 2, "skipped": 0}
+    assert fake.recipients == ["away-1", "away-2"]
+
+
+def test_timeout_keeps_interval_of_done_recipients(
+    agent: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    release = threading.Event()
+
+    def partial(
+        user_ids: Iterable[str], *, progress: notify.SendProgress | None = None, **_kwargs: Any
+    ) -> SendResult:
+        # away-1 には送り終え、away-2 に送っている途中で止まる
+        assert progress is not None
+        progress.start(user_ids, [Device("away-1", "t1", "ios"), Device("away-2", "t2", "ios")])
+        progress.finish(Device("away-1", "t1", "ios"))
+        release.wait(5)
+        return SendResult()
+
+    monkeypatch.setattr(notify, "send_to_users", partial)
+    monkeypatch.setattr(notify, "service_account", lambda: None)
+    monkeypatch.setattr(notifications, "SEND_TIMEOUT_S", 0.1)
+    try:
+        assert speak(agent)[1] == {"sent": 1, "skipped": 0}
+    finally:
+        release.set()
+
+    # 送り終えなかった away-2 だけ、次の通知で送る
+    fake = FakeNotify()
+    monkeypatch.setattr(notify, "send_to_users", fake.send_to_users)
+    assert speak(agent)[1] == {"sent": 1, "skipped": 1}
+    assert fake.recipients == ["away-2"]
 
 
 # テキスト入力の通知

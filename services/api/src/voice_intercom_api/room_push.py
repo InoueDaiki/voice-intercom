@@ -11,8 +11,11 @@ complete から)が使う。docs/設計メモ.md の「push 通知の間引き�
   同時に呼ばれても、更新に勝つのは1回だけなので二重に送らない。行は TTL で消える。
 - 送れないと分かっているとき(サービスアカウントが未設定・読めない)は、時刻を取らない
   (取ると、設定を直しても間隔のあいだ送れない)。
-- 送信が例外で失敗したら、取った時刻を戻し、次の通知で送れるようにする。待ちきれなかった
-  (timeout_s を過ぎた)送信は続いているものとして、時刻は戻さない。
+- 送り終えなかった受け手は、取った時刻を戻し、次の通知で送れるようにする。送信が例外で
+  失敗したときと、待ちきれなかった(timeout_s を過ぎた)ときが当たる。待ちきれなかった送信は
+  打ち切る(notify.py の send_to_users_within)。Lambda は応答を返すと実行環境を止めるので、
+  続くものとして時刻を残すと、その受け手には通知が届かないまま間隔のあいだ送れなくなる。
+  送り終えた受け手(FCM が失敗した人も含む)の時刻は残す。
 - 例外は外に出さない。送れなかったときは sent を 0 にする。
 - 時間: 受け手ごとに UpdateItem を1回(同じリージョンで数 ms)。送信は timeout_s 秒で待つのを
   やめる。呼び出し側は、ほかの処理と合わせて API の Lambda の timeout(15秒)に収める。
@@ -33,7 +36,7 @@ DEFAULT_INTERVAL_S = 300
 
 @dataclass(frozen=True)
 class PushOutcome:
-    # 送信の対象にした人数(端末を登録していない人も含む)
+    # 送り終えた人数(端末を登録していない人、FCM が失敗した人も含む)
     sent: int = 0
     # 前回の通知から間隔がたっていないので、送らなかった人数
     skipped: int = 0
@@ -85,13 +88,13 @@ def send_throttled(
         logger.info("%sの通知を間引いた: room=%s skipped=%d", label, room_id, skipped)
         return PushOutcome(skipped=skipped)
 
-    ok = notify.send_to_users_within(
+    done = notify.send_to_users_within(
         claimed, title=title, body=body, data=data, timeout_s=timeout_s, label=label
     )
-    if not ok:
+    rest = [uid for uid in claimed if uid not in done]
+    if rest:
         try:
-            timeline_store.release_notifications(room_id, claimed, now_epoch=now_epoch)
+            timeline_store.release_notifications(room_id, rest, now_epoch=now_epoch)
         except Exception:
             logger.exception("通知の時刻を戻せなかった: room=%s", room_id)
-        return PushOutcome(skipped=skipped)
-    return PushOutcome(sent=len(claimed), skipped=skipped)
+    return PushOutcome(sent=len(claimed) - len(rest), skipped=skipped)

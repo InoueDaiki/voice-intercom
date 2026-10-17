@@ -17,6 +17,10 @@
 - FCM が UNREGISTERED か、トークンが原因の INVALID_ARGUMENT を返したトークンは users から消す。
 - 送れなかったトークン(5xx、429 など)はやり直さず、結果に数えるだけにする。通知は届かなくても
   履歴には残るので、Lambda の中で待たない。
+- send_to_users_within は送信を timeout_s 秒で打ち切る。Lambda は応答を返すと実行環境を止める
+  ので、待ちきれなかった送信が後から続く当てはない(次に起きたときに古い通知として届くことも
+  ある)。打ち切ったら、まだ始めていない送信(トークンの取得を含む)はしない。送り終えた受け手を
+  返し、呼び出し側(room_push.py)は残りの受け手の間引きの時刻を戻す。
 """
 
 import json
@@ -75,6 +79,53 @@ class SendResult:
 
 class NotConfiguredError(Exception):
     pass
+
+
+class SendProgress:
+    """send_to_users の進み具合。送信を打ち切る印と、送り終えた受け手を持つ。
+
+    送信のスレッドと、待つ側のスレッドの両方から触るので、ロックで守る。
+    受け手は、登録した端末のすべてに送り終えたら(成功・失敗を問わず)「送り終えた」とする。
+    端末を登録していない受け手は、端末を引いた時点で送り終えたとする。
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._cancelled = threading.Event()
+        self._pending: dict[str, int] = {}
+        self._done: set[str] = set()
+
+    def cancel(self) -> None:
+        """まだ始めていない送信をしないようにする。"""
+        self._cancelled.set()
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancelled.is_set()
+
+    def start(self, user_ids: Iterable[str], devices: Iterable[Device]) -> None:
+        """送る端末が決まったときに呼ぶ。"""
+        with self._lock:
+            for uid in user_ids:
+                self._pending.setdefault(uid, 0)
+            for d in devices:
+                self._pending[d.user_id] = self._pending.get(d.user_id, 0) + 1
+            for uid, n in self._pending.items():
+                if n == 0:
+                    self._done.add(uid)
+
+    def finish(self, device: Device) -> None:
+        """端末1つに送り終えたときに呼ぶ。"""
+        with self._lock:
+            n = self._pending.get(device.user_id, 0) - 1
+            self._pending[device.user_id] = n
+            if n <= 0:
+                self._done.add(device.user_id)
+
+    def done(self) -> set[str]:
+        """送り終えた受け手。"""
+        with self._lock:
+            return set(self._done)
 
 
 @cache
@@ -218,7 +269,29 @@ class _Outcome:
     body: dict[str, Any]
 
 
-def _send_one(device: Device, payload: dict[str, Any], token: str, url: str) -> _Outcome:
+# 打ち切ったので送らなかった(_Outcome.status に入れる)
+_SKIPPED = -1
+
+
+def _send_one(
+    device: Device,
+    payload: dict[str, Any],
+    token: str,
+    url: str,
+    progress: SendProgress | None,
+    *,
+    last: bool,
+) -> _Outcome:
+    """端末1つに送る。last は、401 でも送り直さない(この結果で終わりにする)とき。"""
+    if progress is not None and progress.cancelled:
+        return _Outcome(device, _SKIPPED, {})
+    outcome = _post_one(device, payload, token, url)
+    if progress is not None and (last or outcome.status != 401):
+        progress.finish(device)
+    return outcome
+
+
+def _post_one(device: Device, payload: dict[str, Any], token: str, url: str) -> _Outcome:
     try:
         status, res = _post(
             url,
@@ -232,26 +305,47 @@ def _send_one(device: Device, payload: dict[str, Any], token: str, url: str) -> 
     return _Outcome(device, status, res)
 
 
-def _send_all(devices: list[Device], payloads: list[dict[str, Any]], url: str) -> list[_Outcome]:
+def _send_all(
+    devices: list[Device],
+    payloads: list[dict[str, Any]],
+    url: str,
+    progress: SendProgress | None,
+    *,
+    last: bool,
+) -> list[_Outcome]:
+    if progress is not None and progress.cancelled:
+        return [_Outcome(d, _SKIPPED, {}) for d in devices]
     token = access_token()
     with ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, len(devices))) as pool:
-        return list(pool.map(lambda d, p: _send_one(d, p, token, url), devices, payloads))
+        return list(
+            pool.map(
+                lambda d, p: _send_one(d, p, token, url, progress, last=last), devices, payloads
+            )
+        )
 
 
 def send_to_devices(
-    devices: list[Device], *, title: str, body: str, data: Mapping[str, str] | None = None
+    devices: list[Device],
+    *,
+    title: str,
+    body: str,
+    data: Mapping[str, str] | None = None,
+    progress: SendProgress | None = None,
 ) -> SendResult:
+    """progress を渡すと、打ち切られたら残りを送らず、送り終えた端末を知らせる。"""
     if not devices:
         return SendResult()
     url = _SEND_URL.format(project_id=service_account().project_id)
     payloads = [build_message(d, title=title, body=body, data=data or {}) for d in devices]
-    outcomes = _send_all(devices, payloads, url)
+    outcomes = _send_all(devices, payloads, url, progress, last=False)
 
     # アクセストークンが取り消された・期限が切れたときは、作り直して1回だけ送り直す
     retry = [i for i, o in enumerate(outcomes) if o.status == 401]
     if retry:
         _access_token.clear()
-        again = _send_all([devices[i] for i in retry], [payloads[i] for i in retry], url)
+        again = _send_all(
+            [devices[i] for i in retry], [payloads[i] for i in retry], url, progress, last=True
+        )
         for i, o in zip(retry, again, strict=True):
             outcomes[i] = o
 
@@ -260,6 +354,8 @@ def send_to_devices(
     for o in outcomes:
         if o.status == 200:
             sent += 1
+        elif o.status == _SKIPPED:
+            failed += 1
         elif is_invalid_token(o.status, o.body):
             invalid.setdefault(o.device.user_id, []).append(device_store.token_key(o.device.token))
         else:
@@ -278,18 +374,28 @@ def send_to_devices(
 
 
 def send_to_users(
-    user_ids: Iterable[str], *, title: str, body: str, data: Mapping[str, str] | None = None
+    user_ids: Iterable[str],
+    *,
+    title: str,
+    body: str,
+    data: Mapping[str, str] | None = None,
+    progress: SendProgress | None = None,
 ) -> SendResult:
     """複数の人の、登録済みのすべての端末に通知を送る。
 
     送り主を除くなど、だれに送るかは呼び出し側で決める。FCM が設定されていなければ何もしない。
+    progress は send_to_devices と同じ。
     """
     try:
         service_account()
     except NotConfiguredError:
         logger.info("FCM が設定されていないので、通知を送らない")
         return SendResult()
-    return send_to_devices(device_store.list_devices(user_ids), title=title, body=body, data=data)
+    ids = list(user_ids)
+    devices = device_store.list_devices(ids)
+    if progress is not None:
+        progress.start(ids, devices)
+    return send_to_devices(devices, title=title, body=body, data=data, progress=progress)
 
 
 def send_to_users_within(
@@ -300,18 +406,22 @@ def send_to_users_within(
     data: Mapping[str, str],
     timeout_s: float,
     label: str,
-) -> bool:
-    """send_to_users を別のスレッドで動かし、timeout_s 秒まで待つ。
+) -> set[str]:
+    """send_to_users を別のスレッドで動かし、timeout_s 秒まで待つ。送り終えた受け手を返す。
 
     API の Lambda の timeout(15秒)に収めるために使う。label はログに出す通知の名前。
-    例外で失敗したら False。待ちきれなかったときは、送信は続いているものとして True を返す
-    (呼び出し側が「送れなかった」として扱い直すと、遅れて届いた人にもう一度送ってしまうため)。
+    - 待つ間に終われば、user_ids のすべて(端末を登録していない人、FCM が失敗した人も含む)。
+    - 例外で失敗したら、それまでに送り終えた受け手。
+    - 待ちきれなかったら、送信を打ち切り(まだ始めていない送信はしない)、それまでに送り終えた
+      受け手。Lambda は応答を返すと実行環境を止めるので、残りの送信が続くとは見なさない。
+      打ち切った時点で送っている最中の端末には、後から届くことがある(その受け手は返さない)。
     """
     error: list[BaseException] = []
+    progress = SendProgress()
 
     def run() -> None:
         try:
-            result = send_to_users(user_ids, title=title, body=body, data=data)
+            result = send_to_users(user_ids, title=title, body=body, data=data, progress=progress)
             logger.info(
                 "%sの通知を送った: sent=%d failed=%d removed=%d",
                 label,
@@ -328,6 +438,16 @@ def send_to_users_within(
     thread.start()
     thread.join(timeout_s)
     if thread.is_alive():
-        logger.warning("%sの通知の送信を待ちきれなかった(%s 秒)", label, timeout_s)
-        return True
-    return not error
+        progress.cancel()
+        done = progress.done()
+        logger.warning(
+            "%sの通知の送信を待ちきれず、打ち切った(%s 秒): done=%d rest=%d",
+            label,
+            timeout_s,
+            len(done),
+            len(set(user_ids) - done),
+        )
+        return done
+    if error:
+        return progress.done()
+    return set(user_ids)

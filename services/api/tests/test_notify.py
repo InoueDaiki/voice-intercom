@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 import urllib.parse
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
@@ -311,3 +313,79 @@ def test_build_message_stringifies_data() -> None:
         data={"n": 1},  # pyright: ignore[reportArgumentType]
     )
     assert message["message"]["data"] == {"n": "1"}
+
+
+# send_to_users_within
+
+
+def test_within_returns_all_when_finished(ssm_configured: None, google: FakeGoogle) -> None:
+    device_store.register("user-1", "token-1", "android")
+    google.responses = {"token-1": (500, {})}
+
+    # FCM が失敗した人、端末を登録していない人も「送り終えた」に入る
+    done = notify.send_to_users_within(
+        ["user-1", "user-2"], title="t", body="b", data={}, timeout_s=5, label="テスト"
+    )
+    assert done == {"user-1", "user-2"}
+
+
+def test_within_error_returns_done_so_far(
+    ssm_configured: None, google: FakeGoogle, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    device_store.register("user-1", "token-1", "android")
+
+    def fail() -> str:
+        raise RuntimeError("FCM のアクセストークンを作れなかった")
+
+    monkeypatch.setattr(notify, "access_token", fail)
+
+    # 端末を登録していない user-2 だけが送り終えている
+    done = notify.send_to_users_within(
+        ["user-1", "user-2"], title="t", body="b", data={}, timeout_s=5, label="テスト"
+    )
+    assert done == {"user-2"}
+    assert google.messages == []
+
+
+def test_within_cancels_rest_on_timeout(
+    ssm_configured: None, google: FakeGoogle, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for i in (1, 2, 3):
+        device_store.register(f"user-{i}", f"token-{i}", "android")
+    notify.access_token()
+    # 1台ずつ順に送る(user_id の順)
+    monkeypatch.setattr(notify, "_MAX_WORKERS", 1)
+    release = threading.Event()
+    post = google.post
+
+    def slow(url: str, *, data: bytes, headers: Mapping[str, str]) -> tuple[int, dict[str, Any]]:
+        res = post(url, data=data, headers=headers)
+        if json.loads(data)["message"]["token"] == "token-2":
+            release.wait(5)
+        return res
+
+    monkeypatch.setattr(notify, "_post", slow)
+    try:
+        done = notify.send_to_users_within(
+            ["user-1", "user-2", "user-3"], title="t", body="b", data={}, timeout_s=0.5, label="t"
+        )
+    finally:
+        release.set()
+
+    # user-2 は送っている途中だったので数えない。user-3 にはもう送らない
+    assert done == {"user-1"}
+    time.sleep(0.2)
+    assert [m["token"] for m in google.messages] == ["token-1", "token-2"]
+
+
+def test_cancelled_progress_skips_token_fetch(ssm_configured: None, google: FakeGoogle) -> None:
+    device_store.register("user-1", "token-1", "android")
+    progress = notify.SendProgress()
+    progress.cancel()
+
+    result = notify.send_to_users(["user-1"], title="t", body="b", progress=progress)
+
+    assert result == notify.SendResult(failed=1)
+    assert google.token_requests == []
+    assert google.messages == []
+    assert progress.done() == set()

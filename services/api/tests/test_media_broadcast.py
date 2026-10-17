@@ -39,6 +39,7 @@ class FakeNotify:
         title: str,
         body: str,
         data: Mapping[str, str] | None = None,
+        progress: notify.SendProgress | None = None,
     ) -> SendResult:
         if self.error is not None:
             raise self.error
@@ -427,3 +428,9 @@ def test_slow_push_returns_in_time(
 
     assert status == 200
     assert time.monotonic() - started < 2
+
+    # 待ちきれなかった送信は打ち切り、時刻を戻すので、次の画像で送る
+    push = FakeNotify()
+    monkeypatch.setattr(notify, "send_to_users", push.send_to_users)
+    upload(member)
+    assert [c["user_ids"] for c in push.calls] == [["member-2", "member-3", "member-4"]]
