@@ -193,20 +193,12 @@ PoC で分かったことに従う(`realtime.py` の先頭にまとめてある)
 
 ## ローカルで確かめる
 
-LiveKit サーバーはホスト、Agent と確認用ツール(`devtools/`)は devContainer で動かす。`.env` の `LIVEKIT_URL`(`ws://host.docker.internal:7880`)はコンテナの中から使う値なので、ホストの lk には `--url ws://localhost:7880` を渡す。
+LiveKit サーバー、Agent、確認用ツール(`devtools/`)は、どれも devContainer で動かす。`.env` の `LIVEKIT_URL`(`ws://localhost:7880`)がそのまま使える。ホストの lk からも、compose が公開する `ws://localhost:7880` で届く。
 
-1. ホストで LiveKit サーバーを起動する。
+1. devContainer で LiveKit サーバーを起動する(`--dev`、`--node-ip` は `DEV_HOST`)。`mise run dev` なら API などと一緒に起動する。同じ devContainer で別の Agent が `start` で動いていると、ヘルスチェックの HTTP のポート(8081)が重なり、後から起動したほうが `address already in use` で止まる。
 
    ```sh
    mise run livekit
-   ```
-
-   **devContainer の中で動かす場合**: 実機をつながず、Agent と確認用ツールだけで確かめるなら、LiveKit サーバーも devContainer で動かせる(`mise.toml` で入る。arm64 でも動く)。127.0.0.1 だけで待ち受けるので、Agent にも確認用ツールにも `--url ws://localhost:7880` を渡す(`.env` の `LIVEKIT_URL` はホストを指している)。環境変数で上書きするときは、`mise run` や `mise x` を通さない(mise が `.env` の値で上書きし直す)。同じ devContainer で別の Agent が `start` で動いていると、ヘルスチェックの HTTP のポート(8081)が重なり、後から起動したほうが `address already in use` で止まる。
-
-   ```sh
-   livekit-server --dev --bind 127.0.0.1 --node-ip 127.0.0.1
-   uv run python -m voice_intercom_agent start --url ws://localhost:7880
-   uv run services/agent/devtools/listen.py --url ws://localhost:7880 --room test --language en --dispatch
    ```
 
 2. devContainer で Agent を起動する。`registered worker` と出れば待ち受けている。

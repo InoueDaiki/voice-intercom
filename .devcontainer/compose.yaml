@@ -18,6 +18,9 @@ services:
       - "5173:5173" # 管理コンソール(Vite)
       - "5174:5174" # Web 版クライアント
       - "5175:5175" # UI 部品の見本帳(packages/ui-web/catalog)
+      - "7880:7880" # LiveKit(シグナリング)
+      - "7881:7881" # LiveKit(メディアの TCP)
+      - "7882:7882/udp" # LiveKit(メディアの UDP)
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

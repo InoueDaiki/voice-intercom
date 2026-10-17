@@ -1,7 +1,7 @@
 # ツールの版とタスク。devContainer とホストの両方でこのファイルを使う。
 
 [vars]
-# LiveKit サーバーの版。devContainer の livekit-server と、ホストの mise run livekit のイメージの両方に使う
+# LiveKit サーバーの版(devContainer の livekit-server)
 livekit_version = "1.13.9"
 
 [tools]
@@ -12,7 +12,7 @@ pnpm = "12.10.1"
 terraform = "1.16.5"
 buf = "1.73.0"
 # macOS 向けのバイナリは配布されていないので、linux(devContainer)でだけ入れる。
-# ホストでは mise run livekit が公式のイメージで動かす
+# ローカルの LiveKit サーバーは devContainer で動かす(mise run livekit)
 "github:livekit/livekit" = { version = "{{vars.livekit_version}}", bin = "livekit-server", os = ["linux"] }
 "github:livekit/livekit-cli" = { version = "2.18.8", bin = "lk" }
 # GitHub CLI(PR や CI の確認。devContainer で使う。CI では入れない)
@@ -108,13 +108,18 @@ description = "Web 版クライアントの開発サーバーを起動する(htt
 run = "pnpm --dir apps/web dev"
 
 [tasks.livekit]
-description = "ローカルの LiveKit サーバーを公式のイメージで起動する(ホストで実行。Docker が要る)"
-run = """
-docker run --rm --name voice-intercom-livekit \
-  -p 7880:7880 -p 7881:7881 -p 7882:7882/udp \
-  livekit/livekit-server:v{{vars.livekit_version}} \
-  --dev --bind 0.0.0.0 --node-ip {{env.DEV_HOST}}
-"""
+description = "ローカルの LiveKit サーバーを起動する(--dev。ポートは compose が LAN に公開する)"
+# 実機・エミュレーター・ブラウザに DEV_HOST で届くよう、DEV_HOST を候補のアドレスにする
+run = "livekit-server --dev --bind 0.0.0.0 --node-ip {{env.DEV_HOST}}"
+
+[tasks.agent]
+description = "LiveKit Agent をローカルで起動する(ローカルの S3 に録音する)"
+run = "scripts/with-local-aws.sh uv run python -m voice_intercom_agent start"
+
+[tasks.dev]
+description = "ローカルの全体(LiveKit、API、Agent、管理コンソール、Web 版)を一度に起動する"
+# 待ち受け続けるタスクを並べて動かす。1つが落ちても(OPENAI_API_KEY が無い Agent など)ほかは止めない
+run = "mise run --jobs 5 --continue-on-error livekit ::: api ::: agent ::: admin ::: web"
 
 [tasks.catalog]
 description = "UI 部品とデザイントークンの見本帳(packages/ui-web/catalog)の開発サーバーを起動する(http://localhost:5175)"
