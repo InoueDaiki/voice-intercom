@@ -4,6 +4,7 @@
 // 各アプリから差し込む。DOM の API は使わない(src/host.d.ts)。
 
 export * from "./api.ts";
+export * from "./auth/loginLanguage.ts";
 export * from "./observable.ts";
 export * from "./room/captionBoard.ts";
 export * from "./room/deletionLabels.ts";

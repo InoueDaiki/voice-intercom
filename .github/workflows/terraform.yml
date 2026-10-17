@@ -5,6 +5,8 @@ on:
   pull_request:
     paths: &paths
       - infra/**
+      # infra/modules/cognito が読む
+      - packages/design-tokens/generated/cognito-branding.json
       - mise.toml
       - .github/workflows/terraform.yml
       - .github/actions/setup/**

@@ -38,10 +38,20 @@ resource "aws_cognito_user_pool" "this" {
   }
 }
 
-# ホストされたログイン画面(/oauth2/authorize など)の URL
+# ホストされたログイン画面(/oauth2/authorize など)の URL。
+# 画面はマネージドログイン(2。ESSENTIALS 以上のプランで使える)。クラシックの Hosted UI(1)より見た目を決められ、
+# 日本語などに訳せる(/oauth2/authorize の lang で選ぶ)
 resource "aws_cognito_user_pool_domain" "this" {
-  domain       = var.domain_prefix
-  user_pool_id = aws_cognito_user_pool.this.id
+  domain                = var.domain_prefix
+  user_pool_id          = aws_cognito_user_pool.this.id
+  managed_login_version = 2
+
+  lifecycle {
+    precondition {
+      condition     = var.user_pool_tier != "LITE"
+      error_message = "マネージドログインは LITE のプランでは使えない。ESSENTIALS か PLUS にする"
+    }
+  }
 }
 
 resource "aws_cognito_user_group" "admin" {
@@ -171,6 +181,20 @@ resource "aws_cognito_user_pool_client" "agent" {
   }
 
   depends_on = [aws_cognito_resource_server.api]
+}
+
+# マネージドログインの見た目。ログイン画面を使うクライアントごとに要る(無いとそのクライアントのログイン画面が出ない)。
+# 値はデザイントークンから生成する(packages/design-tokens の mise run gen:tokens)。書かなかった項目は Cognito の既定
+resource "aws_cognito_managed_login_branding" "this" {
+  for_each = {
+    mobile = aws_cognito_user_pool_client.mobile.id
+    web    = aws_cognito_user_pool_client.web.id
+    admin  = aws_cognito_user_pool_client.admin.id
+  }
+
+  user_pool_id = aws_cognito_user_pool.this.id
+  client_id    = each.value
+  settings     = file("${path.module}/../../../packages/design-tokens/generated/cognito-branding.json")
 }
 
 locals {

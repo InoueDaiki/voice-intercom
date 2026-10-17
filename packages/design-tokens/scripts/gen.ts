@@ -1,12 +1,14 @@
-// src/tokens.ts から generated/ の3つを作る(mise run gen:tokens)。
+// src/tokens.ts から generated/ の4つを作る(mise run gen:tokens)。
 // - theme.css: Tailwind v4 のテーマ(Web。React Native の Uniwind でも読める形にしている)
 // - native.ts: React Native で JS から色を使うときの値(HEX)
 // - TOKENS.md: トークンの一覧(人と AI が名前を選ぶときに読む)
+// - cognito-branding.json: Cognito のマネージドログインのブランディング(infra/modules/cognito が読む)
 // 依存なしで Node の型の除去(node scripts/gen.ts)だけで動かす
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { cognitoBranding } from "../src/cognito.ts";
 import { toCss, toHex } from "../src/color.ts";
 import { colors, fontFamily, radius, type ColorToken } from "../src/tokens.ts";
 
@@ -100,3 +102,5 @@ mkdirSync(outDir, { recursive: true });
 writeFileSync(join(outDir, "theme.css"), themeCss());
 writeFileSync(join(outDir, "native.ts"), nativeTs());
 writeFileSync(join(outDir, "TOKENS.md"), tokensMd());
+// JSON にはコメントを書けないので、生成物であることは README に書く
+writeFileSync(join(outDir, "cognito-branding.json"), `${JSON.stringify(cognitoBranding(), null, 2)}\n`);
