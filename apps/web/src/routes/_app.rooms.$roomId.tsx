@@ -15,7 +15,7 @@ import {
   type TimelineEvent,
   type User,
 } from "@voice-intercom/client-core";
-import { Alert, Badge, Button, cx, PttButton, Textarea } from "@voice-intercom/ui-web";
+import { Alert, Badge, Button, ConfirmDialog, cx, PttButton, Textarea } from "@voice-intercom/ui-web";
 import { ChevronLeft, FileText, Image, Keyboard, Mic, Paperclip, SendHorizontal, Users } from "lucide-react";
 import {
   useEffect,
@@ -335,14 +335,13 @@ function continuesPrevious(prev: TimelineEntry | undefined, entry: TimelineEntry
   );
 }
 
-// 消す操作と確認。失敗したら理由を返す
+// 消す操作と確認。ask で確認のダイアログを開き、確定したら消す。失敗したら理由を返す
 function useDelete(session: RoomSession, entry: TimelineEntry, what: string) {
+  const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string>();
   const run = async () => {
-    if (!window.confirm(`この${what}を削除しますか?`)) {
-      return;
-    }
+    setConfirming(false);
     setDeleting(true);
     setError(undefined);
     try {
@@ -353,7 +352,16 @@ function useDelete(session: RoomSession, entry: TimelineEntry, what: string) {
       setDeleting(false);
     }
   };
-  return { deleting, error, run, can: session.canDeleteEntry(entry) };
+  return {
+    what,
+    confirming,
+    ask: () => setConfirming(true),
+    cancel: () => setConfirming(false),
+    deleting,
+    error,
+    run,
+    can: session.canDeleteEntry(entry),
+  };
 }
 
 // タイムラインの1行。左に時刻、右に話した人と中身を置く(議事録のように、時刻の列で追える)。
@@ -410,11 +418,20 @@ function FeedHead({
           variant="link"
           className="ml-auto text-xs text-fg-muted sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100"
           disabled={remove.deleting}
-          onClick={() => void remove.run()}
+          onClick={remove.ask}
         >
           削除
         </Button>
       )}
+      <ConfirmDialog
+        open={remove.confirming}
+        tone="danger"
+        title={`この${remove.what}を削除しますか?`}
+        description={`ルームの全員の画面と履歴から消え、「削除された${remove.what}」と出ます。元に戻せません。`}
+        confirmLabel="削除する"
+        onConfirm={() => void remove.run()}
+        onCancel={remove.cancel}
+      />
     </div>
   );
 }
