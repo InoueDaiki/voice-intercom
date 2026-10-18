@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TTS PoC</title>
+    <!-- PoC なのでデザインシステム(packages/ui-web)は使わず、ここに最小限の見た目だけを書く -->
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, -apple-system, sans-serif;
+        line-height: 1.5;
+      }
+      body {
+        margin: 0 auto;
+        padding: 12px 16px 64px;
+        max-width: 1100px;
+      }
+      h1 { font-size: 1.3rem; }
+      h2 { font-size: 1.1rem; margin-top: 2rem; border-bottom: 1px solid GrayText; }
+      section > p.note { color: GrayText; font-size: 0.9rem; margin: 0.25rem 0; }
+      .controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 8px 0; }
+      .controls label { display: inline-flex; gap: 4px; align-items: center; }
+      input[type="number"] { width: 5em; }
+      button { padding: 6px 10px; font: inherit; }
+      .sticky {
+        position: sticky; top: 0; z-index: 1; background: Canvas;
+        border-bottom: 1px solid GrayText; padding: 6px 0;
+      }
+      .table-wrap { overflow-x: auto; }
+      table { border-collapse: collapse; font-size: 0.85rem; margin: 6px 0; }
+      th, td { border: 1px solid GrayText; padding: 2px 6px; text-align: left; vertical-align: top; }
+      td.num { text-align: right; font-variant-numeric: tabular-nums; }
+      .missing { font-weight: bold; }
+      .warn { font-weight: bold; text-decoration: underline; }
+      .speaking { outline: 2px solid Highlight; }
+      pre.log {
+        max-height: 320px; overflow: auto; font-size: 0.75rem; padding: 6px;
+        border: 1px solid GrayText; white-space: pre-wrap; word-break: break-all;
+      }
+      details > summary { cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

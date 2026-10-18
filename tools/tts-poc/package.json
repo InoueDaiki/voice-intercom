@@ -1,0 +1,17 @@
+{
+  "name": "@voice-intercom/tts-poc",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ブラウザの speechSynthesis で翻訳後のテキストを読み上げる案の PoC(開発用。配信しない)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "5.0.3"
+  }
+}
