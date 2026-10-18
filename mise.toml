@@ -89,6 +89,14 @@ run = "docker build --platform linux/arm64 -f services/agent/Dockerfile -t voice
 description = "Agent のイメージをビルドして ECR に push する(例: mise run push:agent dev)"
 run = "scripts/push-agent.sh"
 
+[tasks."deploy:web"]
+description = "Web 版クライアントを terraform output の設定でビルドし、配信の S3 に置いて CloudFront を無効化する(例: mise run deploy:web dev)"
+run = "scripts/deploy-spa.sh web"
+
+[tasks."deploy:admin"]
+description = "管理コンソールを terraform output の設定でビルドし、配信の S3 に置いて CloudFront を無効化する(例: mise run deploy:admin dev)"
+run = "scripts/deploy-spa.sh admin"
+
 [tasks."plan:dev"]
 description = "dev 環境の terraform plan(先に init が要る。README を参照)"
 depends = ["build:api"]

@@ -61,3 +61,28 @@ output "agent_log_group_name" {
 output "recording_bucket" {
   value = module.recordings.bucket_name
 }
+
+# 管理コンソールと Web 版クライアントの配信(mise run deploy:<app> が使う)
+output "admin_url" {
+  value = module.admin_site.url
+}
+
+output "admin_site_bucket" {
+  value = module.admin_site.bucket_name
+}
+
+output "admin_site_distribution_id" {
+  value = module.admin_site.distribution_id
+}
+
+output "web_url" {
+  value = module.web_site.url
+}
+
+output "web_site_bucket" {
+  value = module.web_site.bucket_name
+}
+
+output "web_site_distribution_id" {
+  value = module.web_site.distribution_id
+}
