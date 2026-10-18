@@ -7,6 +7,7 @@ import {
   Button,
   buttonClass,
   Card,
+  ConfirmDialog,
   Field,
   FullScreenMessage,
   Input,
@@ -17,6 +18,7 @@ import {
   Td,
   Textarea,
   Th,
+  type ConfirmDialogTone,
   type PttState,
 } from "@voice-intercom/ui-web";
 
@@ -267,6 +269,87 @@ const members = [
   { name: "Nguyen Van A", role: "メンバー", lang: "ベトナム語", talks: 42 },
   { name: "John Smith", role: "メンバー", lang: "英語", talks: 7 },
 ];
+
+export function ConfirmDialogSection() {
+  const [open, setOpen] = useState<ConfirmDialogTone>();
+  const [result, setResult] = useState("まだ開いていません");
+  const close = (tone: ConfirmDialogTone, answer: string) => {
+    setOpen(undefined);
+    setResult(`${tone}: ${answer}`);
+  };
+  return (
+    <Section
+      id="confirm-dialog"
+      title="ConfirmDialog"
+      description="確定か取りやめかを選ばせるダイアログ(window.confirm の代わり)。Radix の AlertDialog を下敷きにする。"
+    >
+      <Example
+        title="tone(ボタンで開く)"
+        code={`const [open, setOpen] = useState(false);
+
+<Button variant="danger" onClick={() => setOpen(true)}>このルームを削除</Button>
+<ConfirmDialog
+  open={open}
+  tone="danger"
+  title="ルーム「倉庫A」を削除しますか?"
+  description="今ルームにいる人は切られ、履歴とメディアも消えます。元に戻せません。"
+  confirmLabel="削除する"
+  onConfirm={() => { setOpen(false); remove(); }}
+  onCancel={() => setOpen(false)}
+/>`}
+      >
+        <Button onClick={() => setOpen("default")}>ふつうの確かめ</Button>
+        <Button variant="danger" onClick={() => setOpen("danger")}>
+          <Trash2 className={iconClass} aria-hidden />
+          このルームを削除
+        </Button>
+        <p className="text-sm text-fg-muted" aria-live="polite">
+          結果: {result}
+        </p>
+        <ConfirmDialog
+          open={open === "default"}
+          title="ルームを出ますか?"
+          description="出ている間の発言は、入り直すとタイムラインで読めます。"
+          confirmLabel="出る"
+          onConfirm={() => close("default", "確定")}
+          onCancel={() => close("default", "取りやめ")}
+        />
+        <ConfirmDialog
+          open={open === "danger"}
+          tone="danger"
+          title="ルーム「倉庫A」を削除しますか?"
+          description="ID: warehouse-a。今ルームにいる人は切られ、話した履歴と送った画像・動画も消えます。元に戻せません。"
+          confirmLabel="削除する"
+          onConfirm={() => close("danger", "確定")}
+          onCancel={() => close("danger", "取りやめ")}
+        />
+      </Example>
+      <ul className="grid list-disc gap-1 pl-5 text-sm text-fg-muted">
+        <li>開くと取りやめのボタンにフォーカスが置かれる。Enter をうっかり押しても、危ない操作は確定しない。</li>
+        <li>Tab と Shift+Tab はダイアログの中だけを回る。Esc で取りやめる。後ろの幕を押しても閉じない。</li>
+        <li>閉じると、開く前にフォーカスのあったボタンに戻る。</li>
+        <li>幅の狭い画面では、ボタンを縦に並べ、確定を上に置く。</li>
+      </ul>
+      <PropsTable
+        rows={[
+          { name: "open", type: "boolean", description: "開いているか。開け閉めは呼び出し側が持つ" },
+          { name: "title", type: "string", description: "問い(「〜を削除しますか?」)" },
+          { name: "description", type: "ReactNode", description: "何が起きるか、元に戻せるか。文字列で書く(ui-native でも描ける)" },
+          { name: "confirmLabel", type: "string", description: "確定のボタンの文言。「はい」ではなく動詞で書く(「削除する」)" },
+          { name: "cancelLabel", type: "string", defaultValue: '"やめる"', description: "取りやめのボタンの文言" },
+          {
+            name: "tone",
+            type: '"default" | "danger"',
+            defaultValue: '"default"',
+            description: "danger は取り返しのつかない操作。題に赤の表示灯を点け、確定を danger のボタンにする",
+          },
+          { name: "onConfirm", type: "() => void", description: "確定。呼び出し側で open を false にしてから処理を始める" },
+          { name: "onCancel", type: "() => void", description: "取りやめ(ボタン、Esc)。呼び出し側で open を false にする" },
+        ]}
+      />
+    </Section>
+  );
+}
 
 export function TableSection() {
   return (

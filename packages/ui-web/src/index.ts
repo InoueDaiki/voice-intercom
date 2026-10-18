@@ -3,6 +3,7 @@ export { Alert, type AlertProps, type AlertTone } from "./Alert.tsx";
 export { Badge, type BadgeProps, type BadgeTone } from "./Badge.tsx";
 export { Button, buttonClass, type ButtonProps, type ButtonSize, type ButtonVariant } from "./Button.tsx";
 export { Card, type CardProps } from "./Card.tsx";
+export { ConfirmDialog, type ConfirmDialogProps, type ConfirmDialogTone } from "./ConfirmDialog.tsx";
 export { cx } from "./cx.ts";
 export { Field, Input, Select, Textarea } from "./Field.tsx";
 export { FullScreenMessage } from "./FullScreenMessage.tsx";

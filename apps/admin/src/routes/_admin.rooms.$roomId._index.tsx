@@ -1,4 +1,5 @@
-import { Alert, Button, Card, PageHeader } from "@voice-intercom/ui-web";
+import { Alert, Button, Card, ConfirmDialog, PageHeader } from "@voice-intercom/ui-web";
+import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 
 import type { RoomUpdate } from "../adminApi.ts";
@@ -12,6 +13,7 @@ export default function RoomDetail() {
   const room = useRoom(roomId);
   const update = useUpdateRoom(roomId);
   const remove = useDeleteRoom(roomId);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const back = <Link to="/rooms">← ルームの一覧</Link>;
 
@@ -44,10 +46,7 @@ export default function RoomDetail() {
   const current = room.data;
 
   const onDelete = () => {
-    // 消すと元に戻せないので、名前と ID を見せて確かめる
-    if (!window.confirm(`ルーム「${current.name}」(${current.room_id})を削除します。元に戻せません。よろしいですか?`)) {
-      return;
-    }
+    setConfirmingDelete(false);
     remove.mutate(undefined, { onSuccess: () => void navigate("/rooms", { replace: true }) });
   };
 
@@ -99,9 +98,19 @@ export default function RoomDetail() {
         <Card tone="danger" className="grid justify-items-start gap-3">
           <p className="text-sm">ルームを削除すると、メンバーはこのルームに入れなくなります。</p>
           {remove.error && <Alert tone="danger">削除できません: {errorMessage(remove.error)}</Alert>}
-          <Button variant="danger" onClick={onDelete} disabled={remove.isPending}>
+          <Button variant="danger" onClick={() => setConfirmingDelete(true)} disabled={remove.isPending}>
             {remove.isPending ? "削除中…" : "このルームを削除"}
           </Button>
+          {/* 消すと元に戻せないので、名前と ID を見せて確かめる */}
+          <ConfirmDialog
+            open={confirmingDelete}
+            tone="danger"
+            title={`ルーム「${current.name}」を削除しますか?`}
+            description={`ID: ${current.room_id}。今ルームにいる人は切られ、話した履歴と送った画像・動画も消えます。元に戻せません。`}
+            confirmLabel="削除する"
+            onConfirm={onDelete}
+            onCancel={() => setConfirmingDelete(false)}
+          />
         </Card>
       </div>
     </section>

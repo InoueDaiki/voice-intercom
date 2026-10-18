@@ -13,15 +13,19 @@
   },
   "dependencies": {
     "@fontsource/ibm-plex-sans-jp": "5.3.1",
+    "@radix-ui/react-alert-dialog": "1.1.23",
     "@voice-intercom/design-tokens": "workspace:*",
     "tailwindcss": "4.3.3"
   },
   "peerDependencies": {
-    "react": "^19.3.0"
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "react": "^19.3.0",
+    "react-dom": "^19.3.0",
     "typescript": "^7.0.2"
   }
 }

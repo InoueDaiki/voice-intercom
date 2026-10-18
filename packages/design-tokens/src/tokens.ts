@@ -179,7 +179,7 @@ export const colors = {
   overlay: {
     light: oklch(0.2, 0.01, GRAPHITE, 0.65),
     dark: oklch(0.1, 0.01, GRAPHITE, 0.7),
-    usage: "画像・動画に重ねる帯(動画の長さ)",
+    usage: "画像・動画に重ねる帯(動画の長さ)、ダイアログの後ろに敷く幕",
   },
   "on-overlay": {
     light: oklch(1, 0, 0),
