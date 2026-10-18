@@ -127,6 +127,8 @@ GitHub CLI(`gh`。版は `mise.toml`)を使うときは、初回に `gh auth log
 | `mise run build:agent` | Agent のイメージを linux/arm64 でビルドする(`voice-intercom-agent:local`) | devContainer |
 | `mise run push:agent <env>` | Agent のイメージをビルドして ECR に push し、apply に渡すタグを表示する | devContainer |
 | `mise run plan:dev` | `build:api` の後に、dev 環境の `terraform plan` を実行する | devContainer |
+| `mise run deploy:web <env>` | Web 版クライアントを `terraform output` の設定でビルドし、配信の S3 に置いて CloudFront を無効化する | devContainer |
+| `mise run deploy:admin <env>` | 管理コンソールを同じようにデプロイする | devContainer |
 | `mise run local:init` | ローカルの DynamoDB と S3 に、テーブルとバケットを作る | devContainer |
 
 ## CI(GitHub Actions)
@@ -145,7 +147,7 @@ PR と main への push で動く。ツールは mise で `mise.toml` と同じ�
 
 ## AWS(Terraform)
 
-`infra/modules` に Cognito、DynamoDB、S3 + CloudFront(`media`)、録音の S3(`recordings`)、API Gateway + Lambda(`api`)、LiveKit Agent の ECS Fargate(`agent`)のモジュールがあり、`infra/envs/<env>` から呼ぶ。
+`infra/modules` に Cognito、DynamoDB、S3 + CloudFront(`media`)、録音の S3(`recordings`)、API Gateway + Lambda(`api`)、LiveKit Agent の ECS Fargate(`agent`)、管理コンソールと Web 版の配信の S3 + CloudFront(`spa`)のモジュールがあり、`infra/envs/<env>` から呼ぶ。
 
 1. `.env` に `AWS_PROFILE` と `TF_STATE_BUCKET` を書き、`aws sso login` する。
 2. 初回だけ `terraform -chdir=infra/envs/dev init -backend-config="bucket=$TF_STATE_BUCKET"` を実行する。state 用のバケットがまだなければ、先に `scripts/bootstrap-tfstate.sh` で作る(dev と prod で共用し、キーで分ける)。
@@ -166,9 +168,25 @@ PR と main への push で動く。ツールは mise で `mise.toml` と同じ�
 
    API の Lambda は実行環境が立ち上がるときに1回だけ読む。値を入れ替えたら、Lambda のコードか設定を更新して実行環境を入れ替える。値が初期値(`CHANGE_ME`)のままだと、通知を送るところでエラーになる。
 
+6. 管理コンソールと Web 版を配信の S3 に置く(`mise run deploy:admin dev`、`mise run deploy:web dev`)。URL は `terraform output admin_url`、`web_url`。下の「管理コンソールと Web 版の配信」を参照。
+7. Agent のイメージを push し、タグを渡して apply する(下の「LiveKit Agent(ECS Fargate)」)。
+
 LiveKit の URL と API キーは `TF_VAR_livekit_client_url`、`TF_VAR_livekit_api_key` で渡す。
 
 AWS の予算のアラート(アカウント全体で月 1 USD。実績の 50%・100% と、予測の 100% でメールを送る)は dev の Terraform に置く。宛先は `.env` の `TF_VAR_budget_alert_emails=you@example.com` で渡す(必須。複数はカンマ区切り)。OpenAI と LiveKit の料金は AWS の請求に入らないので、それぞれの管理画面で上限を設ける。
+
+### 管理コンソールと Web 版の配信(S3 + CloudFront)
+
+管理コンソールと Web 版クライアントは、アプリごとの S3(非公開。CloudFront からだけ OAC で読む)と CloudFront で配信する(`infra/modules/spa`)。dev では `module.admin_site`・`module.web_site`。URL は `terraform output` の `admin_url`・`web_url`(CloudFront の既定のドメイン)。
+
+- 画面のパス(`/rooms/abc` など)は、CloudFront Function(viewer-request)が `/index.html` に書き換える。最後の区切りに拡張子のあるパスは書き換えず、S3 に無ければ 403 になる。
+- Cognito の `web`・`admin` クライアントの戻り先(`<url>/callback`)とログアウトの戻り先(`<url>`)、API Gateway と画像・動画のバケットの CORS には、ローカルの開発サーバーに加えて CloudFront のオリジンが入る。
+- デプロイは `mise run deploy:web dev`、`mise run deploy:admin dev`(`scripts/deploy-spa.sh`)。apply の後に、コードを変えるたびに実行する。
+  1. `terraform output` から `VITE_OIDC_ISSUER`(`oidc_issuer`)、`VITE_OIDC_CLIENT_ID`(`cognito_client_ids.<app>`)、`VITE_OIDC_LOGOUT_URL`(`<cognito_hosted_ui_url>/logout`)、`VITE_API_BASE_URL`(`api_endpoint`)を作り、`pnpm build` する(`.env` のローカル向けの値より優先する)。
+  2. `assets/`(名前にハッシュが付く)を `Cache-Control: public, max-age=31536000, immutable` で置き、次に `index.html` を `no-cache` で置く。最後に、今のビルドに無いファイルを消す。開いたままの古いタブは、画面を移るときに古いファイルを読めず失敗することがあるので、再読み込みする。
+  3. CloudFront のキャッシュを `/*` で無効にする(月 1,000 パスまで無料)。
+- 応答には HSTS、`X-Frame-Options: DENY`、`X-Content-Type-Options: nosniff`、`Referrer-Policy` を付ける。CSP はまだ付けていない。
+- 独自のドメインはまだ使わない。使うときは、ACM の証明書(us-east-1)と Route 53 を足し、Cognito の戻り先も替える。
 
 ### Cognito のログイン画面
 
@@ -180,7 +198,9 @@ AWS の予算のアラート(アカウント全体で月 1 USD。実績の 50%�
 
 ### LiveKit Agent(ECS Fargate)
 
-Agent は `services/agent/Dockerfile` のイメージ(linux/arm64)を、ECS Fargate(ARM64)で動かす。モジュールは `infra/modules/agent`。
+Agent は `services/agent/Dockerfile` のイメージ(linux/arm64)を、ECS Fargate(ARM64。タスク定義の `runtime_platform.cpu_architecture`)で動かす。モジュールは `infra/modules/agent`。
+
+イメージのビルドと push は devContainer でできる。devContainer は docker-outside-of-docker で、ホストの Docker Desktop(Apple Silicon なので arm64 のエンジン)を使うため、エミュレーションなしで linux/arm64 をビルドする。ECR へのログインには devContainer の AWS CLI(`aws sso login` 済みのプロファイル)を使う。
 
 1. 初回の apply では ECR などができるだけで、タスクは起動しない(`agent_image_tag` が空のうちは台数を 0 にする)。
 2. OpenAI の API キーを SSM に入れる(LiveKit の API シークレットと同じく、Terraform には値を持たせない)。prod では LiveKit の API シークレットも同じように入れる。
@@ -438,7 +458,8 @@ result = notify.send_to_users(
   - データは再読み込みで初期値に戻る。中身は `apps/admin/src/mockAdminApi.ts`。
   - エラーの表示は次で確かめられる。既にある ID でルームを作る(409)、ルーム `forbidden` を開く(403)、URL に無い ID を入れる(404)、ID `network-error` でルームを作る(通信の失敗)。
   - モックは開発サーバーでだけ有効になる。`pnpm build` では `VITE_API_MOCK` を設定しても読み込まれず、本番のビルドに入らない。
-- AWS の dev 環境に向けるときは、`terraform output` の値(`oidc_issuer`、`cognito_client_ids.admin`、`cognito_hosted_ui_url`、`api_endpoint`)を、上の変数に渡す。API Gateway は `http://localhost:5173`(管理コンソール)と `http://localhost:5174`(Web 版クライアント)からの CORS を許可している。
+- AWS の dev 環境に向けるときは、`terraform output` の値(`oidc_issuer`、`cognito_client_ids.admin`、`cognito_hosted_ui_url`、`api_endpoint`)を、上の変数に渡す。API Gateway は `http://localhost:5173`(管理コンソール)と `http://localhost:5174`(Web 版クライアント)と、配信の CloudFront のオリジンからの CORS を許可している。
+- dev 環境への配信は `mise run deploy:admin dev`([管理コンソールと Web 版の配信](#管理コンソールと-web-版の配信s3--cloudfront))。
 
 ## Web 版クライアント
 
@@ -477,6 +498,7 @@ result = notify.send_to_users(
   - **画像・動画を見る**: サムネイル(無ければ本体)を、履歴の幅・高さの縦横比の枠で出す。画像はクリックで本体を新しいタブに開き、動画はその場で再生する(長さを右下に出す)。表示できなければダウンロードのリンクにする。
 - Web 版では push 通知をせず、バックグラウンドの音声も扱わない(設計メモの「Web 版で決めたこと」)。
 - 設定は管理コンソールと同じ `VITE_` の環境変数(`VITE_OIDC_CLIENT_ID` の既定は `web`。AWS では `cognito_client_ids.web`)。API は Vite が中継する(`/api` → `http://localhost:3000`)。
+- dev 環境への配信は `mise run deploy:web dev`([管理コンソールと Web 版の配信](#管理コンソールと-web-版の配信s3--cloudfront))。CloudFront は HTTPS なので、マイクも使える。
 
 ## ローカルの DynamoDB と S3
 

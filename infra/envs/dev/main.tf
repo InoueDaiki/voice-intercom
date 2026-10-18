@@ -34,10 +34,28 @@ provider "aws" {
 
 data "aws_caller_identity" "current" {}
 
+# 管理コンソールと Web 版クライアントの配信(S3 + CloudFront)。中身は mise run deploy:admin dev、
+# mise run deploy:web dev で置く(scripts/deploy-spa.sh)
+module "admin_site" {
+  source = "../../modules/spa"
+
+  name          = "${local.name_prefix}-admin"
+  bucket_name   = "${local.name_prefix}-admin-${data.aws_caller_identity.current.account_id}"
+  force_destroy = true
+}
+
+module "web_site" {
+  source = "../../modules/spa"
+
+  name          = "${local.name_prefix}-web"
+  bucket_name   = "${local.name_prefix}-web-${data.aws_caller_identity.current.account_id}"
+  force_destroy = true
+}
+
 locals {
-  # 管理コンソールと Web 版クライアントを、ローカルの開発サーバーで動かすときのオリジン
-  admin_origins = ["http://localhost:5173"]
-  web_origins   = ["http://localhost:5174"]
+  # 管理コンソールと Web 版クライアントのオリジン。ローカルの開発サーバーと、CloudFront での配信
+  admin_origins = ["http://localhost:5173", module.admin_site.url]
+  web_origins   = ["http://localhost:5174", module.web_site.url]
   # API と画像・動画のバケットが CORS で許可するオリジン
   client_origins = concat(local.admin_origins, local.web_origins)
 }
