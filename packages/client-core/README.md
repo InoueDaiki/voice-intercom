@@ -16,22 +16,23 @@
 | `src/room/mediaReceiver.ts` | topic `media` を履歴で確かめてから出す | `lib/room/media_receiver.dart` |
 | `src/room/deletionReceiver.ts` | topic `deletion` を履歴で確かめてから反映する | `lib/room/deletion_receiver.dart` |
 | `src/room/deletionLabels.ts` | 「削除された…」の言い方 | `lib/screens/deletion_widgets.dart` の一部 |
-| `src/media/mediaUploader.ts` | 画像・動画・ファイルの送信(整える → uploads → PUT → complete。マルチパートは同時に4本、上限 10GB。形式は問わない) | `lib/media/media_uploader.dart`、`api_media_backend.dart` |
+| `src/media/mediaUploader.ts` | 画像・動画・ファイルの送信(整える → uploads → PUT → complete。マルチパートは同時に4本、上限 10GB。形式は問わない。整えている間とアップロードの間は `cancel` で取りやめる) | `lib/media/media_uploader.dart`、`api_media_backend.dart` |
 | `src/media/mediaType.ts` | 先頭のバイトで形式を見分ける | `lib/media/media_type.dart` |
 | `src/media/preparedMedia.ts` | 整えた画像・動画の形、上限、`MediaPreparer` | `lib/media/media_preparer.dart` の一部 |
 | `src/media/signedPut.ts` | 署名付き URL への PUT の口(`SignedPut`) | `lib/media/http_put.dart` の取り決め |
+| `src/media/videoPlan.ts` | 動画の整え方の決め方(目標のビットレート、そのまま送る・入れ直す・符号化し直す、大きさの見積もり、MP4 の箱の並び、`moov` の場所に取っておくパケットの数) | `lib/media/video_plan.dart` |
 
 ## 端末に依るところ(各アプリが差し込む)
 
-DOM の API は使わない。`tsconfig.json` の `lib` に DOM を入れず、ブラウザと React Native の両方にあるもの(`setTimeout`、`console`、`crypto.getRandomValues`)だけを `src/host.d.ts` で宣言している。`document` や `XMLHttpRequest` を書くと型検査で落ちる。
+DOM の API は使わない。`tsconfig.json` の `lib` に DOM を入れず、ブラウザと React Native の両方にあるもの(`setTimeout`、`console`、`crypto.getRandomValues`、`AbortController`)だけを `src/host.d.ts` で宣言している。`document` や `XMLHttpRequest` を書くと型検査で落ちる。
 
 | 口 | 内容 | Web 版 | モバイル版(予定) |
 | --- | --- | --- | --- |
 | `ClientApiOptions.getAccessToken` | ログインとトークンの更新 | `oidc-client-ts` | 未定 |
 | `RoomPlatform.attachAudio` / `detachAudio` | 購読した音声を鳴らす | `track.attach()` の `<audio>` を置く | 要らない(SDK が鳴らす) |
 | `RoomPlatform.startBackground` / `stopBackground` | 入室中のバックグラウンドの音声 | 無し | フォアグラウンドサービス、iOS の音声のバックグラウンド |
-| `MediaPreparer` | 選んだものを送る形に整える(サムネイル、幅・高さ、動画の変換) | `apps/web/src/webMedia.ts`(変換はしない) | 未定 |
-| `SignedPut` | 本体の範囲を読みながらの PUT と進み具合 | `apps/web/src/webMedia.ts`(`Blob.slice` と `XMLHttpRequest`) | 未定 |
+| `MediaPreparer` | 選んだものを送る形に整える(サムネイル、幅・高さ、動画の変換)。`AbortSignal` で取りやめる | `apps/web/src/webMedia.ts`(動画の変換は `apps/web/src/video`。WebCodecs と Mediabunny) | 未定 |
+| `SignedPut` | 本体の範囲を読みながらの PUT と進み具合。`AbortSignal` で取りやめる | `apps/web/src/webMedia.ts`(`Blob.slice` と `XMLHttpRequest`) | 未定 |
 
 - `crypto.getRandomValues`(テキストの `message_id`)は、React Native では `react-native-get-random-values` などで足す。
 - `livekit-client` は peerDependency。React Native では `@livekit/react-native`(`livekit-client` を前提にしている)と一緒に入れる。iOS のミュートのモード(`setMicrophoneMuteMode`)のような端末だけの設定は、モバイル版で足す。
@@ -39,9 +40,9 @@ DOM の API は使わない。`tsconfig.json` の `lib` に DOM を入れず、�
 ## Flutter 版から移していないもの
 
 - 画面(`lib/screens`)と、その単体テスト(`media_widgets_test`、削除の確認のダイアログ)。
-- 端末の処理: 画像の整え方(`media_preparer.dart` の `DeviceMediaPreparer`)、動画の変換(`video_plan.dart`、`video_transcoder.dart`)、バックグラウンドの音声(`background_audio.dart`)、HTTP の PUT(`http_put.dart`)。Web 版は動画をまず変換せずに送る(設計メモの「Web 版で決めたこと」)。
+- 端末の処理: 画像の整え方(`media_preparer.dart` の `DeviceMediaPreparer`)、動画の変換(`video_transcoder.dart`。決め方の `video_plan.dart` は `src/media/videoPlan.ts` に移した)、バックグラウンドの音声(`background_audio.dart`)、HTTP の PUT(`http_put.dart`)。Web 版の動画の変換は `apps/web/src/video`(設計メモの「Web 版の動画の変換」)。
 - iOS シミュレーター向けの音声の回避(`room_session.dart` の `_initWebrtc`)。
 
 ## テスト
 
-`pnpm --dir packages/client-core test`(Vitest。Node で動かす)。Flutter 版の単体テスト(`caption_board_test`、`text_sender_test`、`media_receiver_test`、`deletion_test`、`media_feed_test`(`roomTimeline.test.ts` に入れた)、`media_type_test`、`media_uploader_test`、`subscription_test`、`room_session_*_test`)を移した。`fakeAsync` は Vitest の偽のタイマー(`vi.advanceTimersByTimeAsync`)に置き換えた。
+`pnpm --dir packages/client-core test`(Vitest。Node で動かす)。Flutter 版の単体テスト(`caption_board_test`、`text_sender_test`、`media_receiver_test`、`deletion_test`、`media_feed_test`(`roomTimeline.test.ts` に入れた)、`media_type_test`、`media_uploader_test`、`video_plan_test`(決め方と箱の並びの分)、`subscription_test`、`room_session_*_test`)を移した。`fakeAsync` は Vitest の偽のタイマー(`vi.advanceTimersByTimeAsync`)に置き換えた。

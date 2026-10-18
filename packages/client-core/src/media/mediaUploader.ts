@@ -53,6 +53,10 @@ export class OutgoingMedia<S, F> {
   readonly partUrls = new Map<number, { url: string; expiresAt: number }>();
   // complete の応答(履歴の行)
   event: TimelineEvent | undefined;
+  // 利用者が取りやめた(一覧から外し、もう送らない)
+  cancelled = false;
+  // 整える処理(動画の変換)と PUT を止める合図
+  readonly abortController = new AbortController();
 
   constructor(localId: string, source: S) {
     this.localId = localId;
@@ -66,6 +70,12 @@ export class OutgoingMedia<S, F> {
 
   get active(): boolean {
     return this.state !== "done" && this.state !== "failed";
+  }
+
+  // 取りやめられるか(整えている間とアップロードの間。complete を呼んだ後は、保存されたかもしれないので
+  // 取りやめない)
+  get cancellable(): boolean {
+    return !this.cancelled && (this.state === "preparing" || this.state === "uploading");
   }
 
   // uploads からやり直す(送り終えたパートも捨てる)
@@ -188,6 +198,22 @@ export class MediaUploader<S, F> extends Observable {
     this.enqueue(item);
   }
 
+  // 整えている(動画の変換)か、アップロードしているものを取りやめて、一覧から外す。
+  // 順番を待っているものも外す。マルチパートで送り終えたパートは、S3 のライフサイクルルールが消す
+  cancel(item: OutgoingMedia<S, F>): void {
+    if (!item.cancellable) {
+      return;
+    }
+    item.cancelled = true;
+    item.abortController.abort(new MediaCancelledError());
+    const i = this.itemList.indexOf(item);
+    if (i >= 0) {
+      this.itemList.splice(i, 1);
+    }
+    // 整えたものは、動いている処理が止まった後に run が消す(順番を待っているものには無い)
+    this.changed();
+  }
+
   // 失敗したものを諦めて、一覧から外す
   dismiss(item: OutgoingMedia<S, F>): void {
     if (item.active) {
@@ -204,7 +230,12 @@ export class MediaUploader<S, F> extends Observable {
   dispose(): void {
     this.disposed = true;
     for (const item of this.itemList) {
-      this.cleanup(item);
+      // 動いている変換とアップロードを止める(止まった後に run が一時ファイルを消す)
+      if (item.active) {
+        item.abortController.abort(new MediaCancelledError());
+      } else {
+        this.cleanup(item);
+      }
     }
   }
 
@@ -213,14 +244,23 @@ export class MediaUploader<S, F> extends Observable {
   }
 
   private async run(item: OutgoingMedia<S, F>): Promise<void> {
-    if (this.disposed) {
+    if (this.disposed || item.cancelled) {
+      // 順番を待つ間に取りやめたか、ルームを出た(やり直しで待っていたものは整えたものを持っている)
+      this.cleanup(item);
       return;
     }
     try {
       await this.prepare(item);
+      this.throwIfStopped(item);
       await this.upload(item);
+      this.throwIfStopped(item);
       await this.complete(item);
     } catch (e) {
+      if (item.cancelled || this.disposed) {
+        // 取りやめた、ルームを出た。整えたもの(一時ファイル)を消して終える
+        this.cleanup(item);
+        return;
+      }
       if (e instanceof UnsupportedMediaError) {
         this.fail(item, e.message, false);
         return;
@@ -238,10 +278,14 @@ export class MediaUploader<S, F> extends Observable {
       return;
     }
     this.set(item, "preparing");
-    item.prepared = await this.preparer.prepare(item.source, (p) => {
-      item.progress = p;
-      this.changed();
-    });
+    item.prepared = await this.preparer.prepare(
+      item.source,
+      (p) => {
+        item.progress = p;
+        this.changed();
+      },
+      item.abortController.signal,
+    );
   }
 
   private async upload(item: OutgoingMedia<S, F>): Promise<void> {
@@ -289,6 +333,7 @@ export class MediaUploader<S, F> extends Observable {
           item.progress = total === 0 ? undefined : sent / total;
           this.changed();
         },
+        signal: item.abortController.signal,
       });
       item.bodyUploaded = true;
     }
@@ -394,6 +439,7 @@ export class MediaUploader<S, F> extends Observable {
               inFlight.set(n, sent);
               report();
             },
+            signal: item.abortController.signal,
           });
           if (!etag) {
             throw new Error(`パート ${n} の応答に ETag が無い`);
@@ -405,8 +451,8 @@ export class MediaUploader<S, F> extends Observable {
         } catch (e) {
           inFlight.delete(n);
           // URL の取得(API)の失敗は、ここでは送り直さない(アップロードが無い 404 などは、
-          // やり直しで uploads からにする)
-          if (e instanceof ApiError || attempt >= this.partAttempts) {
+          // やり直しで uploads からにする)。取りやめたものも送り直さない
+          if (e instanceof ApiError || attempt >= this.partAttempts || item.abortController.signal.aborted) {
             throw e;
           }
           if (e instanceof PutFailedError && e.status === 403) {
@@ -421,7 +467,7 @@ export class MediaUploader<S, F> extends Observable {
 
     let failure: { error: unknown } | undefined;
     const worker = async () => {
-      while (failure === undefined && remaining.length > 0 && !this.disposed) {
+      while (failure === undefined && remaining.length > 0 && !item.abortController.signal.aborted) {
         const n = remaining.shift()!;
         try {
           await sendPart(n);
@@ -472,6 +518,13 @@ export class MediaUploader<S, F> extends Observable {
     this.changed();
   }
 
+  // 取りやめたか、ルームを出たら、次の段階に進まない
+  private throwIfStopped(item: OutgoingMedia<S, F>): void {
+    if (item.abortController.signal.aborted) {
+      throw new MediaCancelledError();
+    }
+  }
+
   private expiring(expiresAt: string): boolean {
     const expires = Date.parse(expiresAt);
     if (Number.isNaN(expires)) {
@@ -506,6 +559,14 @@ export class MediaUploader<S, F> extends Observable {
     if (!this.disposed) {
       super.changed();
     }
+  }
+}
+
+// 取りやめた(利用者が取りやめたか、ルームを出た)
+export class MediaCancelledError extends Error {
+  constructor() {
+    super("取りやめた");
+    this.name = "MediaCancelledError";
   }
 }
 

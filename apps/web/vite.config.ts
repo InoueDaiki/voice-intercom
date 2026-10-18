@@ -8,6 +8,9 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   return {
     plugins: [tailwindcss(), reactRouter()],
+    // 動画の変換の Worker(src/video)を ES モジュールにする。AAC の符号化器(大きい)を、要るときだけ
+    // 読み込む別のチャンクに分けるため(既定の iife では Worker の中の動的 import が分けられない)
+    worker: { format: "es" },
     define: {
       "import.meta.env.VITE_OIDC_ISSUER": JSON.stringify(env.VITE_OIDC_ISSUER || env.OIDC_ISSUER || ""),
     },

@@ -31,6 +31,8 @@ export interface SignedPut<F> {
       // 付けるなら Content-Disposition ヘッダー(ファイルの1回の PUT。署名に入っている)
       contentDisposition?: string;
       onProgress?: (sent: number) => void;
+      // abort されたら PUT を止めて、何かを投げる(利用者が取りやめた)
+      signal?: AbortSignal;
     },
   ): Promise<string | undefined>;
   putBytes(url: string, bytes: Uint8Array, contentType: string): Promise<void>;

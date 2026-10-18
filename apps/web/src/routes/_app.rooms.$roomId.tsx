@@ -618,6 +618,11 @@ function OutgoingMediaList({ uploader }: { uploader: Uploader }) {
           {item.state !== "failed" && item.progress !== undefined && (
             <progress className="w-24" max={1} value={item.progress} aria-label="進み具合" />
           )}
+          {item.cancellable && (
+            <Button variant="link" className="text-xs" onClick={() => uploader.cancel(item)}>
+              取りやめる
+            </Button>
+          )}
           {item.state === "failed" && item.retryable && (
             <Button variant="link" className="text-xs" onClick={() => uploader.retry(item)}>
               やり直す
@@ -640,7 +645,8 @@ const outgoingRowClass = "flex items-center gap-2";
 function outgoingMediaLabel(item: OutgoingMedia<File, Blob>): string {
   switch (item.state) {
     case "preparing":
-      return "準備中";
+      // 進み具合が出るのは動画の変換(H.264 の MP4 にしている)の間だけ
+      return item.progress === undefined ? "準備中" : `変換中 ${Math.floor(item.progress * 100)}%`;
     case "uploading":
       return item.progress === undefined ? "送信中" : `送信中 ${Math.floor(item.progress * 100)}%`;
     case "completing":
