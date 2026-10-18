@@ -33,6 +33,14 @@ export class NotSavedYetError extends Error {
   }
 }
 
+// 切断の理由のうち、自動で入り直さないもの。同じ人がほかで入室した(入り直すと追い出し合う)、
+// 退室させられた、ルームが消された
+const noRejoinReasons: ReadonlySet<DisconnectReason> = new Set([
+  DisconnectReason.DUPLICATE_IDENTITY,
+  DisconnectReason.PARTICIPANT_REMOVED,
+  DisconnectReason.ROOM_DELETED,
+]);
+
 // 端末に依るところ。各アプリが差し込む(無ければ何もしない)
 export interface RoomPlatform {
   // 購読した音声トラックを鳴らす。Web 版は <audio> に付ける。React Native は SDK が鳴らすので要らない
@@ -84,10 +92,14 @@ export class RoomSession extends Observable {
   readonly mediaReceiver: MediaReceiver | undefined;
   // topic deletion の受け手。1件を読めないときは undefined で、topic deletion を捨てる
   readonly deletionReceiver: DeletionReceiver | undefined;
-  // つなぎ直したときに呼ぶ(履歴を読み直して、切れていた間の画像・動画を埋める)
+  // つなぎ直したとき・入り直したときに呼ぶ
   onReconnected: (() => void) | undefined;
 
   connected = false;
+  // 入室の途中か(最初の入室と、入り直し)
+  joining = false;
+  // 切断されたときの理由(入り直すと消す)
+  disconnectReason: DisconnectReason | undefined;
   error: string | undefined;
   // 入室はできたが、知らせておくこと
   warning: string | undefined;
@@ -108,6 +120,10 @@ export class RoomSession extends Observable {
   private readonly appliedDeletions = new Set<string>();
   private mic: LocalAudioTrack | undefined;
   private disposed = false;
+  // 一度でも入室できたか
+  private joined = false;
+  // Room のイベントを聞き始めたか(入り直しでは同じ Room を使い、聞き直さない)
+  private listening = false;
   // ミュートの操作を順に1つずつ行うためのつなぎ
   private micOps: Promise<void> = Promise.resolve();
 
@@ -154,8 +170,49 @@ export class RoomSession extends Observable {
   }
 
   async connect(url: string, token: string): Promise<void> {
-    const room = this.room;
-    room
+    this.listen();
+    this.joining = true;
+    this.changed();
+    try {
+      await this.join(url, token);
+    } finally {
+      this.joining = false;
+      this.changed();
+    }
+  }
+
+  // 切断された後に入り直せるか。一度入室できていて、追い出されたのではないとき
+  get canRejoin(): boolean {
+    return (
+      this.joined &&
+      !this.connected &&
+      !this.joining &&
+      !this.disposed &&
+      (this.disconnectReason === undefined || !noRejoinReasons.has(this.disconnectReason))
+    );
+  }
+
+  // 切断された後に、同じ Room で入り直す(新しいトークンで)。マイクを作り直してミュートのまま publish し、
+  // 履歴を読み直して切れていた間の行を埋める(つなぎ直しと同じ)。PTT は押していない状態で入る
+  async rejoin(url: string, token: string): Promise<void> {
+    if (!this.canRejoin) {
+      return;
+    }
+    this.error = undefined;
+    this.disconnectReason = undefined;
+    this.pressing = false;
+    await this.connect(url, token);
+    if (this.connected) {
+      this.onReconnected?.();
+    }
+  }
+
+  private listen(): void {
+    if (this.listening) {
+      return;
+    }
+    this.listening = true;
+    this.room
       .on(RoomEvent.TrackPublished, (pub, p) => this.maybeSubscribe(p, pub))
       .on(RoomEvent.DataReceived, (payload, p, _kind, topic) => this.handleData(payload, p, topic))
       .on(RoomEvent.ParticipantConnected, (p) => {
@@ -188,10 +245,18 @@ export class RoomSession extends Observable {
       .on(RoomEvent.Disconnected, (reason) => {
         this.connected = false;
         this.talking = false;
+        this.disconnectReason = reason;
+        // 切断で SDK が unpublish して止めるが、念のため止めて放す(入り直すときに作り直す)
+        this.mic?.stop();
+        this.mic = undefined;
         this.stopBackground();
         this.error ??= `切断された(${reason === undefined ? "理由不明" : DisconnectReason[reason]})`;
         this.changed();
       });
+  }
+
+  private async join(url: string, token: string): Promise<void> {
+    const room = this.room;
     // 入室の途中で dispose されたら(入室中に画面を離れた)、そこでやめる。エラーにはしない
     try {
       await room.connect(url, token, { autoSubscribe: false });
@@ -212,6 +277,7 @@ export class RoomSession extends Observable {
         return;
       }
       this.connected = true;
+      this.joined = true;
       this.canPlaybackAudio = room.canPlaybackAudio;
       this.changed();
       // 入室を待つ間に PTT を押していたら、ここでミュートを外す
@@ -231,6 +297,15 @@ export class RoomSession extends Observable {
   // 自動再生の制限で止まっている音を鳴らす。利用者の操作(クリックなど)の中で呼ぶ
   async startAudio(): Promise<void> {
     await this.room.startAudio();
+  }
+
+  // 音を鳴らせているかを確かめ直す(画面に戻ったとき)。止められていれば「音を出す」を出す
+  refreshAudioPlayback(): void {
+    if (!this.connected || this.canPlaybackAudio === this.room.canPlaybackAudio) {
+      return;
+    }
+    this.canPlaybackAudio = this.room.canPlaybackAudio;
+    this.changed();
   }
 
   // PTT の押し下げ。操作は順に行い、最後の状態に揃える

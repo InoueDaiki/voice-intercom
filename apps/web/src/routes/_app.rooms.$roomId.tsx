@@ -10,6 +10,7 @@ import {
   NotSavedYetError,
   type OutgoingMedia,
   outgoingTextLabel,
+  RoomKeeper,
   RoomSession,
   type TimelineEntry,
   type TimelineEvent,
@@ -33,7 +34,7 @@ import { Link, useParams } from "react-router";
 import { api } from "../api.ts";
 import { formatBytes, formatDuration, formatTime } from "../format.ts";
 import { errorMessage, useMe, useRoom } from "../queries.ts";
-import { webRoomPlatform } from "../roomPlatform.ts";
+import { webAppPresence, webRoomPlatform, webScreenAwake } from "../roomPlatform.ts";
 import { useObservable } from "../useObservable.ts";
 import { webMediaPreparer, xhrSignedPut } from "../webMedia.ts";
 
@@ -87,14 +88,30 @@ function BackLink() {
   );
 }
 
-// 入室している間の画面。開いたら入室し、閉じたら退室する
+// 入室できなかった理由の文言
+function joinErrorMessage(e: unknown): string {
+  return e instanceof ApiError && e.status === 409
+    ? "プロフィールが登録されていないので入室できません。"
+    : `入室できませんでした: ${errorMessage(e)}`;
+}
+
+// 入室している間の画面。開いたら入室し、閉じたら退室する。
+// タブを裏に回したとき・画面を消したときは RoomKeeper が受け持つ(PTT を離す、戻ったら入り直す、画面を消させない)
 function RoomScreen({ roomId, roomName, me, myIdentity }: { roomId: string; roomName: string; me: User; myIdentity: string }) {
   const [session, setSession] = useState<RoomSession>();
+  const [keeper, setKeeper] = useState<RoomKeeper>();
   const [uploader, setUploader] = useState<Uploader>();
-  const [joinError, setJoinError] = useState<string>();
   const [dragging, setDragging] = useState(false);
   useObservable(session);
+  useObservable(keeper);
   useObservable(uploader);
+  const joinError = keeper?.joinError === undefined ? undefined : joinErrorMessage(keeper.joinError);
+  // 切断された後は、戻ったときに自動で入り直す。見えたまま切断されたときは、ここから入り直す
+  const rejoinAction = keeper && session?.canRejoin && (
+    <Button size="sm" onClick={() => void keeper.rejoin()}>
+      入り直す
+    </Button>
+  );
 
   useEffect(() => {
     const s = new RoomSession({
@@ -113,27 +130,23 @@ function RoomScreen({ roomId, roomName, me, myIdentity }: { roomId: string; room
       // 送ったものは、配信を待たずにすぐタイムラインに出す
       onCompleted: (event) => s.addMedia([event]),
     });
-    setSession(s);
-    setUploader(u);
-    setJoinError(undefined);
-    let cancelled = false;
-    (async () => {
-      const token = await api.createLiveKitToken(roomId);
-      if (!cancelled) {
-        await s.connect(token.server_url, token.participant_token);
-      }
-    })().catch((e: unknown) => {
-      if (cancelled) {
-        return;
-      }
-      setJoinError(
-        e instanceof ApiError && e.status === 409
-          ? "プロフィールが登録されていないので入室できません。"
-          : `入室できませんでした: ${errorMessage(e)}`,
-      );
+    const k = new RoomKeeper({
+      session: s,
+      // 入室と入り直しのたびに、新しいトークンを取る
+      getToken: async () => {
+        const token = await api.createLiveKitToken(roomId);
+        return { url: token.server_url, token: token.participant_token };
+      },
+      presence: webAppPresence,
+      awake: webScreenAwake(),
     });
+    setSession(s);
+    setKeeper(k);
+    setUploader(u);
+    // 入れなかった理由は keeper.joinError に入る
+    k.start().catch(() => {});
     return () => {
-      cancelled = true;
+      k.dispose();
       u.dispose();
       s.dispose();
     };
@@ -180,15 +193,31 @@ function RoomScreen({ roomId, roomName, me, myIdentity }: { roomId: string; room
           <BackLink />
           <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
             <h1>{roomName}</h1>
-            {session && <RoomStatus session={session} />}
+            {session && <RoomStatus session={session} rejoining={keeper?.rejoining ?? false} />}
           </div>
         </div>
       </header>
-      {(joinError || session?.error || session?.warning || (session && !session.canPlaybackAudio)) && (
+      {(joinError ||
+        session?.error ||
+        session?.warning ||
+        keeper?.awayNotice ||
+        (session && !session.canPlaybackAudio)) && (
         <div className={cx(columnClass, "grid gap-2 pt-3")}>
-          {joinError && <Alert tone="danger">{joinError}</Alert>}
-          {session?.error && !joinError && <Alert tone="danger">{session.error}</Alert>}
+          {(joinError ?? session?.error) && (
+            <Alert tone="danger" action={rejoinAction}>
+              {joinError ?? session?.error}
+            </Alert>
+          )}
           {session?.warning && <p className="text-sm text-fg-muted">{session.warning}</p>}
+          {keeper?.awayNotice && (
+            // 隠れていた間の声は聞けていないかもしれない。控えめに、字幕と履歴で追えることだけを示す
+            <p className="flex flex-wrap items-baseline gap-x-2 text-sm text-fg-muted">
+              画面を離れていた間の声は、聞こえていなかったかもしれません。字幕と履歴で追えます。
+              <Button variant="link" className="text-xs" onClick={() => keeper.dismissAwayNotice()}>
+                閉じる
+              </Button>
+            </p>
+          )}
           {session && !session.canPlaybackAudio && (
             <Alert
               tone="warning"
@@ -214,8 +243,11 @@ function RoomScreen({ roomId, roomName, me, myIdentity }: { roomId: string; room
 // 画面の中身の列。タイムラインと操作の台で、同じ幅と余白にそろえる
 const columnClass = "mx-auto w-full max-w-3xl px-4 sm:px-6";
 
-function RoomStatus({ session }: { session: RoomSession }) {
+function RoomStatus({ session, rejoining }: { session: RoomSession; rejoining: boolean }) {
   if (!session.connected) {
+    if (rejoining) {
+      return <Badge tone="neutral">入り直し中…</Badge>;
+    }
     return <Badge tone={session.error ? "danger" : "neutral"}>{session.error ? "切断" : "入室中…"}</Badge>;
   }
   return (
@@ -779,19 +811,12 @@ function Controls({ session, onFiles }: { session: RoomSession; onFiles: (files:
         session.setPressing(false);
       }
     };
-    // 押したままタブを離れたら、離したことにする(マイクを開けたままにしない)
-    const release = () => {
-      if (session.pressing) {
-        session.setPressing(false);
-      }
-    };
+    // 押したままタブを離れた・画面を消したときに離すのは RoomKeeper(blur、visibilitychange、pagehide を聞く)
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
-    window.addEventListener("blur", release);
     return () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
-      window.removeEventListener("blur", release);
     };
   }, [session]);
 
