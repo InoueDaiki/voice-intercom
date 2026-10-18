@@ -465,7 +465,7 @@ result = notify.send_to_users(
 
 ## Web 版クライアント
 
-`mise run web` で起動し、ホストのブラウザで `http://localhost:5174` を開く(Cognito の web クライアントの戻り先に合わせて、`localhost` で開く。マイクも `localhost` か HTTPS でないと使えない)。ルームの処理は `packages/client-core` の `RoomSession` で、画面は `apps/web/src/routes`。
+`mise run web` で起動し、ホストのブラウザで `http://localhost:5174` を開く(Cognito の web クライアントの戻り先に合わせて、`localhost` で開く。マイクも `localhost` か HTTPS でないと使えない)。ルームの処理は `packages/client-core` の `RoomSession`、タブを裏に回したとき・画面を消したときの扱い(PTT を離す、戻ったら入り直す、画面を消させない)は `RoomKeeper` で、画面は `apps/web/src/routes`。
 
 - ログインは標準の OIDC(認可コード + PKCE)。ローカルでは模擬 OIDC のログイン画面で `user1` などを押す([ローカルの認証](#ローカルの認証模擬-oidc-サーバー))。username が LiveKit の identity(ルームの `member_ids` の sub)になる。
 - ローカルで入室を試す順番。管理コンソールのメンバーの候補は、プロフィールを登録した人だけなので、先に Web 版で登録する。
