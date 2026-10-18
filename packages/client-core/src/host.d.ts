@@ -15,3 +15,17 @@ declare const console: {
 declare const crypto: {
   getRandomValues<T extends Uint8Array>(array: T): T;
 };
+
+// 取りやめ(動画の変換やアップロード)の合図。React Native にもある(abort-controller)。
+// 使うものだけを宣言する
+interface AbortSignal {
+  readonly aborted: boolean;
+  readonly reason: unknown;
+  addEventListener(type: "abort", listener: () => void, options?: { once?: boolean }): void;
+  removeEventListener(type: "abort", listener: () => void): void;
+}
+
+declare class AbortController {
+  readonly signal: AbortSignal;
+  abort(reason?: unknown): void;
+}

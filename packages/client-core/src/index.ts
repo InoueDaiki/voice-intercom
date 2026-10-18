@@ -19,3 +19,4 @@ export * from "./media/mediaType.ts";
 export * from "./media/mediaUploader.ts";
 export * from "./media/preparedMedia.ts";
 export * from "./media/signedPut.ts";
+export * from "./media/videoPlan.ts";

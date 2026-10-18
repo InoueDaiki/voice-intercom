@@ -19,10 +19,22 @@ class FakePreparer implements MediaPreparer<string, string> {
   video = false;
   thumbnail: Uint8Array | undefined = Uint8Array.from([0xff, 0xd8, 0xff]);
   released: string[] = [];
+  // true にすると、abort されるまで整え終えない(長い動画の変換)
+  hang = false;
+  // abort されて止まった数
+  aborted = 0;
 
-  async prepare(source: string, onProgress?: (p: number) => void): Promise<PreparedMedia<string>> {
+  async prepare(source: string, onProgress?: (p: number) => void, signal?: AbortSignal): Promise<PreparedMedia<string>> {
     this.calls++;
     onProgress?.(0.5);
+    if (this.hang) {
+      await new Promise<void>((_, reject) => {
+        signal?.addEventListener("abort", () => {
+          this.aborted++;
+          reject(signal.reason);
+        });
+      });
+    }
     if (this.error) {
       throw this.error;
     }
@@ -57,6 +69,10 @@ class FakeBackend implements MediaUploadBackend<string> {
   // 同時に PUT しているパートの数の最大
   maxInFlight = 0;
   private inFlight = 0;
+  // true にすると、パートの PUT が abort されるまで終わらない
+  hangParts = false;
+  // abort された PUT の数
+  abortedPuts = 0;
 
   private maybeFail(name: string): void {
     const e = this.failures.get(name);
@@ -108,9 +124,19 @@ class FakeBackend implements MediaUploadBackend<string> {
       contentType: string | undefined;
       contentDisposition?: string;
       onProgress?: (sent: number) => void;
+      signal?: AbortSignal;
     },
   ): Promise<string | undefined> {
     const part = /[?&]partNumber=(\d+)/.exec(url)?.[1] ?? null;
+    if (part !== null && this.hangParts) {
+      this.calls.push(`part ${part} (hang)`);
+      return new Promise((_, reject) => {
+        options.signal?.addEventListener("abort", () => {
+          this.abortedPuts++;
+          reject(options.signal!.reason);
+        });
+      });
+    }
     if (part === null) {
       this.calls.push(
         `put ${url} ${options.contentType}${options.contentDisposition ? ` (${options.contentDisposition})` : ""}`,
@@ -399,7 +425,73 @@ test("1つずつ順に送る", async () => {
   expect(completed.map((e) => e.media!.media_id)).toEqual(["media1", "media2"]);
 });
 
-test("送信中のものは取りやめられない", async () => {
+describe("取りやめ", () => {
+  test("整えている(変換している)ものを取りやめると、変換を止めて一覧から外し、送らない", async () => {
+    preparer.hang = true;
+    const item = uploader.submit("/tmp/a.mov");
+    await settle();
+    expect(item.state).toBe("preparing");
+    expect(item.progress).toBe(0.5);
+    expect(item.cancellable).toBe(true);
+
+    uploader.cancel(item);
+    expect(uploader.items).toEqual([]);
+    await settle();
+    expect(preparer.aborted).toBe(1);
+    expect(backend.calls).toEqual([]);
+    expect(completed).toEqual([]);
+  });
+
+  test("順番を待っているものも取りやめられ、前のものは送り続ける", async () => {
+    const first = uploader.submit("/tmp/a.jpg");
+    const second = uploader.submit("/tmp/b.jpg");
+    uploader.cancel(second);
+    expect(uploader.items).toEqual([first]);
+    await settle();
+    expect(preparer.calls).toBe(1);
+    expect(completed.map((e) => e.media!.media_id)).toEqual(["media1"]);
+  });
+
+  test("アップロード中のものを取りやめると、PUT を止めて整えたものを消す。次のものは送る", async () => {
+    backend.partSize = 30;
+    backend.hangParts = true;
+    const item = uploader.submit("/tmp/a.jpg");
+    await settle();
+    expect(item.state).toBe("uploading");
+    const next = uploader.submit("/tmp/b.jpg");
+
+    uploader.cancel(item);
+    backend.hangParts = false;
+    await settle();
+    expect(backend.abortedPuts).toBe(2);
+    expect(preparer.released).toEqual(["/tmp/a.jpg.out", "/tmp/b.jpg.out"]);
+    expect(backend.calls.filter((c) => c.startsWith("complete"))).toEqual(["complete media2"]);
+    expect(next.state).toBe("done");
+    expect(uploader.items).toEqual([]);
+  });
+
+  test("ルームを出たら、変換を止めて一時ファイルを消す", async () => {
+    preparer.hang = true;
+    uploader.submit("/tmp/a.mov");
+    await settle();
+    uploader.dispose();
+    await settle();
+    expect(preparer.aborted).toBe(1);
+    expect(backend.calls).toEqual([]);
+  });
+
+  test("保存中(complete の後)と、失敗したものは取りやめない(失敗したものは「取り消す」で外す)", async () => {
+    backend.failures.set("complete", new ApiError(500, "boom"));
+    const item = uploader.submit("/tmp/a.jpg");
+    await settle();
+    expect(item.state).toBe("failed");
+    expect(item.cancellable).toBe(false);
+    uploader.cancel(item);
+    expect(uploader.items).toEqual([item]);
+  });
+});
+
+test("送信中のものは dismiss では外さない(取りやめは cancel)", async () => {
   const item = uploader.submit("/tmp/a.jpg");
   uploader.dismiss(item);
   expect(uploader.items).toEqual([item]);

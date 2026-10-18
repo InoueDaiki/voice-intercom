@@ -66,8 +66,9 @@ export class UnsupportedMediaError extends Error {
 
 // 選んだもの(S)を、送る形(JPEG などの画像、MP4 の動画)に整え、サムネイルを作る。
 export interface MediaPreparer<S, F> {
-  // onProgress は 0〜1(動画の変換の進み具合)
-  prepare(source: S, onProgress?: (progress: number) => void): Promise<PreparedMedia<F>>;
+  // onProgress は 0〜1(動画の変換の進み具合)。signal が abort されたら(利用者が取りやめた、
+  // ルームを出た)、変換を止め、作りかけの一時ファイルを消してから、何かを投げて終える
+  prepare(source: S, onProgress?: (progress: number) => void, signal?: AbortSignal): Promise<PreparedMedia<F>>;
   // 送り終えたか諦めたときに呼ぶ(整えるときに作った一時ファイルを消す)
   release?(media: PreparedMedia<F>): Promise<void>;
 }
