@@ -7,3 +7,5 @@ packages:
   - packages/ui-web
   - packages/ui-web/catalog
   - packages/schema/ts
+  # PoC(開発用。配信しない)
+  - tools/tts-poc
