@@ -26,6 +26,12 @@ export function RoomForm({ initial, editableId, submitLabel, pending, serverErro
   const [values, setValues] = useState(initial);
   // 一度送ろうとするまでは、入力中に検査の結果を出さない
   const [touched, setTouched] = useState(false);
+  // 送った後に入力を直したら、前の送信のエラー(使われている ID など)は直した内容に当てはまらないので消す
+  const [editedAfterSubmit, setEditedAfterSubmit] = useState(false);
+  const edit = (next: RoomFormValues) => {
+    setValues(next);
+    setEditedAfterSubmit(true);
+  };
 
   const idError = editableId ? validateRoomId(values.room_id) : undefined;
   const nameError = validateRoomName(values.name);
@@ -37,6 +43,7 @@ export function RoomForm({ initial, editableId, submitLabel, pending, serverErro
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setTouched(true);
+    setEditedAfterSubmit(false);
     if (idError || nameError) {
       return;
     }
@@ -54,7 +61,7 @@ export function RoomForm({ initial, editableId, submitLabel, pending, serverErro
           >
             <Input
               value={values.room_id}
-              onChange={(e) => setValues({ ...values, room_id: e.target.value })}
+              onChange={(e) => edit({ ...values, room_id: e.target.value })}
               maxLength={64}
               autoComplete="off"
               disabled={pending}
@@ -66,15 +73,15 @@ export function RoomForm({ initial, editableId, submitLabel, pending, serverErro
           hint={`${[...values.name].length} / ${ROOM_NAME_MAX}文字`}
           error={touched ? nameError : undefined}
         >
-          <Input value={values.name} onChange={(e) => setValues({ ...values, name: e.target.value })} disabled={pending} />
+          <Input value={values.name} onChange={(e) => edit({ ...values, name: e.target.value })} disabled={pending} />
         </Field>
       </Card>
       <MemberEditor
         memberIds={values.member_ids}
-        onChange={(member_ids) => setValues({ ...values, member_ids })}
+        onChange={(member_ids) => edit({ ...values, member_ids })}
         disabled={pending}
       />
-      {serverError && <Alert tone="danger">{serverError}</Alert>}
+      {serverError && !editedAfterSubmit && <Alert tone="danger">{serverError}</Alert>}
       <div>
         {/* 編集では、何も変えていなければ送れないようにする */}
         <Button type="submit" variant="primary" disabled={pending || (!editableId && !changed)}>

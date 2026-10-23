@@ -2,7 +2,7 @@ import { Alert, Button, Card, ConfirmDialog, PageHeader } from "@voice-intercom/
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 
-import type { RoomUpdate } from "../adminApi.ts";
+import { ApiError, type RoomUpdate } from "../adminApi.ts";
 import { useDeleteRoom, useRoom, useUpdateRoom } from "../queries.ts";
 import { RoomForm } from "../RoomForm.tsx";
 import { errorMessage, formatDateTime } from "../rooms.ts";
@@ -32,9 +32,12 @@ export default function RoomDetail() {
         <Alert
           tone="danger"
           action={
-            <Button size="sm" onClick={() => void room.refetch()}>
-              再読み込み
-            </Button>
+            // 無いルームは読み込み直しても出てこないので、ボタンを出さない
+            room.error instanceof ApiError && room.error.status === 404 ? undefined : (
+              <Button size="sm" onClick={() => void room.refetch()}>
+                再読み込み
+              </Button>
+            )
           }
         >
           {errorMessage(room.error)}

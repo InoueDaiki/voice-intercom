@@ -68,9 +68,9 @@ export default function UserList() {
                 <thead>
                   <tr>
                     <Th>表示名</Th>
-                    <Th>言語</Th>
-                    <Th>ユーザー ID</Th>
-                    <Th>登録日時</Th>
+                    <Th shrink>言語</Th>
+                    <Th shrink>ユーザー ID</Th>
+                    <Th shrink>登録日時</Th>
                     <Th>所属しているルーム</Th>
                   </tr>
                 </thead>
@@ -79,13 +79,16 @@ export default function UserList() {
                     const joined = roomsByUser.get(user.user_id) ?? [];
                     return (
                       <tr key={user.user_id}>
-                        <Td className="font-medium">{user.display_name}</Td>
-                        <Td>{LANGUAGE_LABELS[user.language]}</Td>
-                        <Td>
+                        {/* 名前とルームの列は、幅の狭い画面でも読める幅を取る */}
+                        <Td className="min-w-32 font-medium">{user.display_name}</Td>
+                        <Td shrink>{LANGUAGE_LABELS[user.language]}</Td>
+                        <Td shrink>
                           <code>{user.user_id}</code>
                         </Td>
-                        <Td className="text-fg-muted">{formatDateTime(user.created_at)}</Td>
-                        <Td>
+                        <Td shrink className="text-fg-muted">
+                          {formatDateTime(user.created_at)}
+                        </Td>
+                        <Td className="min-w-48">
                           {rooms.isPending && <span className="text-fg-muted">読み込み中…</span>}
                           {rooms.isSuccess &&
                             (joined.length === 0 ? (
