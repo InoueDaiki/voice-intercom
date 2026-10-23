@@ -1,8 +1,10 @@
-import { ChevronLeft, Languages, Mic, Plus, RefreshCw, Settings, Trash2, Users } from "lucide-react";
+import { Languages, Mic, Plus, RefreshCw, Settings, Trash2, Users } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import {
   Alert,
+  BackIcon,
+  backLinkClass,
   Badge,
   Button,
   buttonClass,
@@ -410,7 +412,12 @@ export function PageHeaderSection() {
       <Example
         previewClassName="block"
         code={`<PageHeader
-  back={<Link to="/rooms">ルーム一覧</Link>}
+  back={
+    <Link to="/rooms" className={backLinkClass}>
+      <BackIcon />
+      ルームの一覧
+    </Link>
+  }
   title="倉庫A"
   description="1階の倉庫で使う"
   actions={<Button variant="primary">参加する</Button>}
@@ -418,9 +425,9 @@ export function PageHeaderSection() {
       >
         <PageHeader
           back={
-            <a href="#page-header" className="inline-flex items-center gap-1">
-              <ChevronLeft className={iconClass} aria-hidden />
-              ルーム一覧
+            <a href="#page-header" className={backLinkClass}>
+              <BackIcon />
+              ルームの一覧
             </a>
           }
           title="倉庫A"

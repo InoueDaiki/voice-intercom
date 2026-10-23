@@ -1,4 +1,4 @@
-import { PageHeader } from "@voice-intercom/ui-web";
+import { BackIcon, backLinkClass, PageHeader } from "@voice-intercom/ui-web";
 import { Link, useNavigate } from "react-router";
 
 import { ApiError } from "../adminApi.ts";
@@ -20,7 +20,12 @@ export default function RoomCreate() {
 
   return (
     <section>
-      <PageHeader title="ルームを作る" back={<Link to="/rooms">← ルームの一覧</Link>} />
+      <PageHeader title="ルームを作る" back={
+          <Link to="/rooms" className={backLinkClass}>
+            <BackIcon />
+            ルームの一覧
+          </Link>
+        } />
       <RoomForm
         initial={{ room_id: "", name: "", member_ids: [] }}
         editableId

@@ -1,4 +1,4 @@
-import { Alert, Button, Card, ConfirmDialog, PageHeader } from "@voice-intercom/ui-web";
+import { Alert, BackIcon, backLinkClass, Button, Card, ConfirmDialog, PageHeader } from "@voice-intercom/ui-web";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 
@@ -15,7 +15,12 @@ export default function RoomDetail() {
   const remove = useDeleteRoom(roomId);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
-  const back = <Link to="/rooms">← ルームの一覧</Link>;
+  const back = (
+    <Link to="/rooms" className={backLinkClass}>
+      <BackIcon />
+      ルームの一覧
+    </Link>
+  );
 
   if (room.isPending) {
     return (
