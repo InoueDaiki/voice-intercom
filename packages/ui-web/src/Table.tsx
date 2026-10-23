@@ -14,7 +14,8 @@ export function Table({ className, ...props }: ComponentProps<"table">) {
 interface CellOptions {
   // end: 数値(右寄せ、桁をそろえる)
   align?: "start" | "end";
-  // 中身の幅だけにする(操作の列)
+  // 中身の幅だけにし、折り返さない(操作、日時、ID、言語など短い値の列)。
+  // 幅の狭い画面でも1文字ずつ折り返さず、収まらなければ表ごと横に流す
   shrink?: boolean;
 }
 
@@ -29,7 +30,7 @@ function cellClass({ align = "start", shrink }: CellOptions): string {
 export function Th({ align, shrink, className, ...props }: Omit<ComponentProps<"th">, "align"> & CellOptions) {
   return (
     <th
-      className={cx(cellClass({ align, shrink }), "border-b border-border bg-surface-muted text-xs font-medium text-fg-muted", className)}
+      className={cx(cellClass({ align, shrink }), "border-b border-border bg-surface-muted text-xs font-medium whitespace-nowrap text-fg-muted", className)}
       {...props}
     />
   );

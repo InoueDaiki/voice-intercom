@@ -38,9 +38,11 @@ export default function RoomList() {
             <thead>
               <tr>
                 <Th>名前</Th>
-                <Th>ID</Th>
-                <Th align="end">人数</Th>
-                <Th>更新日時</Th>
+                <Th shrink>ID</Th>
+                <Th align="end" shrink>
+                  人数
+                </Th>
+                <Th shrink>更新日時</Th>
               </tr>
             </thead>
             <tbody>
@@ -48,16 +50,21 @@ export default function RoomList() {
                 .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
                 .map((room) => (
                   <tr key={room.room_id}>
-                    <Td>
+                    {/* 名前の列は、幅の狭い画面でも読める幅を取る */}
+                    <Td className="min-w-40">
                       <Link to={`/rooms/${encodeURIComponent(room.room_id)}`} className="font-medium">
                         {room.name}
                       </Link>
                     </Td>
-                    <Td>
+                    <Td shrink>
                       <code>{room.room_id}</code>
                     </Td>
-                    <Td align="end">{room.member_ids.length}</Td>
-                    <Td className="text-fg-muted">{formatDateTime(room.updated_at)}</Td>
+                    <Td align="end" shrink>
+                      {room.member_ids.length}
+                    </Td>
+                    <Td shrink className="text-fg-muted">
+                      {formatDateTime(room.updated_at)}
+                    </Td>
                   </tr>
                 ))}
             </tbody>
