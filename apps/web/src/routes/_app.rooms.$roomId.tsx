@@ -17,7 +17,19 @@ import {
   type TimelineEvent,
   type User,
 } from "@voice-intercom/client-core";
-import { Alert, BackIcon, backLinkClass, Badge, Button, buttonClass, ConfirmDialog, cx, Textarea } from "@voice-intercom/ui-web";
+import {
+  Alert,
+  BackIcon,
+  backLinkClass,
+  Badge,
+  Button,
+  buttonClass,
+  ConfirmDialog,
+  cx,
+  SignalLamp,
+  type SignalState,
+  Textarea,
+} from "@voice-intercom/ui-web";
 import {
   Archive,
   FileText,
@@ -901,12 +913,12 @@ function OnAir({ session, myIdentity, myLanguage }: { session: RoomSession; myId
   const receiving = receivingCaption(session, myIdentity);
   const audioRooms = hub.audioRooms.length;
 
-  let lampClass = "bg-border-strong";
+  let signal: SignalState = "off";
   let label = "待機中";
   let detail: ReactNode = <span className="text-fg-muted">話している人はいません</span>;
   let rowClass = "bg-surface-muted";
   if (session.talking) {
-    lampClass = "bg-live motion-safe:animate-pulse";
+    signal = "tx";
     label = "送話中";
     // 幅の狭い画面でも1行に収まる長さにする
     detail = audioRooms > 1 ? `音声中の${audioRooms}ルームに届いています` : "ルームの全員に届いています";
@@ -914,7 +926,7 @@ function OnAir({ session, myIdentity, myLanguage }: { session: RoomSession; myId
   } else if (receiving) {
     const translation =
       receiving.originalLanguage === myLanguage ? undefined : receiving.translations.get(myLanguage);
-    lampClass = "bg-rx motion-safe:animate-pulse";
+    signal = "rx";
     label = "受信中";
     detail = (
       <>
@@ -931,7 +943,7 @@ function OnAir({ session, myIdentity, myLanguage }: { session: RoomSession; myId
       role="status"
       aria-live="polite"
     >
-      <span aria-hidden="true" className={cx("size-2.5 shrink-0 rounded-full", lampClass)} />
+      <SignalLamp state={signal} />
       <span
         className={cx(
           "shrink-0 font-bold",

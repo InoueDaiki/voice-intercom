@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Field, Input, PageHeader, Table, Td, Th } from "@voice-intercom/ui-web";
+import { Alert, Button, Card, Field, Input, LoadErrorAlert, PageHeader, Table, Td, Th } from "@voice-intercom/ui-web";
 import { useState, type FormEvent } from "react";
 
 import { adminApi, type ConnectRequest } from "../adminApi.ts";
@@ -21,7 +21,11 @@ export default function Connect() {
       />
       <RequestForm />
       {requests.isPending && <p className="text-fg-muted">読み込み中…</p>}
-      {requests.isError && <Alert tone="danger">申請を取得できません: {errorMessage(requests.error)}</Alert>}
+      {requests.isError && (
+        <LoadErrorAlert onRetry={() => void requests.refetch()}>
+          申請を取得できません: {errorMessage(requests.error)}
+        </LoadErrorAlert>
+      )}
       {requests.isSuccess && (
         <>
           <div className="grid gap-3">
@@ -110,17 +114,19 @@ function RequestTable({ requests }: { requests: ConnectRequest[] }) {
             <Th>ルームの名前</Th>
             <Th>申請したテナント</Th>
             <Th>相手のテナント</Th>
-            <Th>申請日時</Th>
+            <Th shrink>申請日時</Th>
             <Th shrink aria-label="操作" />
           </tr>
         </thead>
         <tbody>
           {requests.map((r) => (
             <tr key={r.room.room_id}>
-              <Td className="font-medium">{r.room.name}</Td>
+              <Td className="min-w-40 font-medium">{r.room.name}</Td>
               <Td>{r.from_tenant_name}</Td>
               <Td>{r.to_tenant_name}</Td>
-              <Td className="text-fg-muted">{formatDateTime(r.room.created_at)}</Td>
+              <Td shrink className="text-fg-muted">
+                {formatDateTime(r.room.created_at)}
+              </Td>
               <Td shrink>
                 <span className="flex gap-1">
                   {r.direction === "incoming" && (

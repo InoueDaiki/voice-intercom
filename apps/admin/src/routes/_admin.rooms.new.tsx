@@ -12,7 +12,7 @@ export default function RoomCreate() {
   const create = useCreateRoom();
 
   return (
-    <section>
+    <section className="max-w-3xl">
       <PageHeader
         title="ルームを作る"
         back={

@@ -46,7 +46,8 @@ export function MemberEditor({ members, users, usersPending, onAdd, onRemove, on
 
   return (
     <fieldset className="grid gap-3 rounded-lg border border-border bg-surface p-4" disabled={disabled}>
-      <legend className="px-1 text-sm font-medium">メンバー({members.length}人)</legend>
+      {/* 見出しは呼び出し側が置く(人数も添える) */}
+      <legend className="sr-only">メンバー({members.length}人)</legend>
       {members.length === 0 ? (
         <p className="text-sm text-fg-muted">メンバーはいません。</p>
       ) : (

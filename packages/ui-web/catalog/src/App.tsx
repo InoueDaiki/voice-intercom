@@ -8,12 +8,15 @@ import {
   BadgeSection,
   ButtonSection,
   CardSection,
+  CheckboxSection,
+  ChoiceGroupSection,
   ConfirmDialogSection,
   FieldSection,
   FullScreenMessageSection,
   LoadErrorAlertSection,
   PageHeaderSection,
   PttButtonSection,
+  SignalLampSection,
   TableSection,
 } from "./sections/Components.tsx";
 import { ColorsSection, ContrastSection, RadiusSection, TypeSection } from "./sections/Foundations.tsx";
@@ -34,6 +37,8 @@ const groups: { title: string; items: { id: string; label: string; Section: Comp
     items: [
       { id: "button", label: "Button", Section: ButtonSection },
       { id: "field", label: "Field", Section: FieldSection },
+      { id: "choice-group", label: "ChoiceGroup", Section: ChoiceGroupSection },
+      { id: "checkbox", label: "Checkbox", Section: CheckboxSection },
       { id: "badge", label: "Badge", Section: BadgeSection },
       { id: "alert", label: "Alert", Section: AlertSection },
       { id: "load-error-alert", label: "LoadErrorAlert", Section: LoadErrorAlertSection },
@@ -44,6 +49,7 @@ const groups: { title: string; items: { id: string; label: string; Section: Comp
       { id: "page-header", label: "PageHeader", Section: PageHeaderSection },
       { id: "full-screen-message", label: "FullScreenMessage", Section: FullScreenMessageSection },
       { id: "ptt-button", label: "PttButton", Section: PttButtonSection },
+      { id: "signal-lamp", label: "SignalLamp", Section: SignalLampSection },
     ],
   },
 ];

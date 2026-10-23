@@ -1,4 +1,4 @@
-import { Languages, Mic, Plus, RefreshCw, Settings, Trash2, Users } from "lucide-react";
+import { Globe, Languages, Lock, Mic, Plus, RefreshCw, Settings, Trash2, Users } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import {
@@ -12,7 +12,10 @@ import {
   Button,
   buttonClass,
   Card,
+  Checkbox,
+  ChoiceGroup,
   ConfirmDialog,
+  cx,
   Field,
   FullScreenMessage,
   Input,
@@ -20,6 +23,7 @@ import {
   PageHeader,
   PttButton,
   Select,
+  SignalLamp,
   Table,
   Td,
   Textarea,
@@ -696,6 +700,158 @@ export function PttButtonSection() {
           { name: "state", type: '"idle" | "pressing" | "talking"', description: "押していない・マイクの準備中・送話中(必須)" },
           { name: "shortcut", type: "ReactNode", description: "右の端に添えるキーボードの操作。幅の狭い画面では出さない" },
           { name: "…", type: 'ComponentProps<"button">', description: "onPointerDown などの処理は呼び出し側で付ける" },
+        ]}
+      />
+    </Section>
+  );
+}
+
+export function SignalLampSection() {
+  return (
+    <Section
+      id="signal-lamp"
+      title="SignalLamp"
+      description="通話の表示灯。いま声が流れているかを、文字の横に小さく灯す。tx(赤)は自分の送話、rx(緑)はほかの人の受信。灯りは読み上げないので、状態は文字でも書く。"
+    >
+      <Example
+        previewClassName="grid gap-2"
+        code={`<SignalLamp state="off" /> 待機中
+<SignalLamp state="tx" /> 送話中
+<SignalLamp state="rx" /> 受信中`}
+      >
+        {(
+          [
+            ["off", "待機中", "text-fg-muted"],
+            ["tx", "送話中", "text-live"],
+            ["rx", "受信中", "text-rx-fg"],
+          ] as const
+        ).map(([state, label, textClass]) => (
+          <span key={state} className="flex items-center gap-2 text-sm">
+            <SignalLamp state={state} />
+            <span className={cx("font-bold", textClass)}>{label}</span>
+            <code className="text-xs text-fg-muted">{state}</code>
+          </span>
+        ))}
+      </Example>
+      <PropsTable
+        rows={[{ name: "state", type: '"off" | "tx" | "rx"', description: "消灯・送話中・受信中(必須)" }]}
+      />
+    </Section>
+  );
+}
+
+function ChoiceGroupDemo() {
+  const [kind, setKind] = useState<"private" | "public">("private");
+  return (
+    <ChoiceGroup
+      legend="種類"
+      name="catalog-kind"
+      value={kind}
+      onChange={setKind}
+      options={[
+        {
+          value: "private",
+          label: "Private",
+          description: "オーナーか管理者が招待した人だけが入れる",
+          icon: <Lock aria-hidden="true" className={iconClass} />,
+        },
+        {
+          value: "public",
+          label: "Public",
+          description: "テナントの誰でも参加できる",
+          icon: <Globe aria-hidden="true" className={iconClass} />,
+        },
+      ]}
+    />
+  );
+}
+
+export function ChoiceGroupSection() {
+  return (
+    <Section
+      id="choice-group"
+      title="ChoiceGroup"
+      description="少ない選択肢から1つを選ぶ。選択肢ごとに説明を見せたいときに Select の代わりに使う。中身はラジオボタンで、矢印キーで選び直せる。"
+    >
+      <Example
+        code={`<ChoiceGroup
+  legend="種類"
+  name="kind"
+  value={kind}
+  onChange={setKind}
+  options={[
+    { value: "private", label: "Private", description: "…", icon: <Lock /> },
+    { value: "public", label: "Public", description: "…", icon: <Globe /> },
+  ]}
+/>`}
+      >
+        <div className="max-w-md">
+          <ChoiceGroupDemo />
+        </div>
+      </Example>
+      <PropsTable
+        rows={[
+          { name: "legend", type: "ReactNode", description: "選ぶものの名前(必須)" },
+          { name: "name", type: "string", description: "ラジオボタンの name。同じ画面の別の ChoiceGroup と分ける(必須)" },
+          { name: "value", type: "T extends string", description: "選んでいる値(必須)" },
+          { name: "options", type: "{ value, label, description?, icon? }[]", description: "選択肢。description は選ぶと何が起きるかを1行で(必須)" },
+          { name: "onChange", type: "(value: T) => void", description: "選び直したとき(必須)" },
+          { name: "disabled", type: "boolean", description: "送信中など" },
+        ]}
+      />
+    </Section>
+  );
+}
+
+function CheckboxDemo() {
+  const [selected, setSelected] = useState<Set<string>>(new Set(["Maria Silva"]));
+  const people = ["山田 太郎", "Maria Silva", "Nguyen Van An"];
+  return (
+    <ul className="grid gap-1.5">
+      {people.map((name) => (
+        <li key={name}>
+          <Checkbox
+            label={name}
+            checked={selected.has(name)}
+            onChange={(checked) => {
+              const next = new Set(selected);
+              if (checked) {
+                next.add(name);
+              } else {
+                next.delete(name);
+              }
+              setSelected(next);
+            }}
+          />
+        </li>
+      ))}
+      <li>
+        <Checkbox label="退職したユーザー" description="プロフィールが無いので選べない" checked={false} onChange={() => {}} disabled />
+      </li>
+    </ul>
+  );
+}
+
+export function CheckboxSection() {
+  return (
+    <Section
+      id="checkbox"
+      title="Checkbox"
+      description="ラベル付きのチェックボックス。複数を選ぶ一覧(一緒に入れる人など)に並べる。"
+    >
+      <Example
+        code={`<Checkbox label="山田 太郎" checked={selected} onChange={setSelected} />
+<Checkbox label="退職したユーザー" description="…" checked={false} onChange={…} disabled />`}
+      >
+        <CheckboxDemo />
+      </Example>
+      <PropsTable
+        rows={[
+          { name: "label", type: "ReactNode", description: "ラベル(必須)" },
+          { name: "checked", type: "boolean", description: "選んでいるか(必須)" },
+          { name: "onChange", type: "(checked: boolean) => void", description: "押したとき(必須)" },
+          { name: "description", type: "ReactNode", description: "ラベルの下に添える説明" },
+          { name: "disabled", type: "boolean", description: "選べないとき" },
         ]}
       />
     </Section>

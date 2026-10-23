@@ -1,6 +1,19 @@
 import type { MemberRole, Room, RoomMember } from "@voice-intercom/client-core";
-import { Alert, Badge, Button, Card, ConfirmDialog, Field, Input, PageHeader, Select } from "@voice-intercom/ui-web";
-import { ChevronLeft } from "lucide-react";
+import {
+  Alert,
+  BackIcon,
+  backLinkClass,
+  Badge,
+  Button,
+  Card,
+  ChoiceGroup,
+  ConfirmDialog,
+  Field,
+  Input,
+  LoadErrorAlert,
+  PageHeader,
+  Select,
+} from "@voice-intercom/ui-web";
 import { useState, type FormEvent } from "react";
 import { useAuth } from "react-oidc-context";
 import { Link, useNavigate, useParams } from "react-router";
@@ -21,8 +34,8 @@ export default function RoomSettings() {
   const groups = user?.profile["cognito:groups"];
   const isAdmin = Array.isArray(groups) && groups.includes("admin");
   const back = (
-    <Link to={`/rooms/${encodeURIComponent(roomId)}`} className="inline-flex items-center gap-0.5 text-fg-muted no-underline hover:text-fg">
-      <ChevronLeft aria-hidden="true" className="size-4" />
+    <Link to={`/rooms/${encodeURIComponent(roomId)}`} className={backLinkClass}>
+      <BackIcon />
       ルームに戻る
     </Link>
   );
@@ -92,12 +105,16 @@ function RoomBasics({ room, canManage }: { room: Room; canManage: boolean }) {
             {ROOM_KINDS.connect.description}(種類は変えられません)
           </p>
         ) : (
-          <Field label="種類" hint={ROOM_KINDS[kind].description}>
-            <Select value={kind} onChange={(e) => setKind(e.target.value as "public" | "private")}>
-              <option value="private">{ROOM_KINDS.private.label}</option>
-              <option value="public">{ROOM_KINDS.public.label}</option>
-            </Select>
-          </Field>
+          <ChoiceGroup
+            legend="種類"
+            name="kind"
+            value={kind}
+            onChange={setKind}
+            options={(["private", "public"] as const).map((k) => {
+              const { label, description, Icon } = ROOM_KINDS[k];
+              return { value: k, label, description, icon: <Icon aria-hidden="true" className="size-4" /> };
+            })}
+          />
         )}
         {update.isError && <Alert tone="danger">保存できません: {errorMessage(update.error)}</Alert>}
         <div>
@@ -139,7 +156,11 @@ function Members({
     <Card className="grid gap-4">
       <h2>メンバー({room.member_ids.length}人)</h2>
       {members.isPending && <p className="text-sm text-fg-muted">読み込み中…</p>}
-      {members.isError && <Alert tone="danger">メンバーを取得できません: {errorMessage(members.error)}</Alert>}
+      {members.isError && (
+        <LoadErrorAlert onRetry={() => void members.refetch()}>
+          メンバーを取得できません: {errorMessage(members.error)}
+        </LoadErrorAlert>
+      )}
       {members.isSuccess && (
         <ul className="divide-y divide-border">
           {members.data.map((m) => {

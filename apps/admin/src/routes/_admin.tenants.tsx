@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Field, Input, PageHeader, Table, Td, Th } from "@voice-intercom/ui-web";
+import { Alert, Button, Card, Field, Input, LoadErrorAlert, PageHeader, Table, Td, Th } from "@voice-intercom/ui-web";
 import { useState, type FormEvent } from "react";
 
 import { useCreateTenant, useTenants } from "../queries.ts";
@@ -15,7 +15,11 @@ export default function Tenants() {
       <PageHeader title="テナント" description="テナントを作り、ユーザーの画面でユーザーをテナントに入れます。" />
       <TenantForm />
       {tenants.isPending && <p className="text-fg-muted">読み込み中…</p>}
-      {tenants.isError && <Alert tone="danger">テナントを取得できません: {errorMessage(tenants.error)}</Alert>}
+      {tenants.isError && (
+        <LoadErrorAlert onRetry={() => void tenants.refetch()}>
+          テナントを取得できません: {errorMessage(tenants.error)}
+        </LoadErrorAlert>
+      )}
       {tenants.isSuccess &&
         (tenants.data.length === 0 ? (
           <p className="text-fg-muted">テナントはまだありません。</p>
@@ -24,18 +28,20 @@ export default function Tenants() {
             <thead>
               <tr>
                 <Th>名前</Th>
-                <Th>ID</Th>
-                <Th>作成日時</Th>
+                <Th shrink>ID</Th>
+                <Th shrink>作成日時</Th>
               </tr>
             </thead>
             <tbody>
               {tenants.data.map((t) => (
                 <tr key={t.tenant_id}>
-                  <Td className="font-medium">{t.name}</Td>
-                  <Td>
+                  <Td className="min-w-40 font-medium">{t.name}</Td>
+                  <Td shrink>
                     <code>{t.tenant_id}</code>
                   </Td>
-                  <Td className="text-fg-muted">{formatDateTime(t.created_at)}</Td>
+                  <Td shrink className="text-fg-muted">
+                    {formatDateTime(t.created_at)}
+                  </Td>
                 </tr>
               ))}
             </tbody>

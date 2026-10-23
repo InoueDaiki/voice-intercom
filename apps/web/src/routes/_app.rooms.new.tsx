@@ -1,5 +1,4 @@
-import { Alert, Button, Card, cx, Field, Input, PageHeader } from "@voice-intercom/ui-web";
-import { ChevronLeft } from "lucide-react";
+import { Alert, BackIcon, backLinkClass, Button, Card, Checkbox, ChoiceGroup, Field, Input, PageHeader } from "@voice-intercom/ui-web";
 import { useState, type FormEvent } from "react";
 import { useAuth } from "react-oidc-context";
 import { Link, useNavigate } from "react-router";
@@ -53,9 +52,9 @@ export default function NewRoom() {
       <PageHeader
         title="ルームを作る"
         back={
-          <Link to="/" className="inline-flex items-center gap-0.5 text-fg-muted no-underline hover:text-fg">
-            <ChevronLeft aria-hidden="true" className="size-4" />
-            ルーム
+          <Link to="/" className={backLinkClass}>
+            <BackIcon />
+            ルームの一覧
           </Link>
         }
         description="作った人がオーナーになります。オーナーはメンバーを招待でき、ほかの人をオーナーにもできます。"
@@ -65,30 +64,16 @@ export default function NewRoom() {
           <Field label="名前" error={name !== "" ? invalid : undefined}>
             <Input value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
-          <fieldset className="grid gap-2">
-            <legend className="mb-1.5 text-sm font-medium">種類</legend>
-            {(["private", "public"] as const).map((k) => {
+          <ChoiceGroup
+            legend="種類"
+            name="kind"
+            value={kind}
+            onChange={setKind}
+            options={(["private", "public"] as const).map((k) => {
               const { label, description, Icon } = ROOM_KINDS[k];
-              return (
-                <label
-                  key={k}
-                  className={cx(
-                    "flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2",
-                    kind === k ? "border-fg bg-surface-muted" : "border-border",
-                  )}
-                >
-                  <input type="radio" name="kind" value={k} checked={kind === k} onChange={() => setKind(k)} />
-                  <span className="grid gap-0.5">
-                    <span className="flex items-center gap-1.5 font-bold">
-                      <Icon aria-hidden="true" className="size-4" />
-                      {label}
-                    </span>
-                    <span className="text-sm text-fg-muted">{description}</span>
-                  </span>
-                </label>
-              );
+              return { value: k, label, description, icon: <Icon aria-hidden="true" className="size-4" /> };
             })}
-          </fieldset>
+          />
           <fieldset className="grid gap-2">
             <legend className="mb-1.5 text-sm font-medium">一緒に入れる人(あとからでも招待できます)</legend>
             {users.isPending && <p className="text-sm text-fg-muted">読み込み中…</p>}
@@ -98,10 +83,7 @@ export default function NewRoom() {
               <ul className="grid max-h-60 gap-1 overflow-y-auto">
                 {others.map((u) => (
                   <li key={u.user_id}>
-                    <label className="flex cursor-pointer items-center gap-2 text-sm">
-                      <input type="checkbox" checked={memberIds.has(u.user_id)} onChange={() => toggle(u.user_id)} />
-                      {u.display_name}
-                    </label>
+                    <Checkbox label={u.display_name} checked={memberIds.has(u.user_id)} onChange={() => toggle(u.user_id)} />
                   </li>
                 ))}
               </ul>

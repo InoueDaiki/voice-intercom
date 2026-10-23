@@ -147,9 +147,17 @@ function RoomMembers({ room, myTenant }: { room: Room; myTenant: string | undefi
 
   return (
     <div className="grid gap-3">
-      <h2>メンバー</h2>
-      {members.isError && <Alert tone="danger">メンバーを取得できません: {errorMessage(members.error)}</Alert>}
-      {users.isError && <Alert tone="danger">ユーザー一覧を取得できません: {errorMessage(users.error)}</Alert>}
+      <h2>メンバー{members.isSuccess && `(${members.data.length}人)`}</h2>
+      {members.isError && (
+        <LoadErrorAlert onRetry={() => void members.refetch()}>
+          メンバーを取得できません: {errorMessage(members.error)}
+        </LoadErrorAlert>
+      )}
+      {users.isError && (
+        <LoadErrorAlert onRetry={() => void users.refetch()}>
+          ユーザー一覧を取得できません: {errorMessage(users.error)}
+        </LoadErrorAlert>
+      )}
       {error && <Alert tone="danger">変えられませんでした: {errorMessage(error)}</Alert>}
       <MemberEditor
         members={(members.data ?? []).map((m) => ({

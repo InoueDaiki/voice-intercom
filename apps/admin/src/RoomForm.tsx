@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Field, Input, Select } from "@voice-intercom/ui-web";
+import { Alert, Button, Card, ChoiceGroup, Field, Input } from "@voice-intercom/ui-web";
 import { useState, type FormEvent } from "react";
 
 import type { RoomKind } from "./adminApi.ts";
@@ -47,7 +47,7 @@ export function RoomForm({ initial, submitLabel, pending, creating = false, serv
   };
 
   return (
-    <form className="grid max-w-2xl gap-4" onSubmit={submit} noValidate>
+    <form className="grid gap-4" onSubmit={submit} noValidate>
       <Card className="grid gap-4">
         <Field
           label="名前"
@@ -62,16 +62,14 @@ export function RoomForm({ initial, submitLabel, pending, creating = false, serv
             <span className="text-fg-muted">(変えられません。{ROOM_KIND_LABELS.connect.description})</span>
           </p>
         ) : (
-          <Field label="種別" hint={ROOM_KIND_LABELS[values.kind].description}>
-            <Select
-              value={values.kind}
-              onChange={(e) => edit({ ...values, kind: e.target.value as RoomKind })}
-              disabled={pending}
-            >
-              <option value="private">{ROOM_KIND_LABELS.private.label}</option>
-              <option value="public">{ROOM_KIND_LABELS.public.label}</option>
-            </Select>
-          </Field>
+          <ChoiceGroup
+            legend="種別"
+            name="kind"
+            value={values.kind}
+            onChange={(kind) => edit({ ...values, kind })}
+            disabled={pending}
+            options={(["private", "public"] as const).map((k) => ({ value: k, ...ROOM_KIND_LABELS[k] }))}
+          />
         )}
       </Card>
       {serverError && !editedAfterSubmit && <Alert tone="danger">{serverError}</Alert>}
