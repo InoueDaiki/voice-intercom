@@ -240,6 +240,7 @@ function Timeline({ session, myLanguage }: { session: RoomSession; myLanguage: L
   const entries = session.entries;
   const timeline = session.timeline;
   const listRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLOListElement>(null);
   const stickToBottom = useRef(true);
   // 読み足す前の高さ。読み足した後に、見ていた位置がずれないよう同じだけ下げる
   const heightBeforeOlder = useRef<number | undefined>(undefined);
@@ -266,6 +267,22 @@ function Timeline({ session, myLanguage }: { session: RoomSession; myLanguage: L
     void session.loadOlder();
   };
 
+  // 画像の読み込みなどで、描き直さずに高さが変わったときも、下端を見ていれば追いかける
+  useEffect(() => {
+    const el = listRef.current;
+    const content = contentRef.current;
+    if (!el || !content) {
+      return;
+    }
+    const observer = new ResizeObserver(() => {
+      if (stickToBottom.current && heightBeforeOlder.current === undefined) {
+        el.scrollTop = el.scrollHeight;
+      }
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
+
   // 読み込んだ分が少なく、スクロールできないまま上端にいるなら、続けて読み足す
   useEffect(() => {
     const el = listRef.current;
@@ -286,7 +303,7 @@ function Timeline({ session, myLanguage }: { session: RoomSession; myLanguage: L
         }
       }}
     >
-      <ol className={cx(columnClass, "flex min-h-full flex-col py-4")}>
+      <ol ref={contentRef} className={cx(columnClass, "flex min-h-full flex-col py-4")}>
         {/* 何も無いときは、下の案内だけを出す */}
         {(!timeline.loaded || timeline.loadingOlder || entries.length > 0) && (
           <li className="py-2 text-center text-xs text-fg-muted">
@@ -702,7 +719,8 @@ function OnAir({ session, myIdentity, myLanguage }: { session: RoomSession; myId
   if (session.talking) {
     lampClass = "bg-live motion-safe:animate-pulse";
     label = "送話中";
-    detail = "あなたの声がルームの全員に届いています";
+    // 幅の狭い画面でも1行に収まる長さにする
+    detail = "ルームの全員に届いています";
     rowClass = "bg-surface-muted";
   } else if (receiving) {
     const translation =

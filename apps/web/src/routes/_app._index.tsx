@@ -8,7 +8,7 @@ import { errorMessage, useRooms } from "../queries.ts";
 export default function RoomList() {
   const rooms = useRooms();
   return (
-    <section className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
+    <section className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
       <PageHeader title="ルーム" description="入るルームを選んでください。" />
       {rooms.isPending && <p className="text-fg-muted">読み込み中…</p>}
       {rooms.isError && (
