@@ -1,4 +1,4 @@
-import { Alert, Button, buttonClass, PageHeader, Table, Td, Th } from "@voice-intercom/ui-web";
+import { buttonClass, LoadErrorAlert, PageHeader, Table, Td, Th } from "@voice-intercom/ui-web";
 import { Link } from "react-router";
 
 import { useRooms } from "../queries.ts";
@@ -19,16 +19,9 @@ export default function RoomList() {
       />
       {rooms.isPending && <p className="text-fg-muted">読み込み中…</p>}
       {rooms.isError && (
-        <Alert
-          tone="danger"
-          action={
-            <Button size="sm" onClick={() => void rooms.refetch()}>
-              再読み込み
-            </Button>
-          }
-        >
+        <LoadErrorAlert onRetry={() => void rooms.refetch()}>
           ルームの一覧を取得できません: {errorMessage(rooms.error)}
-        </Alert>
+        </LoadErrorAlert>
       )}
       {rooms.isSuccess &&
         (rooms.data.length === 0 ? (

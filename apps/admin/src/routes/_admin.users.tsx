@@ -1,4 +1,4 @@
-import { Alert, Button, Field, Input, PageHeader, Table, Td, Th } from "@voice-intercom/ui-web";
+import { Alert, Field, Input, LoadErrorAlert, PageHeader, Table, Td, Th } from "@voice-intercom/ui-web";
 import { useState } from "react";
 import { Link } from "react-router";
 
@@ -29,19 +29,16 @@ export default function UserList() {
       <PageHeader title="ユーザー" description="アプリでプロフィール(表示名と言語)を登録したユーザーです。" />
       {users.isPending && <p className="text-fg-muted">読み込み中…</p>}
       {users.isError && (
-        <Alert
-          tone="danger"
-          action={
-            <Button size="sm" onClick={() => void users.refetch()}>
-              再読み込み
-            </Button>
-          }
+        <LoadErrorAlert
+          onRetry={() => void users.refetch()}
+          // 権限が無いのは読み込み直しても変わらない
+          retryable={!(users.error instanceof ApiError && users.error.status === 403)}
         >
           ユーザーの一覧を取得できません:{" "}
           {users.error instanceof ApiError && users.error.status === 403
             ? "ユーザーの一覧を見る権限がありません。"
             : errorMessage(users.error)}
-        </Alert>
+        </LoadErrorAlert>
       )}
       {users.isSuccess &&
         (users.data.length === 0 ? (

@@ -1,4 +1,4 @@
-import { Alert, BackIcon, backLinkClass, Button, Card, ConfirmDialog, PageHeader } from "@voice-intercom/ui-web";
+import { Alert, BackIcon, backLinkClass, Button, Card, ConfirmDialog, LoadErrorAlert, PageHeader } from "@voice-intercom/ui-web";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 
@@ -34,19 +34,13 @@ export default function RoomDetail() {
     return (
       <section>
         <PageHeader title={`ルーム「${roomId}」`} back={back} />
-        <Alert
-          tone="danger"
-          action={
-            // 無いルームは読み込み直しても出てこないので、ボタンを出さない
-            room.error instanceof ApiError && room.error.status === 404 ? undefined : (
-              <Button size="sm" onClick={() => void room.refetch()}>
-                再読み込み
-              </Button>
-            )
-          }
+        <LoadErrorAlert
+          onRetry={() => void room.refetch()}
+          // 無いルームは読み込み直しても出てこない
+          retryable={!(room.error instanceof ApiError && room.error.status === 404)}
         >
           {errorMessage(room.error)}
-        </Alert>
+        </LoadErrorAlert>
       </section>
     );
   }

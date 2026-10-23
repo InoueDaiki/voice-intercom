@@ -1,4 +1,4 @@
-import { Alert, Button, PageHeader } from "@voice-intercom/ui-web";
+import { LoadErrorAlert, PageHeader } from "@voice-intercom/ui-web";
 import { ChevronRight } from "lucide-react";
 import { Link } from "react-router";
 
@@ -12,16 +12,9 @@ export default function RoomList() {
       <PageHeader title="ルーム" description="入るルームを選んでください。" />
       {rooms.isPending && <p className="text-fg-muted">読み込み中…</p>}
       {rooms.isError && (
-        <Alert
-          tone="danger"
-          action={
-            <Button size="sm" onClick={() => void rooms.refetch()}>
-              再読み込み
-            </Button>
-          }
-        >
+        <LoadErrorAlert onRetry={() => void rooms.refetch()}>
           ルームの一覧を取得できません: {errorMessage(rooms.error)}
-        </Alert>
+        </LoadErrorAlert>
       )}
       {rooms.isSuccess && rooms.data.length === 0 && (
         <p className="text-fg-muted">入れるルームがありません。管理者にメンバーに加えてもらってください。</p>

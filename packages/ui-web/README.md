@@ -38,9 +38,11 @@
 | `Field` + `Input`・`Textarea`・`Select` | ラベル・説明(`hint`)・誤り(`error`)と入力欄の組。`id` と `aria-*` は `Field` が付ける |
 | `Badge` | 短い状態の札。`tone` は `neutral`・`primary`・`success`・`warning`・`danger`・`live`(送話)・`rx`(受信) |
 | `Alert` | 画面の中の知らせ。`tone` は `info`・`success`・`warning`・`danger`(`danger` は `role="alert"`)。`action` に再読み込みなどのボタン |
+| `LoadErrorAlert` | 取得に失敗したことの知らせと「再読み込み」。無いもの・権限の無いものなど、読み込み直しても変わらないときは `retryable={false}` でボタンを出さない |
 | `Card` | 地の上に置く面。`tone="danger"` は削除をまとめる面 |
 | `Table`、`Th`、`Td` | 表。数値の列は `align="end"`、操作の列は `shrink` |
 | `backLinkClass`、`BackIcon` | 一つ上の画面へ戻るリンク。ルーターの `<Link>` に `className={backLinkClass}` を付け、中に `<BackIcon />` と行き先の名前を置く。2つのアプリで同じ見た目にする |
+| `AppHeader`、`appHeaderLinkClass`、`appHeaderTextClass` | アプリのいちばん上の帯。`brand`(アプリの名前。ホームへの `<Link>` でもよい)、`subtitle`、`badge`、`account`(右のアカウントの表示)、`onSignOut`。長い表示名やメールアドレスは省いて、ログアウトを押し出さない。`account` のリンクには `appHeaderLinkClass`、文字には `appHeaderTextClass` を付ける |
 | `PageHeader` | 画面の題。`back`(戻るリンク)、`actions`(右の操作)、`description` |
 | `FullScreenMessage` | 画面全体の真ん中の知らせ(読み込み中、ログインの失敗) |
 | `ConfirmDialog` | 確定か取りやめかを選ばせるダイアログ(`window.confirm` は使わない)。`tone="danger"` は削除など取り返しのつかない操作(題に赤の表示灯、確定は `danger` のボタン)。`open` は呼び出し側が持ち、`onConfirm`・`onCancel` で閉じる。確定の文言は動詞で書く(「削除する」)。開くと取りやめにフォーカスを置き、Tab は中だけを回り、Esc で取りやめ、閉じると元のボタンにフォーカスを戻す |
