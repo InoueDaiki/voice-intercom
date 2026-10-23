@@ -1,36 +1,34 @@
 import { PageHeader } from "@voice-intercom/ui-web";
 import { Link, useNavigate } from "react-router";
 
-import { ApiError } from "../adminApi.ts";
 import { useCreateRoom } from "../queries.ts";
 import { RoomForm } from "../RoomForm.tsx";
 import { errorMessage } from "../rooms.ts";
 
+// 作った管理者がオーナーになる。メンバーは作った後のルームの画面で足す。
+// Connect は Connect の画面から、相手のテナントに申請して作る
 export default function RoomCreate() {
   const navigate = useNavigate();
   const create = useCreateRoom();
 
-  let serverError: string | undefined;
-  if (create.error) {
-    serverError =
-      create.error instanceof ApiError && create.error.status === 409
-        ? `ルーム ID「${create.variables?.room_id}」は既に使われています。別の ID にしてください。`
-        : errorMessage(create.error);
-  }
-
   return (
     <section>
-      <PageHeader title="ルームを作る" back={<Link to="/rooms">← ルームの一覧</Link>} />
+      <PageHeader
+        title="ルームを作る"
+        back={<Link to="/rooms">← ルームの一覧</Link>}
+        description="作った人がオーナーになります。メンバーは作った後に足せます。"
+      />
       <RoomForm
-        initial={{ room_id: "", name: "", member_ids: [] }}
-        editableId
+        initial={{ name: "", kind: "private" }}
+        creating
         submitLabel="作成"
         pending={create.isPending}
-        serverError={serverError}
-        onSubmit={(values) =>
-          create.mutate(values, {
-            onSuccess: (room) => void navigate(`/rooms/${encodeURIComponent(room.room_id)}`),
-          })
+        serverError={create.error ? errorMessage(create.error) : undefined}
+        onSubmit={({ name, kind }) =>
+          create.mutate(
+            { name, kind: kind === "public" ? "public" : "private", member_ids: [] },
+            { onSuccess: (room) => void navigate(`/rooms/${encodeURIComponent(room.room_id)}`) },
+          )
         }
       />
     </section>

@@ -8,9 +8,16 @@ import { api } from "./api.ts";
 // ---- 型 ----
 
 export type Room = Schemas["Room"];
+export type RoomKind = Room["kind"];
+export type RoomMember = Schemas["RoomMember"];
+export type MemberRole = RoomMember["role"];
 export type User = Schemas["User"];
+export type Tenant = Schemas["Tenant"];
+export type ConnectRequest = Schemas["ConnectRequest"];
 export type RoomCreate = Schemas["CreateRoomRequest"];
 export type RoomUpdate = Schemas["UpdateRoomRequest"];
+export type ConnectRequestCreate = Schemas["CreateConnectRequest"];
+export type TenantCreate = Schemas["CreateTenantRequest"];
 export type Language = User["language"];
 
 export interface ListResponse<T> {
@@ -83,25 +90,72 @@ async function call<T>(result: Promise<{ data?: T; error?: unknown; response: Re
 
 // 画面から使う操作。本物(HTTP)とモックのどちらもこの形を満たす
 export interface AdminApi {
+  // 自分のプロフィール(所属するテナント)。未登録なら null
+  getMe(): Promise<User | null>;
+  // 自分のテナントに関わるルーム(申請中の Connect も)
   listRooms(): Promise<ListResponse<Room>>;
   getRoom(roomId: string): Promise<Room>;
+  // 作った管理者がオーナーになる
   createRoom(body: RoomCreate): Promise<Room>;
   updateRoom(roomId: string, body: RoomUpdate): Promise<Room>;
   deleteRoom(roomId: string): Promise<void>;
+  archiveRoom(roomId: string): Promise<Room>;
+  unarchiveRoom(roomId: string): Promise<Room>;
+  listRoomMembers(roomId: string): Promise<ListResponse<RoomMember>>;
+  putRoomMember(roomId: string, userId: string, role: MemberRole): Promise<Room>;
+  deleteRoomMember(roomId: string, userId: string): Promise<void>;
+  // 管理者には自分のテナントの人、運営者にはすべての人
   listUsers(): Promise<ListResponse<User>>;
+  listConnectRequests(): Promise<ListResponse<ConnectRequest>>;
+  createConnectRequest(body: ConnectRequestCreate): Promise<ConnectRequest>;
+  acceptConnectRequest(roomId: string): Promise<Room>;
+  deleteConnectRequest(roomId: string): Promise<void>;
+  // 運営者
+  listTenants(): Promise<ListResponse<Tenant>>;
+  createTenant(body: TenantCreate): Promise<Tenant>;
+  setUserTenant(userId: string, tenantId: string | null): Promise<User>;
 }
 
 const path = (room_id: string) => ({ params: { path: { room_id } } });
+const memberPath = (room_id: string, user_id: string) => ({ params: { path: { room_id, user_id } } });
 
 const httpAdminApi: AdminApi = {
-  listRooms: () => call(api.GET("/rooms")),
+  getMe: async () => {
+    try {
+      return await call(api.GET("/users/me"));
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) {
+        return null;
+      }
+      throw e;
+    }
+  },
+  listRooms: () => call(api.GET("/rooms", { params: { query: { scope: "tenant" } } })),
   getRoom: (roomId) => call(api.GET("/rooms/{room_id}", path(roomId))),
   createRoom: (body) => call(api.POST("/rooms", { body })),
   updateRoom: (roomId, body) => call(api.PATCH("/rooms/{room_id}", { ...path(roomId), body })),
   deleteRoom: async (roomId) => {
     await call(api.DELETE("/rooms/{room_id}", path(roomId)));
   },
+  archiveRoom: (roomId) => call(api.POST("/rooms/{room_id}/archive", path(roomId))),
+  unarchiveRoom: (roomId) => call(api.DELETE("/rooms/{room_id}/archive", path(roomId))),
+  listRoomMembers: (roomId) => call(api.GET("/rooms/{room_id}/members", path(roomId))),
+  putRoomMember: (roomId, userId, role) =>
+    call(api.PUT("/rooms/{room_id}/members/{user_id}", { ...memberPath(roomId, userId), body: { role } })),
+  deleteRoomMember: async (roomId, userId) => {
+    await call(api.DELETE("/rooms/{room_id}/members/{user_id}", memberPath(roomId, userId)));
+  },
   listUsers: () => call(api.GET("/users")),
+  listConnectRequests: () => call(api.GET("/connect-requests")),
+  createConnectRequest: (body) => call(api.POST("/connect-requests", { body })),
+  acceptConnectRequest: (roomId) => call(api.POST("/connect-requests/{room_id}/accept", path(roomId))),
+  deleteConnectRequest: async (roomId) => {
+    await call(api.DELETE("/connect-requests/{room_id}", path(roomId)));
+  },
+  listTenants: () => call(api.GET("/tenants")),
+  createTenant: (body) => call(api.POST("/tenants", { body })),
+  setUserTenant: (userId, tenantId) =>
+    call(api.PUT("/users/{user_id}/tenant", { params: { path: { user_id: userId } }, body: { tenant_id: tenantId } })),
 };
 
 // 開発サーバーで VITE_API_MOCK=1 のときだけ、メモリ上のモックで応答する。
@@ -114,11 +168,10 @@ function load(): Promise<AdminApi> {
   return impl;
 }
 
-export const adminApi: AdminApi = {
-  listRooms: async () => (await load()).listRooms(),
-  getRoom: async (roomId) => (await load()).getRoom(roomId),
-  createRoom: async (body) => (await load()).createRoom(body),
-  updateRoom: async (roomId, body) => (await load()).updateRoom(roomId, body),
-  deleteRoom: async (roomId) => (await load()).deleteRoom(roomId),
-  listUsers: async () => (await load()).listUsers(),
-};
+// 呼ぶときに、本物かモックを読み込んでから同じ名前の操作を呼ぶ
+export const adminApi = new Proxy({} as AdminApi, {
+  get:
+    (_target, name: keyof AdminApi) =>
+    async (...args: unknown[]) =>
+      ((await load())[name] as (...a: unknown[]) => Promise<unknown>)(...args),
+});

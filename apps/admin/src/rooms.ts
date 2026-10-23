@@ -1,18 +1,22 @@
 // ルームの画面で共通に使う、入力の検査と表示の整形
-import { ApiError, type Language } from "./adminApi.ts";
+import { ApiError, type Language, type Room, type RoomKind } from "./adminApi.ts";
 
 // services/api の Room と同じ制約
-export const ROOM_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 export const ROOM_NAME_MAX = 100;
 
-export function validateRoomId(roomId: string): string | undefined {
-  if (roomId === "") {
-    return "ルーム ID を入力してください";
+// ルームの種別(設計メモの「テナントとルームの種別」)
+export const ROOM_KIND_LABELS: Record<RoomKind, { label: string; description: string }> = {
+  public: { label: "Public", description: "テナントの誰でも参加できる" },
+  private: { label: "Private", description: "オーナーか管理者が招待した人だけが入れる" },
+  connect: { label: "Connect", description: "ほかのテナントの人と一緒に使う。招待した人だけが入れる" },
+};
+
+// 一覧に出す状態。申請中の Connect とアーカイブしたルームだけ札を付ける
+export function roomState(room: Room): "pending" | "archived" | undefined {
+  if (room.connect_status === "pending") {
+    return "pending";
   }
-  if (!ROOM_ID_PATTERN.test(roomId)) {
-    return "ルーム ID は半角英数字と - _ だけで、64文字以内にしてください";
-  }
-  return undefined;
+  return room.archived_at ? "archived" : undefined;
 }
 
 export function validateRoomName(name: string): string | undefined {
@@ -49,7 +53,7 @@ export function formatDateTime(iso: string): string {
   return Number.isNaN(date.getTime()) ? iso : dateTimeFormat.format(date);
 }
 
-// API の失敗を、画面に出す文に直す。409 は画面ごとに文が違うので、呼び出し側で先に見る
+// API の失敗を、画面に出す文に直す
 export function errorMessage(error: Error): string {
   if (!(error instanceof ApiError)) {
     return error.message;
@@ -60,11 +64,16 @@ export function errorMessage(error: Error): string {
     case 401:
       return "ログインの期限が切れました。ページを読み込み直してください。";
     case 403:
-      return "このルームを扱う権限がありません。";
+      // 管理者もテナントに所属していないと使えない(Web 版でプロフィールを登録し、運営者に所属を決めてもらう)
+      return error.detail === "テナントに所属していない"
+        ? "テナントに所属していません。Web 版でプロフィールを登録し、運営者に所属を決めてもらってください。"
+        : "この操作をする権限がありません。";
     case 404:
       return "ルームが見つかりません。削除された可能性があります。";
+    case 400:
     case 409:
-      return "同じ ID のルームが既にあります。";
+      // 最後のオーナー、申請中、ほかのテナントの人など。サーバーの文をそのまま出す
+      return error.detail ?? "この操作はできません。";
     case 422:
       return `入力が正しくありません${error.detail ? `(${error.detail})` : ""}。`;
     default:
