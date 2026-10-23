@@ -1,4 +1,5 @@
-import { Alert, BackIcon, backLinkClass, Button, Card, Checkbox, ChoiceGroup, Field, Input, PageHeader } from "@voice-intercom/ui-web";
+import { LANGUAGE_LABELS } from "@voice-intercom/client-core";
+import { Alert, BackIcon, backLinkClass, Button, Card, CheckboxList, ChoiceGroup, Field, Input, PageHeader } from "@voice-intercom/ui-web";
 import { useState, type FormEvent } from "react";
 import { useAuth } from "react-oidc-context";
 import { Link, useNavigate } from "react-router";
@@ -17,7 +18,7 @@ export default function NewRoom() {
   const myIdentity = useAuth().user?.profile.sub;
   const [name, setName] = useState("");
   const [kind, setKind] = useState<"public" | "private">("private");
-  const [memberIds, setMemberIds] = useState<Set<string>>(new Set());
+  const [memberIds, setMemberIds] = useState<string[]>([]);
 
   const trimmed = name.trim();
   const invalid =
@@ -26,15 +27,11 @@ export default function NewRoom() {
       : [...trimmed].length > ROOM_NAME_MAX
         ? `名前は${ROOM_NAME_MAX}文字以内にしてください`
         : undefined;
-  const others = users.data?.filter((u) => u.user_id !== myIdentity) ?? [];
-
-  const toggle = (userId: string) => {
-    const next = new Set(memberIds);
-    if (!next.delete(userId)) {
-      next.add(userId);
-    }
-    setMemberIds(next);
-  };
+  // 名前の順に並べ、同じ名前の人を見分けられるよう話す言語を添える
+  const others = (users.data ?? [])
+    .filter((u) => u.user_id !== myIdentity)
+    .sort((a, b) => a.display_name.localeCompare(b.display_name, "ja"))
+    .map((u) => ({ value: u.user_id, label: u.display_name, description: LANGUAGE_LABELS[u.language] }));
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -42,7 +39,7 @@ export default function NewRoom() {
       return;
     }
     create.mutate(
-      { name: trimmed, kind, memberIds: [...memberIds] },
+      { name: trimmed, kind, memberIds },
       { onSuccess: (room) => void navigate(`/rooms/${encodeURIComponent(room.room_id)}`, { replace: true }) },
     );
   };
@@ -74,21 +71,20 @@ export default function NewRoom() {
               return { value: k, label, description, icon: <Icon aria-hidden="true" className="size-4" /> };
             })}
           />
-          <fieldset className="grid gap-2">
-            <legend className="mb-1.5 text-sm font-medium">一緒に入れる人(あとからでも招待できます)</legend>
-            {users.isPending && <p className="text-sm text-fg-muted">読み込み中…</p>}
-            {users.isError && <p className="text-sm text-danger-fg">ユーザーを取得できません: {errorMessage(users.error)}</p>}
-            {users.isSuccess && others.length === 0 && <p className="text-sm text-fg-muted">テナントにほかのユーザーはいません。</p>}
-            {others.length > 0 && (
-              <ul className="grid max-h-60 gap-1 overflow-y-auto">
-                {others.map((u) => (
-                  <li key={u.user_id}>
-                    <Checkbox label={u.display_name} checked={memberIds.has(u.user_id)} onChange={() => toggle(u.user_id)} />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </fieldset>
+          {users.isPending && <p className="text-sm text-fg-muted">ユーザーを読み込み中…</p>}
+          {users.isError && <p className="text-sm text-danger-fg">ユーザーを取得できません: {errorMessage(users.error)}</p>}
+          {users.isSuccess && (
+            <CheckboxList
+              legend="一緒に入れる人"
+              hint="あとからでも招待できます。"
+              options={others}
+              value={memberIds}
+              onChange={setMemberIds}
+              selectedLabel={(n) => `${n}人を選んでいます`}
+              emptyMessage="テナントにほかのユーザーはいません。"
+              noMatchMessage={(q) => `「${q}」に当てはまる人はいません。`}
+            />
+          )}
         </Card>
         {create.isError && <Alert tone="danger">作れませんでした: {errorMessage(create.error)}</Alert>}
         <div>

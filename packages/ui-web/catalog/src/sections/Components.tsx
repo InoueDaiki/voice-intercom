@@ -1,4 +1,4 @@
-import { Globe, Languages, Lock, Mic, Plus, RefreshCw, Settings, Trash2, Users } from "lucide-react";
+import { Globe, Headphones, Languages, Lock, Mic, Plus, RefreshCw, Settings, Trash2, Users } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import {
@@ -13,12 +13,14 @@ import {
   buttonClass,
   Card,
   Checkbox,
+  CheckboxList,
   ChoiceGroup,
   ConfirmDialog,
   cx,
   Field,
   FullScreenMessage,
   Input,
+  KeyButton,
   LoadErrorAlert,
   PageHeader,
   PttButton,
@@ -852,6 +854,108 @@ export function CheckboxSection() {
           { name: "onChange", type: "(checked: boolean) => void", description: "押したとき(必須)" },
           { name: "description", type: "ReactNode", description: "ラベルの下に添える説明" },
           { name: "disabled", type: "boolean", description: "選べないとき" },
+        ]}
+      />
+    </Section>
+  );
+}
+
+export function KeyButtonSection() {
+  return (
+    <Section
+      id="key-button"
+      title="KeyButton"
+      description="PttButton の場所に置く、押して1回だけ働く大きなキー(「音声をつなぐ」など)。点灯した琥珀のキーで、その画面の主な操作になる。PttButton と形が同じなので、押した後に入れ替わっても周りが動かない。"
+    >
+      <Example
+        previewClassName="grid gap-3 justify-items-center"
+        code={`<KeyButton icon={<Headphones />} detail="マイクとスピーカーを使います">
+  音声をつなぐ
+</KeyButton>`}
+      >
+        <KeyButton className="w-full max-w-80" icon={<Headphones aria-hidden="true" />} detail="マイクとスピーカーを使います">
+          音声をつなぐ
+        </KeyButton>
+        <KeyButton className="w-full max-w-80" icon={<Headphones aria-hidden="true" />} detail="マイクとスピーカーを使います" disabled>
+          つないでいます…
+        </KeyButton>
+        {/* 押した後に入れ替わる PttButton。形が同じことを並べて見せる */}
+        <PttButton className="w-full max-w-80" state="idle" tabIndex={-1}>
+          押して話す
+        </PttButton>
+      </Example>
+      <PropsTable
+        rows={[
+          { name: "icon", type: "ReactNode", description: "文言の前に置くアイコン(大きさは部品が size-5 にそろえる)" },
+          { name: "detail", type: "ReactNode", description: "文言の下に添える、押すと何が起きるかの短い説明" },
+          { name: "…", type: 'ComponentProps<"button">', description: "onClick、disabled など" },
+        ]}
+      />
+    </Section>
+  );
+}
+
+const catalogPeople = [
+  ["u1", "山田 太郎", "日本語"],
+  ["u2", "Maria Silva", "ポルトガル語"],
+  ["u3", "Nguyen Van An", "ベトナム語"],
+  ["u4", "Carlos García", "スペイン語"],
+  ["u5", "王 伟", "中国語"],
+  ["u6", "John Smith", "英語"],
+  ["u7", "Kim Minji", "韓国語"],
+  ["u8", "佐藤 花子", "日本語"],
+  ["u9", "Siti Rahma", "インドネシア語"],
+  ["u10", "Luca Rossi", "イタリア語"],
+] as const;
+
+function CheckboxListDemo() {
+  const [value, setValue] = useState<string[]>(["u2"]);
+  return (
+    <CheckboxList
+      legend="一緒に入れる人"
+      hint="あとからでも招待できます。"
+      options={catalogPeople.map(([v, label, language]) => ({ value: v, label, description: language }))}
+      value={value}
+      onChange={setValue}
+      selectedLabel={(n) => `${n}人を選んでいます`}
+      noMatchMessage={(q) => `「${q}」に当てはまる人はいません。`}
+    />
+  );
+}
+
+export function CheckboxListSection() {
+  return (
+    <Section
+      id="checkbox-list"
+      title="CheckboxList"
+      description="複数を選ぶ一覧(一緒に入れる人、招待する人など)。多いとき(既定は8件より多いとき)は名前で絞り込め、一覧は枠の中でスクロールする。選んだ数と「選択を外す」を一覧の上に出すので、絞り込んで隠れた分も分かる。"
+    >
+      <Example
+        code={`<CheckboxList
+  legend="一緒に入れる人"
+  hint="あとからでも招待できます。"
+  options={users.map((u) => ({ value: u.user_id, label: u.display_name, description: LANGUAGE_LABELS[u.language] }))}
+  value={memberIds}
+  onChange={setMemberIds}
+  selectedLabel={(n) => \`\${n}人を選んでいます\`}
+/>`}
+      >
+        <div className="max-w-md">
+          <CheckboxListDemo />
+        </div>
+      </Example>
+      <PropsTable
+        rows={[
+          { name: "legend", type: "ReactNode", description: "選ぶものの名前(必須)" },
+          { name: "hint", type: "ReactNode", description: "一覧の上に添える説明" },
+          { name: "options", type: "{ value, label: string, description? }[]", description: "選べるもの。label で絞り込む(必須)" },
+          { name: "value", type: "string[]", description: "選んでいる値。options の順で返す(必須)" },
+          { name: "onChange", type: "(value: string[]) => void", description: "選び直したとき(必須)" },
+          { name: "searchThreshold", type: "number", defaultValue: "8", description: "これより多ければ、絞り込む欄を出す" },
+          { name: "selectedLabel", type: "(count: number) => ReactNode", description: "選んだ数の表示(「2人を選んでいます」など)" },
+          { name: "emptyMessage", type: "ReactNode", description: "選べるものが無いときの文" },
+          { name: "noMatchMessage", type: "(query: string) => ReactNode", description: "絞り込んで当てはまらないときの文" },
+          { name: "disabled", type: "boolean", description: "送信中など" },
         ]}
       />
     </Section>

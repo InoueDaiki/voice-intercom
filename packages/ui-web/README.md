@@ -38,6 +38,7 @@
 | `Field` + `Input`・`Textarea`・`Select` | ラベル・説明(`hint`)・誤り(`error`)と入力欄の組。`id` と `aria-*` は `Field` が付ける |
 | `ChoiceGroup` | 少ない選択肢から1つを選ぶ(ルームの種別など)。選択肢ごとに説明(`description`)とアイコンを見せたいときに `Select` の代わりに使う。中身はラジオボタン |
 | `Checkbox` | ラベル付きのチェックボックス。複数を選ぶ一覧(一緒に入れる人など)に並べる。`onChange` は `checked` を受け取る |
+| `CheckboxList` | 複数を選ぶ一覧(一緒に入れる人、招待する人など)。多いときは名前で絞り込め、枠の中でスクロールする。選んだ数と「選択を外す」を一覧の上に出す。`label` は絞り込みに使うので文字列にし、見分けに要る情報(話す言語など)は `description` に添える |
 | `Badge` | 短い状態の札。`tone` は `neutral`・`primary`・`success`・`warning`・`danger`・`live`(送話)・`rx`(受信) |
 | `Alert` | 画面の中の知らせ。`tone` は `info`・`success`・`warning`・`danger`(`danger` は `role="alert"`)。`action` に再読み込みなどのボタン |
 | `LoadErrorAlert` | 取得に失敗したことの知らせと「再読み込み」。無いもの・権限の無いものなど、読み込み直しても変わらないときは `retryable={false}` でボタンを出さない |
@@ -49,6 +50,7 @@
 | `FullScreenMessage` | 画面全体の真ん中の知らせ(読み込み中、ログインの失敗) |
 | `ConfirmDialog` | 確定か取りやめかを選ばせるダイアログ(`window.confirm` は使わない)。`tone="danger"` は削除など取り返しのつかない操作(題に赤の表示灯、確定は `danger` のボタン)。`open` は呼び出し側が持ち、`onConfirm`・`onCancel` で閉じる。確定の文言は動詞で書く(「削除する」)。開くと取りやめにフォーカスを置き、Tab は中だけを回り、Esc で取りやめ、閉じると元のボタンにフォーカスを戻す |
 | `PttButton` | PTT のキー。画面でいちばん大きく置く。`state` は `idle`(消灯)・`pressing`(琥珀。マイクの準備中)・`talking`(赤。送話中)。`shortcut` にキーボードの操作(`Space`)を添える |
+| `KeyButton` | `PttButton` の場所に置く、押して1回だけ働く大きなキー(「音声をつなぐ」)。点灯した琥珀のキーで、その画面の主な操作。`icon` と、押すと何が起きるかの `detail` を添える。`PttButton` と形が同じなので、入れ替わっても周りが動かない |
 | `SignalLamp` | 通話の表示灯。`state` は `off`(待機中)・`tx`(送話中、赤)・`rx`(受信中、緑)。文字の横に小さく灯す。灯りは読み上げないので、状態は文字でも書く |
 
 ## 見本帳(カタログ)

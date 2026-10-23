@@ -1,4 +1,4 @@
-import type { MemberRole, Room, RoomMember } from "@voice-intercom/client-core";
+import { LANGUAGE_LABELS, type MemberRole, type Room, type RoomMember } from "@voice-intercom/client-core";
 import {
   Alert,
   BackIcon,
@@ -6,13 +6,13 @@ import {
   Badge,
   Button,
   Card,
+  CheckboxList,
   ChoiceGroup,
   ConfirmDialog,
   Field,
   Input,
   LoadErrorAlert,
   PageHeader,
-  Select,
 } from "@voice-intercom/ui-web";
 import { useState, type FormEvent } from "react";
 import { useAuth } from "react-oidc-context";
@@ -140,14 +140,23 @@ function Members({
 }) {
   const members = useRoomMembers(room.room_id);
   const users = useUsers();
-  const [invitee, setInvitee] = useState("");
+  const [invitees, setInvitees] = useState<string[]>([]);
+  // 選んだ人を順に足す(承諾は待たない)
+  const invite = useRoomMutation(room.room_id, async (userIds: string[]) => {
+    for (const userId of userIds) {
+      await api.putRoomMember(room.room_id, userId, "member");
+    }
+  });
   const put = useRoomMutation(room.room_id, ({ userId, role }: { userId: string; role: MemberRole }) =>
     api.putRoomMember(room.room_id, userId, role),
   );
   const remove = useRoomMutation(room.room_id, (userId: string) => api.deleteRoomMember(room.room_id, userId));
-  const error = put.error ?? remove.error;
+  const error = put.error ?? remove.error ?? invite.error;
   const memberIds = new Set(room.member_ids);
-  const candidates = users.data?.filter((u) => !memberIds.has(u.user_id)) ?? [];
+  const candidates = (users.data ?? [])
+    .filter((u) => !memberIds.has(u.user_id))
+    .sort((a, b) => a.display_name.localeCompare(b.display_name, "ja"))
+    .map((u) => ({ value: u.user_id, label: u.display_name, description: LANGUAGE_LABELS[u.language] }));
   // 変えられるのは、自分のテナントの人だけ(Connect では相手のテナントの人を変えない)
   const isOwnSide = (m: RoomMember) => (m.tenant_id || room.tenant_id) === myTenant;
   const lastOwner = room.owner_ids.length === 1;
@@ -205,28 +214,34 @@ function Members({
       {error && <Alert tone="danger">変えられませんでした: {errorMessage(error)}</Alert>}
       {canManage && (
         <form
-          className="grid grid-cols-[1fr_auto] items-end gap-2"
+          className="grid gap-3 border-t border-border pt-4"
           onSubmit={(e) => {
             e.preventDefault();
-            if (invitee) {
-              put.mutate({ userId: invitee, role: "member" }, { onSuccess: () => setInvitee("") });
+            if (invitees.length > 0) {
+              invite.mutate(invitees, { onSettled: () => setInvitees([]) });
             }
           }}
         >
-          <Field label="招待する" hint="自分のテナントの人を、すぐにメンバーにします。">
-            <Select value={invitee} onChange={(e) => setInvitee(e.target.value)} disabled={candidates.length === 0}>
-              <option value="">{candidates.length === 0 ? "招待できる人はいません" : "選んでください"}</option>
-              {candidates.map((u) => (
-                <option key={u.user_id} value={u.user_id}>
-                  {u.display_name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          {/* 説明の行の分だけ上にそろえる */}
-          <Button type="submit" className="mb-5" disabled={!invitee || put.isPending}>
-            招待する
-          </Button>
+          {users.isSuccess && (
+            <CheckboxList
+              legend="招待する"
+              hint="自分のテナントの人を、すぐにメンバーにします。"
+              options={candidates}
+              value={invitees}
+              onChange={setInvitees}
+              disabled={invite.isPending}
+              selectedLabel={(n) => `${n}人を選んでいます`}
+              emptyMessage="招待できる人はいません。"
+              noMatchMessage={(q) => `「${q}」に当てはまる人はいません。`}
+            />
+          )}
+          {invitees.length > 0 && (
+            <div>
+              <Button type="submit" disabled={invite.isPending}>
+                {invite.isPending ? "招待しています…" : `${invitees.length}人を招待する`}
+              </Button>
+            </div>
+          )}
         </form>
       )}
     </Card>

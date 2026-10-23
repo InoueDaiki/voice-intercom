@@ -17,7 +17,7 @@ export function Checkbox({ label, checked, onChange, description, disabled, clas
   return (
     <label
       className={cx(
-        "flex w-fit cursor-pointer items-start gap-2 text-sm has-disabled:cursor-not-allowed has-disabled:opacity-50",
+        "flex cursor-pointer items-start gap-2 text-sm has-disabled:cursor-not-allowed has-disabled:opacity-50",
         className,
       )}
     >

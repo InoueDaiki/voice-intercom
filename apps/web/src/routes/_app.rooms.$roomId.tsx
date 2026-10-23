@@ -26,6 +26,7 @@ import {
   buttonClass,
   ConfirmDialog,
   cx,
+  KeyButton,
   SignalLamp,
   type SignalState,
   Textarea,
@@ -879,10 +880,10 @@ function AudioControls({ session, onAudio }: { session: RoomSession; onAudio: (e
   const hub = useRoomHub();
   if (!session.audio) {
     return (
-      <Button
-        variant="primary"
-        size="lg"
-        className="min-h-16 w-full rounded-xl text-lg"
+      <KeyButton
+        className="w-full"
+        icon={<Headphones aria-hidden="true" />}
+        detail="マイクとスピーカーを使います"
         disabled={!session.connected || session.switchingAudio}
         onClick={() => {
           // 自動再生の制限を、利用者の操作の中で外しておく
@@ -890,9 +891,8 @@ function AudioControls({ session, onAudio }: { session: RoomSession; onAudio: (e
           onAudio(true);
         }}
       >
-        <Headphones aria-hidden="true" className="size-5" />
-        音声をつなぐ
-      </Button>
+        {session.switchingAudio ? "つないでいます…" : "音声をつなぐ"}
+      </KeyButton>
     );
   }
   return (

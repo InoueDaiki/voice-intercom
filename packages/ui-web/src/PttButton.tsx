@@ -1,6 +1,7 @@
 import type { ComponentProps, ReactNode } from "react";
 
 import { cx } from "./cx.ts";
+import { keyShapeClass } from "./keyShape.ts";
 
 // idle: 押していない。pressing: 押したが、まだ声を送れていない(マイクの準備中)。talking: 送話中
 export type PttState = "idle" | "pressing" | "talking";
@@ -34,8 +35,9 @@ export function PttButton({ state, shortcut, className, children, ...props }: Pt
     <button
       type="button"
       className={cx(
-        // 状態で文言が変わっても幅が変わらないよう、最小の幅を取る
-        "relative flex min-h-16 min-w-56 touch-none items-center justify-center gap-3 rounded-xl px-6 text-lg font-bold transition-[background-color,translate] duration-75 select-none disabled:cursor-not-allowed disabled:opacity-50",
+        // 状態で文言が変わっても幅が変わらないよう、最小の幅を取る(keyShape.ts)
+        keyShapeClass,
+        "touch-none transition-[background-color,translate] duration-75",
         stateClasses[state].button,
         className,
       )}
