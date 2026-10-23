@@ -58,7 +58,7 @@ export function ButtonSection() {
       <Example
         title="アイコン付き・アイコンだけ(Lucide)"
         code={`<Button variant="primary"><Plus className="size-4" aria-hidden />ルームを作る</Button>
-<Button variant="ghost" aria-label="設定"><Settings className="size-4" aria-hidden /></Button>`}
+<Button variant="ghost" icon aria-label="設定"><Settings className="size-4" aria-hidden /></Button>`}
       >
         <Button variant="primary">
           <Plus className={iconClass} aria-hidden />
@@ -72,8 +72,11 @@ export function ButtonSection() {
           <Trash2 className={iconClass} aria-hidden />
           削除する
         </Button>
-        <Button variant="ghost" aria-label="設定">
+        <Button variant="ghost" icon aria-label="設定">
           <Settings className={iconClass} aria-hidden />
+        </Button>
+        <Button icon aria-label="再読み込み">
+          <RefreshCw className={iconClass} aria-hidden />
         </Button>
       </Example>
       <Example title="disabled" code={`<Button variant="primary" disabled>参加する</Button>`}>
@@ -106,6 +109,7 @@ export function ButtonSection() {
         rows={[
           { name: "variant", type: '"primary" | "secondary" | "ghost" | "danger" | "link"', defaultValue: '"secondary"', description: "見た目と役割" },
           { name: "size", type: '"sm" | "md" | "lg"', defaultValue: '"md"', description: "高さと文字の大きさ。link では効かない" },
+          { name: "icon", type: "boolean", defaultValue: "false", description: "アイコンだけの正方形のボタン。名前は aria-label で付ける" },
           { name: "type", type: "button の type", defaultValue: '"button"', description: "フォームの送信は type=\"submit\" を渡す" },
           { name: "…", type: 'ComponentProps<"button">', description: "そのほかは <button> に渡る" },
         ]}

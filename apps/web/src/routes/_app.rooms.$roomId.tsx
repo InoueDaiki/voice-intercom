@@ -228,7 +228,7 @@ function RoomStatus({ session }: { session: RoomSession }) {
         <span>翻訳あり</span>
       ) : (
         // dev では使っていない間 Agent を止めているので、起動を待つことがある(設計メモの「Agent の scale to zero」)
-        <span title="翻訳の Agent の起動に1〜2分かかることがあります">翻訳の準備中(1〜2分かかることがあります)</span>
+        <span title="翻訳の Agent の起動に1〜2分かかることがあります">翻訳の準備中</span>
       )}
     </span>
   );
@@ -287,13 +287,16 @@ function Timeline({ session, myLanguage }: { session: RoomSession; myLanguage: L
       }}
     >
       <ol className={cx(columnClass, "flex min-h-full flex-col py-4")}>
-        <li className="py-2 text-center text-xs text-fg-muted">
-          {!timeline.loaded || timeline.loadingOlder
-            ? "読み込み中…"
-            : timeline.hasOlder
-              ? "上へ戻ると、古いものを読み込みます"
-              : "これより前はありません"}
-        </li>
+        {/* 何も無いときは、下の案内だけを出す */}
+        {(!timeline.loaded || timeline.loadingOlder || entries.length > 0) && (
+          <li className="py-2 text-center text-xs text-fg-muted">
+            {!timeline.loaded || timeline.loadingOlder
+              ? "読み込み中…"
+              : timeline.hasOlder
+                ? "上へ戻ると、古いものを読み込みます"
+                : "これより前はありません"}
+          </li>
+        )}
         {timeline.error && (
           <li className="flex flex-wrap items-center justify-center gap-2 py-2 text-center text-sm text-danger-fg">
             {timeline.error}
@@ -303,10 +306,12 @@ function Timeline({ session, myLanguage }: { session: RoomSession; myLanguage: L
           </li>
         )}
         {timeline.loaded && entries.length === 0 && (
+          // 文の区切りで折り返す(幅の狭い画面で、語の途中で切れないように)
           <li className="my-auto py-12 text-center text-fg-muted">
             まだ誰も話していません。
             <br />
-            下のキーを押している間、声がルームの全員に届きます。
+            <span className="inline-block">「押して話す」を押している間、</span>
+            <span className="inline-block">声がルームの全員に届きます。</span>
           </li>
         )}
         {entries.map((entry, i) => {
@@ -791,7 +796,7 @@ function Controls({ session, onFiles }: { session: RoomSession; onFiles: (files:
     <>
       <form className="grid grid-cols-[auto_1fr_auto] items-end gap-2" onSubmit={onSubmit}>
         <Button
-          className="px-3"
+          icon
           title="画像・動画・ファイルを送る(10GB まで)"
           aria-label="画像・動画・ファイルを送る"
           disabled={disabled}
@@ -810,7 +815,7 @@ function Controls({ session, onFiles }: { session: RoomSession; onFiles: (files:
           }}
         />
         <Textarea
-          className="max-h-40 min-h-10 resize-none field-sizing-content"
+          className="max-h-40 resize-none field-sizing-content"
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onTextKeyDown}
@@ -820,9 +825,10 @@ function Controls({ session, onFiles }: { session: RoomSession; onFiles: (files:
           rows={1}
           disabled={disabled}
         />
-        <Button type="submit" disabled={disabled || text.trim() === ""}>
+        {/* 幅の狭い画面ではアイコンだけにして、入力欄の幅を取る */}
+        <Button type="submit" className="max-sm:w-10 max-sm:px-0" disabled={disabled || text.trim() === ""}>
           <SendHorizontal aria-hidden="true" className="size-4" />
-          送信
+          <span className="max-sm:sr-only">送信</span>
         </Button>
       </form>
       <PttButton

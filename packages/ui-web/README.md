@@ -33,7 +33,7 @@
 
 | 部品 | 使う場面 |
 | --- | --- |
-| `Button`、`buttonClass()` | 操作。`variant` は `primary`(画面の主な操作。1画面に1つ)、`secondary`(既定)、`ghost`(ヘッダーなど)、`danger`(削除)、`link`(文字だけ)。`<Link>` をボタンの見た目にするときは `buttonClass()` |
+| `Button`、`buttonClass()` | 操作。`variant` は `primary`(画面の主な操作。1画面に1つ)、`secondary`(既定)、`ghost`(ヘッダーなど)、`danger`(削除)、`link`(文字だけ)。`icon` はアイコンだけの正方形のボタン(名前は `aria-label`)。`<Link>` をボタンの見た目にするときは `buttonClass()` |
 | `Field` + `Input`・`Textarea`・`Select` | ラベル・説明(`hint`)・誤り(`error`)と入力欄の組。`id` と `aria-*` は `Field` が付ける |
 | `Badge` | 短い状態の札。`tone` は `neutral`・`primary`・`success`・`warning`・`danger`・`live`(送話)・`rx`(受信) |
 | `Alert` | 画面の中の知らせ。`tone` は `info`・`success`・`warning`・`danger`(`danger` は `role="alert"`)。`action` に再読み込みなどのボタン |
