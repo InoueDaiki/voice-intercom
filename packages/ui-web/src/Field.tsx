@@ -70,8 +70,15 @@ export function Input({ className, ...props }: ComponentProps<"input">) {
   return <input className={cx(controlClass, "h-10", className)} {...useFieldProps(props)} />;
 }
 
+// 上下の余白は、1行(rows={1})のときに Input と同じ高さ(h-10)になるよう、行の高さから決める。
+// 幅の狭い画面と広い画面で文字の大きさが違っても、どちらでもそろう
 export function Textarea({ className, ...props }: ComponentProps<"textarea">) {
-  return <textarea className={cx(controlClass, "py-2 leading-relaxed", className)} {...useFieldProps(props)} />;
+  return (
+    <textarea
+      className={cx(controlClass, "py-[calc((--spacing(10)-2px-1lh)/2)] leading-relaxed", className)}
+      {...useFieldProps(props)}
+    />
+  );
 }
 
 // 矢印はブラウザのものを消して自前で描く(ブラウザの矢印は枠の右端に寄りすぎ、位置も変えられない)

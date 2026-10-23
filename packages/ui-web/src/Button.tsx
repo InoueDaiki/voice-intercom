@@ -28,21 +28,36 @@ const sizeClasses: Record<ButtonSize, string> = {
   lg: "h-12 px-5 text-base",
 };
 
+// アイコンだけのボタンは、高さと同じ幅の正方形にする
+const iconSizeClasses: Record<ButtonSize, string> = {
+  sm: "size-8 text-sm",
+  md: "size-10 text-sm",
+  lg: "size-12 text-base",
+};
+
 // リンク(<Link>)をボタンの見た目にするときにも使う
 export function buttonClass({
   variant = "secondary",
   size = "md",
+  icon = false,
   className,
-}: { variant?: ButtonVariant; size?: ButtonSize; className?: string } = {}): string {
+}: { variant?: ButtonVariant; size?: ButtonSize; icon?: boolean; className?: string } = {}): string {
   // link は文字の大きさを周りに合わせ、高さと余白を持たない
-  return cx(baseClass, variantClasses[variant], variant !== "link" && sizeClasses[size], className);
+  return cx(
+    baseClass,
+    variantClasses[variant],
+    variant !== "link" && (icon ? iconSizeClasses[size] : sizeClasses[size]),
+    className,
+  );
 }
 
 export interface ButtonProps extends ComponentProps<"button"> {
   variant?: ButtonVariant;
   size?: ButtonSize;
+  // アイコンだけのボタン(正方形)。名前は aria-label で付ける
+  icon?: boolean;
 }
 
-export function Button({ variant, size, className, type = "button", ...props }: ButtonProps) {
-  return <button type={type} className={buttonClass({ variant, size, className })} {...props} />;
+export function Button({ variant, size, icon, className, type = "button", ...props }: ButtonProps) {
+  return <button type={type} className={buttonClass({ variant, size, icon, className })} {...props} />;
 }

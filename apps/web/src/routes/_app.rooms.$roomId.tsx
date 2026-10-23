@@ -260,7 +260,7 @@ function RoomStatus({ session, rejoining }: { session: RoomSession; rejoining: b
         <span>翻訳あり</span>
       ) : (
         // dev では使っていない間 Agent を止めているので、起動を待つことがある(設計メモの「Agent の scale to zero」)
-        <span title="翻訳の Agent の起動に1〜2分かかることがあります">翻訳の準備中(1〜2分かかることがあります)</span>
+        <span title="翻訳の Agent の起動に1〜2分かかることがあります">翻訳の準備中</span>
       )}
     </span>
   );
@@ -272,6 +272,7 @@ function Timeline({ session, myLanguage }: { session: RoomSession; myLanguage: L
   const entries = session.entries;
   const timeline = session.timeline;
   const listRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLOListElement>(null);
   const stickToBottom = useRef(true);
   // 読み足す前の高さ。読み足した後に、見ていた位置がずれないよう同じだけ下げる
   const heightBeforeOlder = useRef<number | undefined>(undefined);
@@ -298,6 +299,22 @@ function Timeline({ session, myLanguage }: { session: RoomSession; myLanguage: L
     void session.loadOlder();
   };
 
+  // 画像の読み込みなどで、描き直さずに高さが変わったときも、下端を見ていれば追いかける
+  useEffect(() => {
+    const el = listRef.current;
+    const content = contentRef.current;
+    if (!el || !content) {
+      return;
+    }
+    const observer = new ResizeObserver(() => {
+      if (stickToBottom.current && heightBeforeOlder.current === undefined) {
+        el.scrollTop = el.scrollHeight;
+      }
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
+
   // 読み込んだ分が少なく、スクロールできないまま上端にいるなら、続けて読み足す
   useEffect(() => {
     const el = listRef.current;
@@ -318,14 +335,17 @@ function Timeline({ session, myLanguage }: { session: RoomSession; myLanguage: L
         }
       }}
     >
-      <ol className={cx(columnClass, "flex min-h-full flex-col py-4")}>
-        <li className="py-2 text-center text-xs text-fg-muted">
-          {!timeline.loaded || timeline.loadingOlder
-            ? "読み込み中…"
-            : timeline.hasOlder
-              ? "上へ戻ると、古いものを読み込みます"
-              : "これより前はありません"}
-        </li>
+      <ol ref={contentRef} className={cx(columnClass, "flex min-h-full flex-col py-4")}>
+        {/* 何も無いときは、下の案内だけを出す */}
+        {(!timeline.loaded || timeline.loadingOlder || entries.length > 0) && (
+          <li className="py-2 text-center text-xs text-fg-muted">
+            {!timeline.loaded || timeline.loadingOlder
+              ? "読み込み中…"
+              : timeline.hasOlder
+                ? "上へ戻ると、古いものを読み込みます"
+                : "これより前はありません"}
+          </li>
+        )}
         {timeline.error && (
           <li className="flex flex-wrap items-center justify-center gap-2 py-2 text-center text-sm text-danger-fg">
             {timeline.error}
@@ -335,10 +355,12 @@ function Timeline({ session, myLanguage }: { session: RoomSession; myLanguage: L
           </li>
         )}
         {timeline.loaded && entries.length === 0 && (
+          // 文の区切りで折り返す(幅の狭い画面で、語の途中で切れないように)
           <li className="my-auto py-12 text-center text-fg-muted">
             まだ誰も話していません。
             <br />
-            下のキーを押している間、声がルームの全員に届きます。
+            <span className="inline-block">「押して話す」を押している間、</span>
+            <span className="inline-block">声がルームの全員に届きます。</span>
           </li>
         )}
         {entries.map((entry, i) => {
@@ -752,7 +774,8 @@ function OnAir({ session, myIdentity, myLanguage }: { session: RoomSession; myId
   if (session.talking) {
     lampClass = "bg-live motion-safe:animate-pulse";
     label = "送話中";
-    detail = "あなたの声がルームの全員に届いています";
+    // 幅の狭い画面でも1行に収まる長さにする
+    detail = "ルームの全員に届いています";
     rowClass = "bg-surface-muted";
   } else if (receiving) {
     const translation =
@@ -839,7 +862,7 @@ function Controls({ session, onFiles }: { session: RoomSession; onFiles: (files:
     <>
       <form className="grid grid-cols-[auto_1fr_auto] items-end gap-2" onSubmit={onSubmit}>
         <Button
-          className="px-3"
+          icon
           title="画像・動画・ファイルを送る(10GB まで)"
           aria-label="画像・動画・ファイルを送る"
           disabled={disabled}
@@ -858,7 +881,7 @@ function Controls({ session, onFiles }: { session: RoomSession; onFiles: (files:
           }}
         />
         <Textarea
-          className="max-h-40 min-h-10 resize-none field-sizing-content"
+          className="max-h-40 resize-none field-sizing-content"
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onTextKeyDown}
@@ -868,9 +891,10 @@ function Controls({ session, onFiles }: { session: RoomSession; onFiles: (files:
           rows={1}
           disabled={disabled}
         />
-        <Button type="submit" disabled={disabled || text.trim() === ""}>
+        {/* 幅の狭い画面ではアイコンだけにして、入力欄の幅を取る */}
+        <Button type="submit" className="max-sm:w-10 max-sm:px-0" disabled={disabled || text.trim() === ""}>
           <SendHorizontal aria-hidden="true" className="size-4" />
-          送信
+          <span className="max-sm:sr-only">送信</span>
         </Button>
       </form>
       <PttButton

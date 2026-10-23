@@ -69,24 +69,26 @@ function SignedIn() {
   }
 
   return (
-    <div className="grid h-dvh grid-rows-[auto_1fr]">
+    // 列は画面の幅を超えない(grid-cols-1)。中身の長い文字列で画面ごと横に広がらないように
+    <div className="grid h-dvh grid-cols-1 grid-rows-[auto_1fr]">
       <header className="flex h-12 items-center justify-between gap-4 bg-key px-4 text-on-key">
-        <Link to="/" className="font-bold text-on-key no-underline">
+        <Link to="/" className="shrink-0 font-bold text-on-key no-underline">
           voice-intercom
         </Link>
-        <span className="flex items-center gap-1 text-sm">
+        {/* 長い表示名やメールアドレスは省いて、ログアウトを押し出さない */}
+        <span className="flex min-w-0 items-center gap-1 text-sm">
           {me.data && (
             <Link
               to="/profile"
               title="プロフィール(表示名と言語)"
-              className="rounded-md px-2 py-1 text-on-key no-underline hover:bg-key-hover"
+              className="min-w-0 truncate rounded-md px-2 py-1 text-on-key no-underline hover:bg-key-hover"
             >
               {me.data.display_name}
               <span className="ml-1.5 hidden text-on-key/70 sm:inline">{LANGUAGE_LABELS[me.data.language]}</span>
             </Link>
           )}
-          {!me.data && <span className="px-2 text-on-key/70">{user?.profile.email ?? user?.profile.sub}</span>}
-          <Button variant="ghost" size="sm" className="text-on-key not-disabled:hover:bg-key-hover" onClick={() => void signOut()}>
+          {!me.data && <span className="min-w-0 truncate px-2 text-on-key/70">{user?.profile.email ?? user?.profile.sub}</span>}
+          <Button variant="ghost" size="sm" className="shrink-0 text-on-key not-disabled:hover:bg-key-hover" onClick={() => void signOut()}>
             ログアウト
           </Button>
         </span>
@@ -97,5 +99,5 @@ function SignedIn() {
   );
 }
 
-// ルームの画面以外の、本文の余白
-const pageClass = "mx-auto max-w-2xl px-4 py-8 sm:px-6";
+// ルームの画面以外の、本文の余白。幅はルームの画面とそろえ、行き来しても題の位置が動かないようにする
+const pageClass = "mx-auto max-w-3xl px-4 py-8 sm:px-6";
