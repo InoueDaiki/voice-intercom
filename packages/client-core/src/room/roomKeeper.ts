@@ -43,8 +43,8 @@ export interface RoomKeeperOptions {
 // 入室を保つ。画面の見え方に合わせて、PTT を離し、戻ったら入り直し、画面を消させない。
 // - 隠れたら・フォーカスを失ったら、必ず PTT を離す(押したまま声を送り続けない。戻っても押した状態は戻さない)
 // - 戻ったら、切断されていれば入り直す。音が止められていないかも確かめ直す
-// - 入室中で見えている間は、画面を消させない
-// - しばらく隠れていたら、戻ったときに、その間の声は字幕と履歴で追えると知らせる
+// - 音声をつないでいて見えている間は、画面を消させない
+// - 音声をつないだまましばらく隠れていたら、戻ったときに、その間の声は字幕と履歴で追えると知らせる
 export class RoomKeeper extends Observable {
   readonly session: RoomSession;
   // 入室・入り直しで、トークンを取れなかった・入れなかったときの誤り
@@ -160,9 +160,13 @@ export class RoomKeeper extends Observable {
     const away = this.hiddenAt === undefined ? 0 : this.now() - this.hiddenAt;
     this.visible = true;
     this.hiddenAt = undefined;
-    // 入室中にしばらく隠れていた、または隠れている間に切断されていた(短くても聞けていない)ら知らせる。
-    // 入室の前に隠れていただけなら知らせない
-    if (wasHidden && ((away >= this.awayNoticeMs && this.session.connected) || this.session.canRejoin)) {
+    // 音声をつないだまましばらく隠れていた、または隠れている間に切断されていた(短くても聞けていない)ら
+    // 知らせる。入室の前に隠れていただけ、音声をつないでいなかった(声を聞いていない)なら知らせない
+    if (
+      wasHidden &&
+      this.session.audio &&
+      ((away >= this.awayNoticeMs && this.session.connected) || this.session.canRejoin)
+    ) {
       this.awayNotice = true;
       this.changed();
     }
@@ -172,12 +176,12 @@ export class RoomKeeper extends Observable {
     void this.rejoin();
   }
 
-  // 入室中で見えている間だけ、画面を消させない
+  // 音声をつないでいて見えている間だけ、画面を消させない
   private syncAwake(): void {
     if (!this.awake || this.disposed) {
       return;
     }
-    if (this.visible && this.session.connected) {
+    if (this.visible && this.session.connected && this.session.audio) {
       this.awake.acquire();
     } else {
       this.awake.release();

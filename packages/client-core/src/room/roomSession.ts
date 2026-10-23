@@ -68,9 +68,17 @@ export interface RoomSessionOptions {
   deleteTimelineEvent?: (eventId: string) => Promise<TimelineEvent>;
   // 自分のテキストの行を履歴で探すとき、見つからなければ読み直すまでの間隔(ミリ秒)
   findTextRetryDelaysMs?: number[];
+  // 音声をつなぐ(マイクを publish し、音声を購読する)か。false ならデータだけでつなぐ(既定は true)。
+  // 設計メモの「ユーザーの3つの状態の表し方」
+  audio?: boolean;
+  // つないだまま音声を切り替えたときに、参加者の属性 audio を変える(API の PUT /rooms/{room_id}/audio)。
+  // Agent は、audio が on の人の言語にだけ翻訳の音声と読み上げを作る
+  setAudioAttribute?: (enabled: boolean) => Promise<void>;
+  // マイクのトラックを作る・放す。複数のルームで1本のマイクを分けて使うときに差し替える(SharedMicrophone)
+  createMicTrack?: () => Promise<LocalAudioTrack>;
+  releaseMicTrack?: (track: LocalAudioTrack) => void;
   // テストで差し替える
   room?: Room;
-  createMicTrack?: () => Promise<LocalAudioTrack>;
 }
 
 // データチャネルで受け取ったものの送信元。kind と identity だけを見る
@@ -109,6 +117,10 @@ export class RoomSession extends Observable {
   talking = false;
   // ブラウザの自動再生の制限で、音を鳴らせていないなら false(startAudio を利用者の操作から呼ぶ)
   canPlaybackAudio = true;
+  // 音声をつないでいるか(利用者の選択)。false ならデータだけでつなぐ(タイムラインを見て、送れる)
+  audio: boolean;
+  // 音声の切り替えの途中か
+  switchingAudio = false;
 
   private readonly platform: RoomPlatform;
   private readonly fetchRecent: (() => Promise<TimelineEvent[]>) | undefined;
@@ -116,6 +128,10 @@ export class RoomSession extends Observable {
   private readonly deleteEvent: ((eventId: string) => Promise<TimelineEvent>) | undefined;
   private readonly findTextRetryDelaysMs: number[];
   private readonly createMicTrack: () => Promise<LocalAudioTrack>;
+  private readonly releaseMicTrack: (track: LocalAudioTrack) => void;
+  private readonly setAudioAttribute: ((enabled: boolean) => Promise<void>) | undefined;
+  // 参加者の属性 audio に入っている値(トークンで入れた値か、最後に API で変えた値)
+  private attributeAudio: boolean | undefined;
   // 反映した墓石の event_id
   private readonly appliedDeletions = new Set<string>();
   private mic: LocalAudioTrack | undefined;
@@ -145,6 +161,9 @@ export class RoomSession extends Observable {
     // 音声だけなので、映像の最適化は要らない
     this.room = options.room ?? new Room({ adaptiveStream: false, dynacast: false });
     this.createMicTrack = options.createMicTrack ?? (() => createLocalAudioTrack());
+    this.releaseMicTrack = options.releaseMicTrack ?? ((track) => track.stop());
+    this.setAudioAttribute = options.setAudioAttribute;
+    this.audio = options.audio ?? true;
     // Agent を知ってから送る。知る前に Agent が返した字幕は捨てるため(TextSender)
     this.textSender = new TextSender({
       send: (m) => this.sendText(m),
@@ -169,9 +188,11 @@ export class RoomSession extends Observable {
       : undefined;
   }
 
+  // token は、今の audio で取ったもの(参加者の属性 audio に入る)
   async connect(url: string, token: string): Promise<void> {
     this.listen();
     this.joining = true;
+    this.attributeAudio = this.audio;
     this.changed();
     try {
       await this.join(url, token);
@@ -247,8 +268,7 @@ export class RoomSession extends Observable {
         this.talking = false;
         this.disconnectReason = reason;
         // 切断で SDK が unpublish して止めるが、念のため止めて放す(入り直すときに作り直す)
-        this.mic?.stop();
-        this.mic = undefined;
+        this.dropMic();
         this.stopBackground();
         this.error ??= `切断された(${reason === undefined ? "理由不明" : DisconnectReason[reason]})`;
         this.changed();
@@ -263,14 +283,9 @@ export class RoomSession extends Observable {
       if (this.disposed) {
         return;
       }
-      for (const p of room.remoteParticipants.values()) {
-        for (const pub of p.audioTrackPublications.values()) {
-          this.maybeSubscribe(p, pub);
-        }
+      if (this.audio) {
+        await this.startAudioIo();
       }
-      await this.publishMuted();
-      // マイクの権限を得た後(publish の後)に始める。権限が無いとマイクのサービスにできない
-      await this.startBackground();
       if (this.disposed) {
         // 始めている間に dispose された。dispose の止める操作より後に始まったので、止め直す
         this.stopBackground();
@@ -280,6 +295,8 @@ export class RoomSession extends Observable {
       this.joined = true;
       this.canPlaybackAudio = room.canPlaybackAudio;
       this.changed();
+      // 入室を待つ間に音声を切り替えていたら、ここで揃える
+      this.queueMicOp(() => this.applyAudio());
       // 入室を待つ間に PTT を押していたら、ここでミュートを外す
       this.queueApplyMic();
       void this.syncHistory();
@@ -308,21 +325,100 @@ export class RoomSession extends Observable {
     this.changed();
   }
 
-  // PTT の押し下げ。操作は順に行い、最後の状態に揃える
+  // PTT の押し下げ。操作は順に行い、最後の状態に揃える。音声をつないでいなければ何もしない
   setPressing(value: boolean): void {
+    if (value && !this.audio) {
+      return;
+    }
     this.pressing = value;
     this.changed();
     this.queueApplyMic();
   }
 
+  // 音声をつなぐ・切る(マイクの publish、音声の購読、参加者の属性 audio)。操作は順に行い、最後の状態に揃える。
+  // つないでいないときは、次に入るときに使う(トークンも audio で取る)
+  setAudio(value: boolean): Promise<void> {
+    if (this.audio === value) {
+      return this.micOps;
+    }
+    this.audio = value;
+    if (!value) {
+      this.pressing = false;
+    }
+    this.changed();
+    this.queueApplyMic();
+    return this.queueMicOp(() => this.applyAudio());
+  }
+
   // マイクを pressing と connected に揃える操作を、つなぎの後ろに足す
   private queueApplyMic(): void {
-    this.micOps = this.micOps
-      .then(() => this.applyMic())
-      .catch((e: unknown) => {
-        this.error = `マイクを切り替えられなかった: ${e instanceof Error ? e.message : String(e)}`;
-        this.changed();
+    void this.queueMicOp(() => this.applyMic());
+  }
+
+  // マイクの操作(ミュート、publish、購読)を、つなぎの後ろに足す。終わったら解決する(失敗しても投げない)
+  private queueMicOp(op: () => Promise<void>): Promise<void> {
+    this.micOps = this.micOps.then(op).catch((e: unknown) => {
+      this.error = `音声を切り替えられなかった: ${e instanceof Error ? e.message : String(e)}`;
+      this.changed();
+    });
+    return this.micOps;
+  }
+
+  // つないでいる間、マイク・購読・属性を audio に揃える
+  private async applyAudio(): Promise<void> {
+    if (!this.connected || this.disposed) {
+      return;
+    }
+    const want = this.audio;
+    this.switchingAudio = true;
+    this.changed();
+    try {
+      if (want && !this.mic) {
+        await this.startAudioIo();
+      } else if (!want) {
+        this.stopAudioIo();
+      }
+      if (this.attributeAudio !== want && this.setAudioAttribute && !this.disposed) {
+        await this.setAudioAttribute(want);
+        this.attributeAudio = want;
+      }
+    } finally {
+      this.switchingAudio = false;
+      this.changed();
+    }
+  }
+
+  // マイクをミュートのまま publish し、音声を購読し、バックグラウンドの音声を始める
+  private async startAudioIo(): Promise<void> {
+    for (const p of this.room.remoteParticipants.values()) {
+      for (const pub of p.audioTrackPublications.values()) {
+        this.maybeSubscribe(p, pub);
+      }
+    }
+    await this.publishMuted();
+    // マイクの権限を得た後(publish の後)に始める。権限が無いとマイクのサービスにできない
+    await this.startBackground();
+  }
+
+  // マイクを unpublish して放し、音声の購読をやめる(データだけでつながったままにする)
+  private stopAudioIo(): void {
+    const mic = this.mic;
+    if (mic) {
+      this.mic = undefined;
+      this.talking = false;
+      void this.room.localParticipant.unpublishTrack(mic, false).catch((e: unknown) => {
+        console.warn("マイクを unpublish できなかった", e);
       });
+      this.releaseMicTrack(mic);
+    }
+    for (const p of this.room.remoteParticipants.values()) {
+      for (const pub of p.audioTrackPublications.values()) {
+        if (pub.isSubscribed) {
+          pub.setSubscribed(false);
+        }
+      }
+    }
+    this.stopBackground();
   }
 
   // データチャネルで受け取ったもの(テストでは Room を通さずに渡す)
@@ -557,8 +653,7 @@ export class RoomSession extends Observable {
     this.disposed = true;
     this.stopBackground();
     // マイクを放す(ブラウザのマイク使用中の表示を消す)
-    this.mic?.stop();
-    this.mic = undefined;
+    this.dropMic();
     this.textSender.dispose();
     this.mediaReceiver?.dispose();
     this.deletionReceiver?.dispose();
@@ -568,10 +663,18 @@ export class RoomSession extends Observable {
 
   // マイクのトラックを、ミュートしたまま publish する。
   // 話す間だけミュートを外す(services/agent の README の「話者のトラック」)。
+  private dropMic(): void {
+    const mic = this.mic;
+    this.mic = undefined;
+    if (mic) {
+      this.releaseMicTrack(mic);
+    }
+  }
+
   private async publishMuted(): Promise<void> {
     const track = await this.createMicTrack();
-    if (this.disposed) {
-      track.stop();
+    if (this.disposed || !this.audio) {
+      this.releaseMicTrack(track);
       return;
     }
     // publish の前にミュートしておくと、ミュートの状態で publish される(音が漏れない)。
@@ -582,11 +685,11 @@ export class RoomSession extends Observable {
       await this.room.localParticipant.publishTrack(track, { source: Track.Source.Microphone });
     } catch (e) {
       // publish できなかったトラックは誰も止めないので、ここで止める(マイクを掴んだままにしない)
-      track.stop();
+      this.releaseMicTrack(track);
       throw e;
     }
     if (this.disposed) {
-      track.stop();
+      this.releaseMicTrack(track);
       return;
     }
     this.mic = track;
@@ -597,7 +700,7 @@ export class RoomSession extends Observable {
     if (!mic || this.disposed) {
       return;
     }
-    const want = this.pressing && this.connected;
+    const want = this.pressing && this.connected && this.audio;
     if (want === this.talking) {
       return;
     }
@@ -613,6 +716,10 @@ export class RoomSession extends Observable {
   }
 
   private maybeSubscribe(p: RemoteParticipant, pub: RemoteTrackPublication): void {
+    // 音声をつないでいない間は、何も購読しない(データだけ)
+    if (!this.audio) {
+      return;
+    }
     const subscribe = shouldSubscribe({
       isAudio: pub.kind === Track.Kind.Audio,
       fromAgent: p.kind === ParticipantKind.AGENT,

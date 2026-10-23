@@ -36,11 +36,29 @@ export function fakeRoom(options: { connect?: () => Promise<void>; publishTrack?
     },
     connect: vi.fn(options.connect ?? (async () => {})),
     remoteParticipants: new Map(),
-    localParticipant: { publishTrack: vi.fn(options.publishTrack ?? (async () => ({}))) },
+    localParticipant: {
+      publishTrack: vi.fn(options.publishTrack ?? (async () => ({}))),
+      unpublishTrack: vi.fn(async () => {}),
+    },
     removeAllListeners: vi.fn(),
     disconnect: vi.fn(async () => {}),
     startAudio: vi.fn(async () => {}),
     canPlaybackAudio: true,
   };
   return { room, asRoom: room as unknown as Room };
+}
+
+// 話者(Agent 以外の参加者)と、そのマイクのトラックの publication
+export function fakeSpeaker(identity: string) {
+  const pub = {
+    kind: "audio",
+    source: "microphone",
+    trackName: "mic",
+    isSubscribed: false,
+    setSubscribed: vi.fn((value: boolean) => {
+      pub.isSubscribed = value;
+    }),
+  };
+  const participant = { identity, kind: 0, audioTrackPublications: new Map([["mic", pub]]) };
+  return { participant, pub };
 }
