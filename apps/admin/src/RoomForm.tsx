@@ -26,6 +26,12 @@ export function RoomForm({ initial, submitLabel, pending, creating = false, serv
   const [values, setValues] = useState(initial);
   // 一度送ろうとするまでは、入力中に検査の結果を出さない
   const [touched, setTouched] = useState(false);
+  // 送った後に入力を直したら、前の送信のエラー(使われている ID など)は直した内容に当てはまらないので消す
+  const [editedAfterSubmit, setEditedAfterSubmit] = useState(false);
+  const edit = (next: RoomFormValues) => {
+    setValues(next);
+    setEditedAfterSubmit(true);
+  };
 
   const nameError = validateRoomName(values.name);
   const changed = values.name !== initial.name || values.kind !== initial.kind;
@@ -33,6 +39,7 @@ export function RoomForm({ initial, submitLabel, pending, creating = false, serv
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setTouched(true);
+    setEditedAfterSubmit(false);
     if (nameError) {
       return;
     }
@@ -47,7 +54,7 @@ export function RoomForm({ initial, submitLabel, pending, creating = false, serv
           hint={`${[...values.name].length} / ${ROOM_NAME_MAX}文字`}
           error={touched ? nameError : undefined}
         >
-          <Input value={values.name} onChange={(e) => setValues({ ...values, name: e.target.value })} disabled={pending} />
+          <Input value={values.name} onChange={(e) => edit({ ...values, name: e.target.value })} disabled={pending} />
         </Field>
         {values.kind === "connect" ? (
           <p className="text-sm">
@@ -58,7 +65,7 @@ export function RoomForm({ initial, submitLabel, pending, creating = false, serv
           <Field label="種別" hint={ROOM_KIND_LABELS[values.kind].description}>
             <Select
               value={values.kind}
-              onChange={(e) => setValues({ ...values, kind: e.target.value as RoomKind })}
+              onChange={(e) => edit({ ...values, kind: e.target.value as RoomKind })}
               disabled={pending}
             >
               <option value="private">{ROOM_KIND_LABELS.private.label}</option>
@@ -67,7 +74,7 @@ export function RoomForm({ initial, submitLabel, pending, creating = false, serv
           </Field>
         )}
       </Card>
-      {serverError && <Alert tone="danger">{serverError}</Alert>}
+      {serverError && !editedAfterSubmit && <Alert tone="danger">{serverError}</Alert>}
       <div>
         {/* 編集では、何も変えていなければ送れないようにする */}
         <Button type="submit" variant="primary" disabled={pending || (!creating && !changed)}>

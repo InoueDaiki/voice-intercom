@@ -1,8 +1,8 @@
-import { Alert, Button, Card, ConfirmDialog, PageHeader } from "@voice-intercom/ui-web";
+import { Alert, BackIcon, backLinkClass, Button, Card, ConfirmDialog, LoadErrorAlert, PageHeader } from "@voice-intercom/ui-web";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 
-import { adminApi, type MemberRole, type Room, type RoomUpdate } from "../adminApi.ts";
+import { adminApi, ApiError, type MemberRole, type Room, type RoomUpdate } from "../adminApi.ts";
 import { MemberEditor } from "../MemberEditor.tsx";
 import { useDeleteRoom, useMe, useRoom, useRoomMembers, useRoomMutation, useUsers } from "../queries.ts";
 import { RoomForm } from "../RoomForm.tsx";
@@ -13,7 +13,12 @@ export default function RoomDetail() {
   const room = useRoom(roomId);
   const me = useMe();
 
-  const back = <Link to="/rooms">← ルームの一覧</Link>;
+  const back = (
+    <Link to="/rooms" className={backLinkClass}>
+      <BackIcon />
+      ルームの一覧
+    </Link>
+  );
 
   if (room.isPending || me.isPending) {
     return (
@@ -27,16 +32,13 @@ export default function RoomDetail() {
     return (
       <section>
         <PageHeader title={`ルーム「${roomId}」`} back={back} />
-        <Alert
-          tone="danger"
-          action={
-            <Button size="sm" onClick={() => void room.refetch()}>
-              再読み込み
-            </Button>
-          }
+        <LoadErrorAlert
+          onRetry={() => void room.refetch()}
+          // 無いルームは読み込み直しても出てこない
+          retryable={!(room.error instanceof ApiError && room.error.status === 404)}
         >
           {errorMessage(room.error)}
-        </Alert>
+        </LoadErrorAlert>
       </section>
     );
   }

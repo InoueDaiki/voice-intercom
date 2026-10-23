@@ -1,5 +1,5 @@
 import type { Room } from "@voice-intercom/client-core";
-import { Alert, Badge, Button, buttonClass, PageHeader } from "@voice-intercom/ui-web";
+import { Alert, Badge, Button, buttonClass, LoadErrorAlert, PageHeader } from "@voice-intercom/ui-web";
 import { ChevronRight, Headphones, Plus } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
@@ -38,16 +38,9 @@ export default function RoomList() {
       )}
       {rooms.isPending && <p className="text-fg-muted">読み込み中…</p>}
       {rooms.isError && (
-        <Alert
-          tone="danger"
-          action={
-            <Button size="sm" onClick={() => void rooms.refetch()}>
-              再読み込み
-            </Button>
-          }
-        >
+        <LoadErrorAlert onRetry={() => void rooms.refetch()}>
           ルームの一覧を取得できません: {errorMessage(rooms.error)}
-        </Alert>
+        </LoadErrorAlert>
       )}
       {rooms.isSuccess && (
         <RoomSection title="自分のルーム">

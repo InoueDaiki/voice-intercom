@@ -1,4 +1,4 @@
-import { PageHeader } from "@voice-intercom/ui-web";
+import { BackIcon, backLinkClass, PageHeader } from "@voice-intercom/ui-web";
 import { Link, useNavigate } from "react-router";
 
 import { useCreateRoom } from "../queries.ts";
@@ -15,7 +15,12 @@ export default function RoomCreate() {
     <section>
       <PageHeader
         title="ルームを作る"
-        back={<Link to="/rooms">← ルームの一覧</Link>}
+        back={
+          <Link to="/rooms" className={backLinkClass}>
+            <BackIcon />
+            ルームの一覧
+          </Link>
+        }
         description="作った人がオーナーになります。メンバーは作った後に足せます。"
       />
       <RoomForm

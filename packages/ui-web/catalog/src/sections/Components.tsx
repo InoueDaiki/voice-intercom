@@ -1,8 +1,13 @@
-import { ChevronLeft, Languages, Mic, Plus, RefreshCw, Settings, Trash2, Users } from "lucide-react";
+import { Languages, Mic, Plus, RefreshCw, Settings, Trash2, Users } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import {
   Alert,
+  AppHeader,
+  appHeaderLinkClass,
+  appHeaderTextClass,
+  BackIcon,
+  backLinkClass,
   Badge,
   Button,
   buttonClass,
@@ -11,6 +16,7 @@ import {
   Field,
   FullScreenMessage,
   Input,
+  LoadErrorAlert,
   PageHeader,
   PttButton,
   Select,
@@ -243,6 +249,91 @@ export function AlertSection() {
   );
 }
 
+export function LoadErrorAlertSection() {
+  return (
+    <Section
+      id="load-error-alert"
+      title="LoadErrorAlert"
+      description="取得に失敗したことの知らせと「再読み込み」。読み込み直しても変わらないときはボタンを出さない。"
+    >
+      <Example
+        previewClassName="grid gap-3"
+        code={`<LoadErrorAlert onRetry={() => void rooms.refetch()}>
+  ルームの一覧を取得できません: 通信に失敗しました。
+</LoadErrorAlert>
+<LoadErrorAlert onRetry={…} retryable={false}>ルームが見つかりません。</LoadErrorAlert>`}
+      >
+        <LoadErrorAlert onRetry={() => {}}>ルームの一覧を取得できません: 通信に失敗しました。</LoadErrorAlert>
+        <LoadErrorAlert onRetry={() => {}} retryable={false}>
+          ルームが見つかりません。削除された可能性があります。
+        </LoadErrorAlert>
+      </Example>
+      <PropsTable
+        rows={[
+          { name: "children", type: "ReactNode", description: "何を取得できなかったかと、その理由" },
+          { name: "onRetry", type: "() => void", description: "「再読み込み」を押したとき" },
+          { name: "retryable", type: "boolean", defaultValue: "true", description: "false なら「再読み込み」を出さない(404・403 など)" },
+        ]}
+      />
+    </Section>
+  );
+}
+
+export function AppHeaderSection() {
+  return (
+    <Section id="app-header" title="AppHeader" description="アプリのいちばん上の帯。長い名前は省いて、ログアウトを押し出さない。">
+      <Example
+        previewClassName="grid gap-3"
+        code={`<AppHeader
+  brand={<Link to="/">voice-intercom</Link>}
+  account={<Link to="/profile" className={appHeaderLinkClass}>白石 ゆき</Link>}
+  onSignOut={signOut}
+/>
+<AppHeader
+  brand="voice-intercom"
+  subtitle="管理コンソール"
+  badge={<Badge tone="warning">モック API</Badge>}
+  account={<span className={appHeaderTextClass}>admin@example.com</span>}
+  onSignOut={signOut}
+/>`}
+      >
+        <AppHeader
+          brand={<a href="#app-header">voice-intercom</a>}
+          account={
+            <a href="#app-header" className={appHeaderLinkClass}>
+              白石 ゆき
+            </a>
+          }
+          onSignOut={() => {}}
+        />
+        <AppHeader
+          brand="voice-intercom"
+          subtitle="管理コンソール"
+          badge={<Badge tone="warning">モック API</Badge>}
+          account={<span className={appHeaderTextClass}>admin@example.com</span>}
+          onSignOut={() => {}}
+        />
+        <div className="max-w-sm">
+          <AppHeader
+            brand={<a href="#app-header">voice-intercom</a>}
+            account={<span className={appHeaderTextClass}>newuser-1792757769736@example.com</span>}
+            onSignOut={() => {}}
+          />
+        </div>
+      </Example>
+      <PropsTable
+        rows={[
+          { name: "brand", type: "ReactNode", description: "アプリの名前。ホームへの <Link> でもよい(色と下線は帯が決める)" },
+          { name: "subtitle", type: "ReactNode", description: "名前の横に添える文字" },
+          { name: "badge", type: "ReactNode", description: "名前の横に添える札" },
+          { name: "account", type: "ReactNode", description: "右のアカウントの表示。appHeaderLinkClass か appHeaderTextClass を付ける" },
+          { name: "onSignOut", type: "() => void", description: "ログアウトを押したとき" },
+        ]}
+      />
+    </Section>
+  );
+}
+
 export function CardSection() {
   return (
     <Section id="card" title="Card" description="地の上に置く面。中の余白は既定で p-4。">
@@ -410,7 +501,12 @@ export function PageHeaderSection() {
       <Example
         previewClassName="block"
         code={`<PageHeader
-  back={<Link to="/rooms">ルーム一覧</Link>}
+  back={
+    <Link to="/rooms" className={backLinkClass}>
+      <BackIcon />
+      ルームの一覧
+    </Link>
+  }
   title="倉庫A"
   description="1階の倉庫で使う"
   actions={<Button variant="primary">参加する</Button>}
@@ -418,9 +514,9 @@ export function PageHeaderSection() {
       >
         <PageHeader
           back={
-            <a href="#page-header" className="inline-flex items-center gap-1">
-              <ChevronLeft className={iconClass} aria-hidden />
-              ルーム一覧
+            <a href="#page-header" className={backLinkClass}>
+              <BackIcon />
+              ルームの一覧
             </a>
           }
           title="倉庫A"

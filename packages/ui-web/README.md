@@ -11,7 +11,7 @@
 - **カードを並べない。** 同じ種類のものの並び(タイムライン、ルームの一覧)は、1枚の面を線で区切るか、線だけで区切る。`Card` は入力欄をまとめるときなど、まとまりに意味があるときに使う。
 - **字幕は訳を大きく、原文を小さく。** 読むのは訳で、原文は確かめるために添える。
 - **書体は IBM Plex Sans JP の1つ。** 太さ(400・500・700)と大きさで階層を作る。見出しは約物を詰める(`palt`)。数字は幅をそろえる(`tabular-nums`、body に指定済み)。
-- **リンクは下線で示す。** 文字の色は変えない(琥珀は主な操作のために取っておく)。
+- **リンクは下線で示す。** 文字の色は変えない(琥珀は主な操作のために取っておく)。ただし、画面の題の上の戻るリンクはナビゲーションなので、下線を付けず ‹ を添えて薄く出す(`backLinkClass` と `BackIcon`)。
 - **フォーカスの輪は `fg`。** 琥珀は白い地の上で見えにくいため。
 
 ## 画面を書くときの決まり
@@ -38,8 +38,11 @@
 | `Field` + `Input`・`Textarea`・`Select` | ラベル・説明(`hint`)・誤り(`error`)と入力欄の組。`id` と `aria-*` は `Field` が付ける |
 | `Badge` | 短い状態の札。`tone` は `neutral`・`primary`・`success`・`warning`・`danger`・`live`(送話)・`rx`(受信) |
 | `Alert` | 画面の中の知らせ。`tone` は `info`・`success`・`warning`・`danger`(`danger` は `role="alert"`)。`action` に再読み込みなどのボタン |
+| `LoadErrorAlert` | 取得に失敗したことの知らせと「再読み込み」。無いもの・権限の無いものなど、読み込み直しても変わらないときは `retryable={false}` でボタンを出さない |
 | `Card` | 地の上に置く面。`tone="danger"` は削除をまとめる面 |
 | `Table`、`Th`、`Td` | 表。数値の列は `align="end"`、操作の列は `shrink` |
+| `backLinkClass`、`BackIcon` | 一つ上の画面へ戻るリンク。ルーターの `<Link>` に `className={backLinkClass}` を付け、中に `<BackIcon />` と行き先の名前を置く。2つのアプリで同じ見た目にする |
+| `AppHeader`、`appHeaderLinkClass`、`appHeaderTextClass` | アプリのいちばん上の帯。`brand`(アプリの名前。ホームへの `<Link>` でもよい)、`subtitle`、`badge`、`account`(右のアカウントの表示)、`onSignOut`。長い表示名やメールアドレスは省いて、ログアウトを押し出さない。`account` のリンクには `appHeaderLinkClass`、文字には `appHeaderTextClass` を付ける |
 | `PageHeader` | 画面の題。`back`(戻るリンク)、`actions`(右の操作)、`description` |
 | `FullScreenMessage` | 画面全体の真ん中の知らせ(読み込み中、ログインの失敗) |
 | `ConfirmDialog` | 確定か取りやめかを選ばせるダイアログ(`window.confirm` は使わない)。`tone="danger"` は削除など取り返しのつかない操作(題に赤の表示灯、確定は `danger` のボタン)。`open` は呼び出し側が持ち、`onConfirm`・`onCancel` で閉じる。確定の文言は動詞で書く(「削除する」)。開くと取りやめにフォーカスを置き、Tab は中だけを回り、Esc で取りやめ、閉じると元のボタンにフォーカスを戻す |

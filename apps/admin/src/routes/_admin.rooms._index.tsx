@@ -1,4 +1,4 @@
-import { Alert, Badge, Button, buttonClass, PageHeader, Table, Td, Th } from "@voice-intercom/ui-web";
+import { Badge, buttonClass, LoadErrorAlert, PageHeader, Table, Td, Th } from "@voice-intercom/ui-web";
 import { Link } from "react-router";
 
 import { useRooms } from "../queries.ts";
@@ -21,16 +21,9 @@ export default function RoomList() {
       />
       {rooms.isPending && <p className="text-fg-muted">読み込み中…</p>}
       {rooms.isError && (
-        <Alert
-          tone="danger"
-          action={
-            <Button size="sm" onClick={() => void rooms.refetch()}>
-              再読み込み
-            </Button>
-          }
-        >
+        <LoadErrorAlert onRetry={() => void rooms.refetch()}>
           ルームの一覧を取得できません: {errorMessage(rooms.error)}
-        </Alert>
+        </LoadErrorAlert>
       )}
       {rooms.isSuccess &&
         (rooms.data.length === 0 ? (
@@ -40,10 +33,14 @@ export default function RoomList() {
             <thead>
               <tr>
                 <Th>名前</Th>
-                <Th>種別</Th>
-                <Th align="end">人数</Th>
-                <Th align="end">オーナー</Th>
-                <Th>更新日時</Th>
+                <Th shrink>種別</Th>
+                <Th align="end" shrink>
+                  人数
+                </Th>
+                <Th align="end" shrink>
+                  オーナー
+                </Th>
+                <Th shrink>更新日時</Th>
               </tr>
             </thead>
             <tbody>
@@ -53,7 +50,8 @@ export default function RoomList() {
                   const state = roomState(room);
                   return (
                     <tr key={room.room_id}>
-                      <Td>
+                      {/* 名前の列は、幅の狭い画面でも読める幅を取る */}
+                      <Td className="min-w-40">
                         <Link to={`/rooms/${encodeURIComponent(room.room_id)}`} className="font-medium">
                           {room.name}
                         </Link>
@@ -68,10 +66,16 @@ export default function RoomList() {
                           </Badge>
                         )}
                       </Td>
-                      <Td>{ROOM_KIND_LABELS[room.kind].label}</Td>
-                      <Td align="end">{room.member_ids.length}</Td>
-                      <Td align="end">{room.owner_ids.length}</Td>
-                      <Td className="text-fg-muted">{formatDateTime(room.updated_at)}</Td>
+                      <Td shrink>{ROOM_KIND_LABELS[room.kind].label}</Td>
+                      <Td align="end" shrink>
+                        {room.member_ids.length}
+                      </Td>
+                      <Td align="end" shrink>
+                        {room.owner_ids.length}
+                      </Td>
+                      <Td shrink className="text-fg-muted">
+                        {formatDateTime(room.updated_at)}
+                      </Td>
                     </tr>
                   );
                 })}

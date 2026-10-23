@@ -1,4 +1,4 @@
-import { Badge, Button, cx } from "@voice-intercom/ui-web";
+import { AppHeader, appHeaderTextClass, Badge, cx } from "@voice-intercom/ui-web";
 import { useAuth } from "react-oidc-context";
 import { NavLink, Outlet } from "react-router";
 
@@ -22,20 +22,17 @@ export function Layout() {
   const isOperator = groups.includes(OPERATOR_GROUP);
   return (
     <div className="grid min-h-dvh grid-rows-[auto_auto_1fr] md:grid-cols-[13rem_1fr] md:grid-rows-[auto_1fr]">
-      <header className="flex h-12 items-center justify-between gap-4 bg-key px-4 text-on-key md:col-span-2">
-        <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span className="font-bold">voice-intercom</span>
-          <span className="text-sm text-on-key/70">管理コンソール</span>
-          {isMock && <Badge tone="warning">モック API</Badge>}
-        </span>
-        <span className="flex items-center gap-1 text-sm">
-          {/* Cognito の username は UUID なので、メールアドレスを出す */}
-          <span className="hidden px-2 text-on-key/70 sm:inline">{user?.profile.email ?? user?.profile.sub}</span>
-          <Button variant="ghost" size="sm" className="text-on-key not-disabled:hover:bg-key-hover" onClick={() => void signOut()}>
-            ログアウト
-          </Button>
-        </span>
-      </header>
+      <AppHeader
+        className="md:col-span-2"
+        brand="voice-intercom"
+        subtitle="管理コンソール"
+        badge={isMock && <Badge tone="warning">モック API</Badge>}
+        account={
+          // Cognito の username は UUID なので、メールアドレスを出す。幅の狭い画面では名前の横が埋まるので出さない
+          <span className={cx(appHeaderTextClass, "hidden sm:block")}>{user?.profile.email ?? user?.profile.sub}</span>
+        }
+        onSignOut={() => void signOut()}
+      />
       <nav className="flex gap-1 border-b border-border bg-surface px-3 md:flex-col md:border-r md:border-b-0 md:py-4 md:pr-3 md:pl-0">
         <NavLink to="/" end className={navLinkClass}>
           ホーム

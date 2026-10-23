@@ -1,4 +1,4 @@
-import { Alert, Button, Field, Input, PageHeader, Select, Table, Td, Th } from "@voice-intercom/ui-web";
+import { Alert, Field, Input, LoadErrorAlert, PageHeader, Select, Table, Td, Th } from "@voice-intercom/ui-web";
 import { useState } from "react";
 import { useAuth } from "react-oidc-context";
 import { Link } from "react-router";
@@ -44,19 +44,16 @@ export default function UserList() {
       />
       {users.isPending && <p className="text-fg-muted">読み込み中…</p>}
       {users.isError && (
-        <Alert
-          tone="danger"
-          action={
-            <Button size="sm" onClick={() => void users.refetch()}>
-              再読み込み
-            </Button>
-          }
+        <LoadErrorAlert
+          onRetry={() => void users.refetch()}
+          // 権限が無いのは読み込み直しても変わらない
+          retryable={!(users.error instanceof ApiError && users.error.status === 403)}
         >
           ユーザーの一覧を取得できません:{" "}
           {users.error instanceof ApiError && users.error.status === 403
             ? "ユーザーの一覧を見る権限がありません。"
             : errorMessage(users.error)}
-        </Alert>
+        </LoadErrorAlert>
       )}
       {users.isSuccess &&
         (users.data.length === 0 ? (
@@ -83,9 +80,9 @@ export default function UserList() {
                 <thead>
                   <tr>
                     <Th>表示名</Th>
-                    <Th>言語</Th>
-                    <Th>ユーザー ID</Th>
-                    <Th>登録日時</Th>
+                    <Th shrink>言語</Th>
+                    <Th shrink>ユーザー ID</Th>
+                    <Th shrink>登録日時</Th>
                     {isOperator && <Th>テナント</Th>}
                     {isAdmin && <Th>所属しているルーム</Th>}
                   </tr>
@@ -95,19 +92,22 @@ export default function UserList() {
                     const joined = roomsByUser.get(user.user_id) ?? [];
                     return (
                       <tr key={user.user_id}>
-                        <Td className="font-medium">{user.display_name}</Td>
-                        <Td>{LANGUAGE_LABELS[user.language]}</Td>
-                        <Td>
+                        {/* 名前とルームの列は、幅の狭い画面でも読める幅を取る */}
+                        <Td className="min-w-32 font-medium">{user.display_name}</Td>
+                        <Td shrink>{LANGUAGE_LABELS[user.language]}</Td>
+                        <Td shrink>
                           <code>{user.user_id}</code>
                         </Td>
-                        <Td className="text-fg-muted">{formatDateTime(user.created_at)}</Td>
+                        <Td shrink className="text-fg-muted">
+                          {formatDateTime(user.created_at)}
+                        </Td>
                         {isOperator && (
-                          <Td>
+                          <Td className="min-w-48">
                             <TenantSelect user={user} tenants={tenants.data} />
                           </Td>
                         )}
                         {isAdmin && (
-                          <Td>
+                          <Td className="min-w-48">
                             {rooms.isPending && <span className="text-fg-muted">読み込み中…</span>}
                             {rooms.isSuccess &&
                               (joined.length === 0 ? (

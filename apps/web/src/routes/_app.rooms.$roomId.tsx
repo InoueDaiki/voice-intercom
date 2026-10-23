@@ -17,10 +17,9 @@ import {
   type TimelineEvent,
   type User,
 } from "@voice-intercom/client-core";
-import { Alert, Badge, Button, buttonClass, ConfirmDialog, cx, Textarea } from "@voice-intercom/ui-web";
+import { Alert, BackIcon, backLinkClass, Badge, Button, buttonClass, ConfirmDialog, cx, Textarea } from "@voice-intercom/ui-web";
 import {
   Archive,
-  ChevronLeft,
   FileText,
   Headphones,
   Image,
@@ -104,9 +103,9 @@ const roomMessageClass = "mx-auto max-w-3xl px-4 py-6 text-fg-muted";
 
 function BackLink() {
   return (
-    <Link to="/" className="inline-flex items-center gap-0.5 text-sm text-fg-muted no-underline hover:text-fg">
-      <ChevronLeft aria-hidden="true" className="size-4" />
-      ルーム
+    <Link to="/" className={backLinkClass}>
+      <BackIcon />
+      ルームの一覧
     </Link>
   );
 }

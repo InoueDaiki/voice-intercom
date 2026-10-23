@@ -1,5 +1,5 @@
 import { LANGUAGE_LABELS } from "@voice-intercom/client-core";
-import { Alert, Button, FullScreenMessage } from "@voice-intercom/ui-web";
+import { AppHeader, appHeaderLinkClass, appHeaderTextClass, Button, FullScreenMessage, LoadErrorAlert } from "@voice-intercom/ui-web";
 import { useEffect } from "react";
 import { hasAuthParams, useAuth } from "react-oidc-context";
 import { Link, Navigate, Outlet, useLocation, useMatch } from "react-router";
@@ -54,17 +54,9 @@ function SignedIn() {
     content = <p className={pageClass}>読み込み中…</p>;
   } else if (me.isError) {
     content = (
-      <Alert
-        className={pageClass}
-        tone="danger"
-        action={
-          <Button size="sm" onClick={() => void me.refetch()}>
-            再読み込み
-          </Button>
-        }
-      >
+      <LoadErrorAlert className={pageClass} onRetry={() => void me.refetch()}>
         プロフィールを取得できません: {errorMessage(me.error)}
-      </Alert>
+      </LoadErrorAlert>
     );
   } else if (me.data === null && location.pathname !== "/profile") {
     content = <Navigate to="/profile" replace />;
@@ -76,28 +68,20 @@ function SignedIn() {
     // 列は画面の幅を超えない(grid-cols-1)。中身の長い文字列で画面ごと横に広がらないように。
     // 下の段は音声中の帯(音声をつないだルームがあるときだけ)
     <div className="grid h-dvh grid-cols-1 grid-rows-[auto_1fr_auto]">
-      <header className="flex h-12 items-center justify-between gap-4 bg-key px-4 text-on-key">
-        <Link to="/" className="shrink-0 font-bold text-on-key no-underline">
-          voice-intercom
-        </Link>
-        {/* 長い表示名やメールアドレスは省いて、ログアウトを押し出さない */}
-        <span className="flex min-w-0 items-center gap-1 text-sm">
-          {me.data && (
-            <Link
-              to="/profile"
-              title="プロフィール(表示名と言語)"
-              className="min-w-0 truncate rounded-md px-2 py-1 text-on-key no-underline hover:bg-key-hover"
-            >
+      <AppHeader
+        brand={<Link to="/">voice-intercom</Link>}
+        account={
+          me.data ? (
+            <Link to="/profile" title="プロフィール(表示名と言語)" className={appHeaderLinkClass}>
               {me.data.display_name}
               <span className="ml-1.5 hidden text-on-key/70 sm:inline">{LANGUAGE_LABELS[me.data.language]}</span>
             </Link>
-          )}
-          {!me.data && <span className="min-w-0 truncate px-2 text-on-key/70">{user?.profile.email ?? user?.profile.sub}</span>}
-          <Button variant="ghost" size="sm" className="shrink-0 text-on-key not-disabled:hover:bg-key-hover" onClick={() => void signOut()}>
-            ログアウト
-          </Button>
-        </span>
-      </header>
+          ) : (
+            <span className={appHeaderTextClass}>{user?.profile.email ?? user?.profile.sub}</span>
+          )
+        }
+        onSignOut={() => void signOut()}
+      />
       {/* 余白は各画面が持つ(ルームの画面は端まで使う) */}
       <main className="min-h-0 overflow-auto">{content}</main>
       {me.data && myIdentity && <AudioDock currentRoomId={roomMatch?.params.roomId} myIdentity={myIdentity} />}
