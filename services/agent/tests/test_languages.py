@@ -1,4 +1,9 @@
-from voice_intercom_agent.languages import normalize, participant_language, target_languages
+from voice_intercom_agent.languages import (
+    normalize,
+    participant_language,
+    target_languages,
+    wants_audio,
+)
 
 
 def test_normalize_keeps_primary_subtag() -> None:
@@ -16,6 +21,13 @@ def test_normalize_rejects_unsupported_and_empty() -> None:
 def test_participant_language_reads_attribute() -> None:
     assert participant_language({"language": "ko-KR"}) == "ko"
     assert participant_language({}) is None
+
+
+def test_wants_audio() -> None:
+    assert wants_audio({"audio": "on"}) is True
+    assert wants_audio({"audio": "off"}) is False
+    # 前のアプリは属性を付けないので、聞いているとみなす
+    assert wants_audio({}) is True
 
 
 def test_targets_exclude_speaker_language() -> None:

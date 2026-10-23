@@ -15,7 +15,7 @@ from livekit import rtc
 from .captions import CaptionTrack, new_segment_id
 from .config import Settings
 from .history import HistoryRecorder, create_api_access, create_history, utc_now
-from .languages import participant_language, target_languages
+from .languages import participant_language, target_languages, wants_audio
 from .notify import RoomNotifier, create_room_notifier, present_ids
 from .output import CaptionPublisher, TranslationTracks
 from .realtime import INPUT_SAMPLE_RATE, OUTPUT_SAMPLE_RATE, TranslateSession, WhisperSession
@@ -55,8 +55,17 @@ class Utterance:
     """
 
     def __init__(
-        self, deps: Deps, speaker: str, speaker_language: str | None, targets: list[str]
+        self,
+        deps: Deps,
+        speaker: str,
+        speaker_language: str | None,
+        targets: list[str],
+        audio_targets: list[str] | None = None,
     ) -> None:
+        """targets は訳の字幕の言語、audio_targets は翻訳の音声の言語(None なら targets と同じ)。
+
+        翻訳の音声は、音声を聞いている人の言語にだけ作る(languages.py の wants_audio)。
+        """
         self._deps = deps
         self._speaker_identity = speaker
         self._speaker_language = speaker_language
@@ -89,7 +98,7 @@ class Utterance:
             on_completed=self._on_transcript,
         )
         self._sessions: list[WhisperSession | TranslateSession] = [self._whisper]
-        for lang in targets:
+        for lang in targets if audio_targets is None else audio_targets:
             # 混ぜる入力の key は、この発話そのもの。翻訳音声(24kHz)はトラックの 48kHz に直して流す
             audio = deps.tracks.audio_input(lang, self, OUTPUT_SAMPLE_RATE)
             self._sessions.append(
@@ -236,12 +245,18 @@ class Speaker:
             identity = self._participant.identity
             speaker_language = participant_language(self._participant.attributes)
             targets = target_languages(speaker_language, listener_languages(self._room))
-            self._utterance = Utterance(self._deps, identity, speaker_language, targets)
+            audio_targets = target_languages(
+                speaker_language, listener_languages(self._room, audio_only=True)
+            )
+            self._utterance = Utterance(
+                self._deps, identity, speaker_language, targets, audio_targets
+            )
             logger.info(
-                "発話を始めた: %s(%s → %s)%s",
+                "発話を始めた: %s(%s → %s、音声 %s)%s",
                 identity,
                 speaker_language or "不明",
                 ",".join(targets) or "なし",
+                ",".join(audio_targets) or "なし",
                 self._utterance.utterance_id,
             )
             self._deps.spawn(self._utterance.run())
@@ -267,11 +282,12 @@ def is_person(participant: rtc.Participant) -> bool:
     return participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD
 
 
-def listener_languages(room: rtc.Room) -> list[str | None]:
+def listener_languages(room: rtc.Room, *, audio_only: bool = False) -> list[str | None]:
+    """Agent を除く参加者の言語。audio_only なら、音声を聞いている人だけ。"""
     return [
         participant_language(p.attributes)
         for p in room.remote_participants.values()
-        if not is_agent(p)
+        if not is_agent(p) and (not audio_only or wants_audio(p.attributes))
     ]
 
 
@@ -331,9 +347,9 @@ class IntercomAgent:
         self._update_speech()
 
     def _update_speech(self, *_: object) -> None:
-        """ルームにある言語を読み上げに知らせる。ある言語のセッションは先に開いておき、
+        """音声を聞いている人の言語を読み上げに知らせる。ある言語のセッションは先に開いておき、
         人がいなくなった言語のセッションは、猶予(TTS_IDLE_CLOSE_S)の後に閉じる。"""
-        languages = {lang for lang in listener_languages(self._room) if lang}
+        languages = {lang for lang in listener_languages(self._room, audio_only=True) if lang}
         self._tts.keep_only(languages)
         if self._deps.settings.tts_prewarm:
             self._tts.prepare(languages)
@@ -355,14 +371,23 @@ class IntercomAgent:
         # 同じ (identity, message_id) の送り直しには、TextInput が処理をやり直さずに
         # 字幕と状態を送り直す
         # 送信者と言語は、メッセージではなく送信元の参加者から取る(なりすましを防ぐ)
-        listeners = [
-            participant_language(p.attributes)
+        others = [
+            p
             for p in self._room.remote_participants.values()
             if not is_agent(p) and p.identity != sender.identity
         ]
+        listeners = [participant_language(p.attributes) for p in others]
+        # 読み上げは、音声を聞いている人の言語にだけ作る
+        audio_listeners = [
+            participant_language(p.attributes) for p in others if wants_audio(p.attributes)
+        ]
         self._deps.spawn(
             self._text.handle(
-                sender.identity, participant_language(sender.attributes), listeners, message
+                sender.identity,
+                participant_language(sender.attributes),
+                listeners,
+                message,
+                audio_listeners,
             )
         )
 
