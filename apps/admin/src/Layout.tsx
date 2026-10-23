@@ -3,7 +3,7 @@ import { useAuth } from "react-oidc-context";
 import { NavLink, Outlet } from "react-router";
 
 import { isMock } from "./adminApi.ts";
-import { signOut } from "./auth.ts";
+import { ADMIN_GROUP, groupsOf, OPERATOR_GROUP, signOut } from "./auth.ts";
 
 // 選んでいる項目は、左(幅の狭い画面では下)に琥珀の線を灯す
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
@@ -16,6 +16,10 @@ const navLinkClass = ({ isActive }: { isActive: boolean }) =>
 
 export function Layout() {
   const { user } = useAuth();
+  const groups = user ? groupsOf(user) : [];
+  // 管理者は自分のテナントを、運営者はテナントとユーザーの所属を扱う(両方の人もいる)
+  const isAdmin = groups.includes(ADMIN_GROUP);
+  const isOperator = groups.includes(OPERATOR_GROUP);
   return (
     <div className="grid min-h-dvh grid-rows-[auto_auto_1fr] md:grid-cols-[13rem_1fr] md:grid-rows-[auto_1fr]">
       <AppHeader
@@ -33,12 +37,24 @@ export function Layout() {
         <NavLink to="/" end className={navLinkClass}>
           ホーム
         </NavLink>
-        <NavLink to="/rooms" className={navLinkClass}>
-          ルーム
-        </NavLink>
+        {isAdmin && (
+          <>
+            <NavLink to="/rooms" className={navLinkClass}>
+              ルーム
+            </NavLink>
+            <NavLink to="/connect" className={navLinkClass}>
+              Connect
+            </NavLink>
+          </>
+        )}
         <NavLink to="/users" className={navLinkClass}>
           ユーザー
         </NavLink>
+        {isOperator && (
+          <NavLink to="/tenants" className={navLinkClass}>
+            テナント
+          </NavLink>
+        )}
       </nav>
       <main className="min-w-0 px-4 py-6 md:px-8">
         <div className="mx-auto max-w-5xl">

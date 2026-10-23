@@ -29,6 +29,17 @@
           }
         },
         {
+          "requestParam": "subject",
+          "match": "operator.*",
+          "claims": {
+            "sub": "${subject}",
+            "client_id": "${clientId}",
+            "token_use": "access",
+            "cognito:groups": ["operator"],
+            "email": "${subject}@example.com"
+          }
+        },
+        {
           "requestParam": "grant_type",
           "match": "*",
           "claims": {

@@ -3,42 +3,9 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { fakeMic, fakeRoom } from "../testing/fakeRoom.ts";
 import { flush } from "../testing/fixtures.ts";
-import { type AppPresence, type PresenceChange, RoomKeeper, type ScreenAwake } from "./roomKeeper.ts";
+import { fakeAwake, fakePresence } from "../testing/fakePresence.ts";
+import { type PresenceChange, RoomKeeper, type ScreenAwake } from "./roomKeeper.ts";
 import { RoomSession } from "./roomSession.ts";
-
-// 見え方を手で変えられる AppPresence
-function fakePresence(visible = true) {
-  const listeners = new Set<(change: PresenceChange) => void>();
-  const presence: AppPresence = {
-    isVisible: () => visible,
-    subscribe(listener) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-  };
-  return {
-    presence,
-    change(change: PresenceChange) {
-      visible = change !== "hidden" && (change === "visible" || visible);
-      for (const l of [...listeners]) {
-        l(change);
-      }
-    },
-    listenerCount: () => listeners.size,
-  };
-}
-
-// 持っているかだけを覚える ScreenAwake
-function fakeAwake() {
-  const awake = { held: false, acquire: vi.fn(), release: vi.fn() };
-  awake.acquire.mockImplementation(() => {
-    awake.held = true;
-  });
-  awake.release.mockImplementation(() => {
-    awake.held = false;
-  });
-  return awake;
-}
 
 const keepers: RoomKeeper[] = [];
 

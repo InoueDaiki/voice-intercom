@@ -1,4 +1,4 @@
-"""メンバーを外したとき・ルームを消したときの後始末(room_cleanup.py)。"""
+"""メンバーを外したとき・アーカイブしたとき・ルームを消したときの後始末(room_cleanup.py)。"""
 
 from collections.abc import Iterator
 from typing import Any
@@ -50,6 +50,9 @@ def invalidations(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
 
 @pytest.fixture
 def admin(make_token: Token) -> str:
+    # ルームを作ったテナント(t1)の管理者
+    store.put_user("admin-1", display_name="管理者", language="ja")
+    store.set_user_tenant("admin-1", "t1")
     return make_token(sub="admin-1")
 
 
@@ -96,30 +99,39 @@ def uploads(room_id: str) -> list[str]:
 # メンバーを外す
 
 
-def test_patch_evicts_removed_members(admin: str, lk: FakeLiveKit) -> None:
+def test_removing_member_evicts_them(admin: str, lk: FakeLiveKit) -> None:
     lk.participants = [("member-1", STANDARD), ("member-2", STANDARD), ("agent-1", AGENT)]
 
-    status, body = call("PATCH", "/rooms/room-a", admin, {"member_ids": ["member-2"]})
+    status, _ = call("DELETE", "/rooms/room-a/members/member-1", admin)
 
-    assert status == 200
-    assert body["member_ids"] == ["member-2"]
+    assert status == 204
+    assert store.get_room("room-a").member_ids == ["member-2"]  # pyright: ignore[reportOptionalMemberAccess]
     # 外した人だけを出す。残った人と Agent はそのまま
     assert lk.removed == [("room-a", "member-1")]
 
 
-def test_patch_skips_absent_members(admin: str, lk: FakeLiveKit) -> None:
+def test_removing_absent_member_does_not_remove(admin: str, lk: FakeLiveKit) -> None:
     lk.participants = [("member-2", STANDARD)]
 
-    call("PATCH", "/rooms/room-a", admin, {"member_ids": ["member-2"]})
+    call("DELETE", "/rooms/room-a/members/member-1", admin)
 
     # 今ルームにいない人は呼ばない
     assert lk.removed == []
 
 
-def test_patch_without_member_change_does_not_call_livekit(admin: str, lk: FakeLiveKit) -> None:
+def test_rename_does_not_call_livekit(admin: str, lk: FakeLiveKit) -> None:
     call("PATCH", "/rooms/room-a", admin, {"name": "A2"})
 
     assert lk.listed == []
+
+
+def test_archive_closes_room(admin: str, lk: FakeLiveKit) -> None:
+    status, body = call("POST", "/rooms/room-a/archive", admin)
+
+    assert status == 200
+    assert body["archived_at"] is not None
+    # 全員を切る。履歴は消さない
+    assert lk.deleted_rooms == ["room-a"]
 
 
 def test_evict_ignores_errors(lk: FakeLiveKit) -> None:
@@ -137,13 +149,12 @@ def test_evict_ignores_errors(lk: FakeLiveKit) -> None:
     assert lk.removed == [("room-a", "member-3")]
 
 
-def test_patch_list_error_is_not_500(admin: str, lk: FakeLiveKit) -> None:
+def test_remove_list_error_is_not_500(admin: str, lk: FakeLiveKit) -> None:
     lk.list_error = livekit.ServerError("unauthenticated", "permissions denied", status=401)
 
-    status, body = call("PATCH", "/rooms/room-a", admin, {"member_ids": []})
+    status, _ = call("DELETE", "/rooms/room-a/members/member-1", admin)
 
-    assert status == 200
-    assert body["member_ids"] == []
+    assert status == 204
     assert lk.removed == []
 
 
@@ -212,8 +223,8 @@ def test_delete_purge_error_is_not_500(
     assert store.get_room("room-a") is None
 
 
-def test_purge_over_budget_is_finished_on_create(
-    admin: str, lk: FakeLiveKit, invalidations: list[list[str]], monkeypatch: pytest.MonkeyPatch
+def test_purge_over_budget_is_finished_on_delete_again(
+    admin: str, lk: FakeLiveKit, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     put_rows("room-a")
     put_objects("room-a")
@@ -223,25 +234,12 @@ def test_purge_over_budget_is_finished_on_create(
     assert call("DELETE", "/rooms/room-a", admin)[0] == 204
     assert len(rows("room-a")) == 6
 
-    # 同じ room_id で作り直すと、前のルームの残りを消す
+    # DELETE をやり直すと(404)、残りを消す
     monkeypatch.setattr(room_cleanup, "PURGE_BUDGET_S", 6.0)
-    invalidations.clear()
-    status, body = call("POST", "/rooms", admin, {"room_id": "room-a", "name": "A2"})
-
-    assert status == 201
-    assert body["member_ids"] == []
+    assert call("DELETE", "/rooms/room-a", admin)[0] == 404
     assert rows("room-a") == []
     assert keys("room-a") == []
     assert uploads("room-a") == []
-    assert invalidations == [["/rooms/room-a/*"]]
-    assert call("GET", "/rooms/room-a/timeline", admin) == (200, {"items": [], "next_before": None})
-
-
-def test_create_without_leftovers_does_not_invalidate(
-    admin: str, invalidations: list[list[str]]
-) -> None:
-    assert call("POST", "/rooms", admin, {"room_id": "room-c", "name": "C"})[0] == 201
-    assert invalidations == []
 
 
 def test_delete_again_finishes_purge(

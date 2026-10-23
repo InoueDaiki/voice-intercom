@@ -28,6 +28,7 @@ class Settings:
     rooms_table: str
     room_members_table: str
     users_table: str
+    tenants_table: str
 
 
 def _require(name: str) -> str:
@@ -66,6 +67,7 @@ def get_settings() -> Settings:
         rooms_table=_require("ROOMS_TABLE"),
         room_members_table=_require("ROOM_MEMBERS_TABLE"),
         users_table=_require("USERS_TABLE"),
+        tenants_table=_require("TENANTS_TABLE"),
     )
 
 

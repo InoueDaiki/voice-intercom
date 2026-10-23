@@ -62,7 +62,13 @@ from aws_lambda_powertools.event_handler.openapi.params import Body, Path
 from voice_intercom_api import deletion, media_broadcast, media_store, store, timeline_store
 from voice_intercom_api.auth import CurrentUser
 from voice_intercom_api.models import Room
-from voice_intercom_api.routing import AUTH, ROOM_NOT_FOUND, RoomIdPath, responses, visible_room
+from voice_intercom_api.routing import (
+    AUTH,
+    ROOM_WRITE_ERRORS,
+    RoomIdPath,
+    responses,
+    writable_room,
+)
 from voice_intercom_api.timeline_models import (
     MAX_MEDIA_BYTES,
     MAX_UPLOAD_PARTS,
@@ -188,7 +194,7 @@ def _own_pending(room_id: str, media_id: str, user_sub: str) -> timeline_store.P
 
 @router.post(
     "/rooms/<room_id>/media/uploads",
-    summary="画像・動画・ファイルをアップロードする署名付き URL を発行する(管理者かメンバー)",
+    summary="画像・動画・ファイルをアップロードする署名付き URL を発行する(メンバー)",
     description="PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と"
     "同じにする。違うと S3 が 403 を返す。ファイル(画像・動画でないもの)は、応答の "
     "content_disposition を Content-Disposition ヘッダーに付ける。"
@@ -199,12 +205,12 @@ def _own_pending(room_id: str, media_id: str, user_sub: str) -> timeline_store.P
     operation_id="createMediaUpload",
     tags=["media"],
     security=AUTH,
-    responses=responses(MediaUpload, errors=ROOM_NOT_FOUND),
+    responses=responses(MediaUpload, errors=ROOM_WRITE_ERRORS),
 )
 def create_media_upload(
     room_id: RoomIdPath, body: Annotated[CreateMediaUploadRequest, Body()], user: CurrentUser
 ) -> MediaUpload:
-    visible_room(room_id, user)
+    writable_room(room_id, user)
     media_id = uuid.uuid4().hex
     expires_at = datetime.now(UTC) + media_store.UPLOAD_URL_TTL
     key = media_store.media_key(room_id, media_id)
@@ -274,7 +280,7 @@ def create_upload_part_urls(
     body: Annotated[CreateUploadPartUrlsRequest, Body()],
     user: CurrentUser,
 ) -> UploadPartUrls:
-    visible_room(room_id, user)
+    writable_room(room_id, user)
     pending = _own_pending(room_id, media_id, user.sub)
     if pending.completed_event_id is not None:
         raise _conflict("もう保存した")
@@ -331,7 +337,7 @@ def complete_media_upload(
     user: CurrentUser,
     body: Annotated[CompleteMediaUploadRequest | None, Body()] = None,
 ) -> TimelineEvent:
-    room = visible_room(room_id, user)
+    room = writable_room(room_id, user)
     pending = _own_pending(room_id, media_id, user.sub)
     if pending.completed_event_id is not None:
         return _announce_again(room, _completed_event(room_id, pending.completed_event_id))

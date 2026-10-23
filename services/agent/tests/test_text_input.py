@@ -24,8 +24,14 @@ from voiceintercom.v1.text_status_pb2 import TextStatus
 
 
 def test_plan_reads_original_only_for_listeners_of_the_same_language() -> None:
-    assert plan_text("ja", ["ja", "en", "ko", "en"]) == TextPlan(True, ["en", "ko"])
-    assert plan_text("ja", ["en"]) == TextPlan(False, ["en"])
+    assert plan_text("ja", ["ja", "en", "ko", "en"]) == TextPlan(True, ["en", "ko"], ["en", "ko"])
+    assert plan_text("ja", ["en"]) == TextPlan(False, ["en"], ["en"])
+
+
+def test_plan_speaks_only_for_audio_listeners() -> None:
+    # 画面を開いているだけの人(音声を聞いていない)には、訳の字幕だけを作る
+    assert plan_text("ja", ["ja", "en", "ko"], ["en"]) == TextPlan(False, ["en", "ko"], ["en"])
+    assert plan_text("ja", ["ja", "en"], []) == TextPlan(False, ["en"], [])
 
 
 def test_plan_ignores_unknown_listener_languages() -> None:
@@ -33,7 +39,7 @@ def test_plan_ignores_unknown_listener_languages() -> None:
 
 
 def test_plan_with_unknown_sender_language_translates_into_all() -> None:
-    assert plan_text(None, ["ja", "en", None]) == TextPlan(False, ["en", "ja"])
+    assert plan_text(None, ["ja", "en", None]) == TextPlan(False, ["en", "ja"], ["en", "ja"])
 
 
 def test_plan_with_nobody_else() -> None:
@@ -241,11 +247,20 @@ class Harness:
         return FakeSink(self.audio, language)
 
     def handle(
-        self, sender_language: str | None, listeners: list[str | None], text: str, mid: str = "m1"
+        self,
+        sender_language: str | None,
+        listeners: list[str | None],
+        text: str,
+        mid: str = "m1",
+        audio_listeners: list[str | None] | None = None,
     ) -> None:
         asyncio.run(
             self.text.handle(
-                "alice", sender_language, listeners, TextMessage(message_id=mid, text=text)
+                "alice",
+                sender_language,
+                listeners,
+                TextMessage(message_id=mid, text=text),
+                audio_listeners,
             )
         )
 
@@ -284,6 +299,20 @@ def test_original_speech_starts_without_waiting_for_translation() -> None:
         assert ("en", "Yes.") in tts.calls
 
     asyncio.run(run())
+
+
+def test_no_speech_for_listeners_without_audio() -> None:
+    h = Harness(FakeTranslator({"en": "Yes.", "ko": "네."}))
+    # ja と ko の人は画面を開いているだけ
+    h.handle("ja", ["ja", "en", "ko"], "はい", audio_listeners=["en"])
+    assert h.tts.calls == [("en", "Yes.")]
+    # 訳の字幕は全員の言語に出す
+    assert [(c.language, c.translated) for c in h.captions.sent] == [
+        ("ja", False),
+        ("en", True),
+        ("ko", True),
+    ]
+    assert h.replies.states()[-1] == "STATE_COMPLETED"
 
 
 def test_no_original_speech_without_same_language_listeners() -> None:

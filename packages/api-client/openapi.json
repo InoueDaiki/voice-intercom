@@ -15,7 +15,7 @@
         "tags": [
           "rooms"
         ],
-        "summary": "ルームを取る(管理者かメンバー)",
+        "summary": "ルームを取る(メンバー、オーナーか管理者、同じテナントの Public なら誰でも)",
         "operationId": "getRoom",
         "parameters": [
           {
@@ -93,7 +93,8 @@
         "tags": [
           "rooms"
         ],
-        "summary": "ルームを消す(管理者)。LiveKit のルームにいる全員を切り、履歴とメディアも消す",
+        "summary": "ルームを消す(ルームを作ったテナントの管理者)",
+        "description": "LiveKit のルームにいる全員を切り、履歴とメディアも消す。",
         "operationId": "deleteRoom",
         "parameters": [
           {
@@ -165,7 +166,8 @@
         "tags": [
           "rooms"
         ],
-        "summary": "ルームの名前とメンバーを変える(管理者)。外した人が LiveKit のルームにいれば出す",
+        "summary": "ルームの名前と種別を変える(オーナーか管理者)",
+        "description": "種別は Public と Private の間でだけ変えられる。",
         "operationId": "updateRoom",
         "parameters": [
           {
@@ -191,6 +193,575 @@
           },
           "required": true
         },
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Room"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Connect の種別は変えられない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ルームがない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/rooms/{room_id}/join": {
+      "post": {
+        "tags": [
+          "rooms"
+        ],
+        "summary": "Public のルームに参加する(同じテナントの人)。参加していれば何もしない",
+        "operationId": "joinRoom",
+        "parameters": [
+          {
+            "description": "ルームの ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Room Id",
+              "description": "ルームの ID"
+            },
+            "name": "room_id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "参加した",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Room"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ルームがない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "アーカイブしたルーム",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/rooms/{room_id}/members": {
+      "get": {
+        "tags": [
+          "rooms"
+        ],
+        "summary": "メンバーの一覧(メンバー、オーナーか管理者)",
+        "operationId": "listRoomMembers",
+        "parameters": [
+          {
+            "description": "ルームの ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Room Id",
+              "description": "ルームの ID"
+            },
+            "name": "room_id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoomMemberList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ルームがない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/rooms/{room_id}/members/{user_id}": {
+      "put": {
+        "tags": [
+          "rooms"
+        ],
+        "summary": "メンバーに足すか、役割(オーナーかメンバー)を変える(オーナーか管理者)",
+        "description": "足せるのは、プロフィールを登録した自分のテナントの人だけ。承諾は待たずにメンバーになる。最後のオーナーをメンバーに戻すと 409。",
+        "operationId": "putRoomMember",
+        "parameters": [
+          {
+            "description": "ルームの ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Room Id",
+              "description": "ルームの ID"
+            },
+            "name": "room_id",
+            "in": "path"
+          },
+          {
+            "description": "user_id(Cognito の sub)",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "User Id",
+              "description": "user_id(Cognito の sub)"
+            },
+            "name": "user_id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutRoomMemberRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Room"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "自分のテナントの人ではない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ルームがない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "最後のオーナー、または Connect の申請中",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "rooms"
+        ],
+        "summary": "メンバーから外す。自分なら抜ける(誰でも)、ほかの人ならオーナーか管理者",
+        "description": "最後のオーナーは抜けられない(409)。外した人が LiveKit のルームにいれば出す。",
+        "operationId": "deleteRoomMember",
+        "parameters": [
+          {
+            "description": "ルームの ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Room Id",
+              "description": "ルームの ID"
+            },
+            "name": "room_id",
+            "in": "path"
+          },
+          {
+            "description": "user_id(Cognito の sub)",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "User Id",
+              "description": "user_id(Cognito の sub)"
+            },
+            "name": "user_id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "外した",
+            "content": {}
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ルームがない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "最後のオーナー、または Connect の申請中",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/rooms/{room_id}/archive": {
+      "post": {
+        "tags": [
+          "rooms"
+        ],
+        "summary": "アーカイブする(オーナーか管理者)",
+        "description": "読むだけのルームにし、LiveKit のルームにいる全員を切る。",
+        "operationId": "archiveRoom",
+        "parameters": [
+          {
+            "description": "ルームの ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Room Id",
+              "description": "ルームの ID"
+            },
+            "name": "room_id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Room"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ルームがない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Connect の申請中",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "rooms"
+        ],
+        "summary": "アーカイブを戻す(オーナーか管理者)",
+        "operationId": "unarchiveRoom",
+        "parameters": [
+          {
+            "description": "ルームの ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Room Id",
+              "description": "ルームの ID"
+            },
+            "name": "room_id",
+            "in": "path"
+          }
+        ],
         "responses": {
           "422": {
             "description": "Validation Error",
@@ -250,12 +821,353 @@
         ]
       }
     },
+    "/rooms/{room_id}/audio": {
+      "put": {
+        "tags": [
+          "rooms"
+        ],
+        "summary": "音声をつなぐ・切る(メンバー)。LiveKit の参加者の属性 audio を変える",
+        "description": "ルームにつないだまま、マイクとスピーカーを使うかを Agent に知らせる(翻訳の音声と読み上げは、audio が on の人の言語にだけ作る)。マイクの publish と音声の購読は、アプリが自分で切り替える。",
+        "operationId": "setRoomAudio",
+        "parameters": [
+          {
+            "description": "ルームの ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Room Id",
+              "description": "ルームの ID"
+            },
+            "name": "room_id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetAudioRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "変えた",
+            "content": {}
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ルームがない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ルームにつないでいない、申請中、アーカイブした",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/connect-requests/{room_id}/accept": {
+      "post": {
+        "tags": [
+          "connect"
+        ],
+        "summary": "Connect の申請を受ける(申請を受けたテナントの管理者)。受けた人もオーナーになる",
+        "operationId": "acceptConnectRequest",
+        "parameters": [
+          {
+            "description": "ルームの ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Room Id",
+              "description": "ルームの ID"
+            },
+            "name": "room_id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Room"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "申請がない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/connect-requests/{room_id}": {
+      "delete": {
+        "tags": [
+          "connect"
+        ],
+        "summary": "Connect の申請を断る・取り下げる(どちらかのテナントの管理者)",
+        "operationId": "deleteConnectRequest",
+        "parameters": [
+          {
+            "description": "ルームの ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+              "title": "Room Id",
+              "description": "ルームの ID"
+            },
+            "name": "room_id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "消した",
+            "content": {}
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "申請がない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/users/{user_id}/tenant": {
+      "put": {
+        "tags": [
+          "tenants"
+        ],
+        "summary": "ユーザーの所属を変える(運営者)。null なら外す",
+        "description": "入っているルームのメンバーからは外さない。",
+        "operationId": "setUserTenant",
+        "parameters": [
+          {
+            "description": "user_id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "User Id",
+              "description": "user_id"
+            },
+            "name": "user_id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetUserTenantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "テナントか、プロフィールを登録したユーザーがない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/rooms/{room_id}/timeline": {
       "get": {
         "tags": [
           "timeline"
         ],
-        "summary": "ルームの履歴を新しい順に取る(管理者かメンバー)",
+        "summary": "ルームの履歴を新しい順に取る(メンバー)",
         "operationId": "listTimeline",
         "parameters": [
           {
@@ -355,6 +1267,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Connect の申請中",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -369,7 +1291,7 @@
         "tags": [
           "timeline"
         ],
-        "summary": "履歴の1件を取る(管理者かメンバー)。消した行は墓石(deleted)で返す",
+        "summary": "履歴の1件を取る(メンバー)。消した行は墓石(deleted)で返す",
         "description": "強い整合の読み取りなので、保存や削除の直後でも反映されている。アプリは、データチャネル(topic deletion)で届いた知らせを、これで確かめる。",
         "operationId": "getTimelineEvent",
         "parameters": [
@@ -658,7 +1580,7 @@
         "tags": [
           "media"
         ],
-        "summary": "画像・動画・ファイルをアップロードする署名付き URL を発行する(管理者かメンバー)",
+        "summary": "画像・動画・ファイルをアップロードする署名付き URL を発行する(メンバー)",
         "description": "PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。ファイル(画像・動画でないもの)は、応答の content_disposition を Content-Disposition ヘッダーに付ける。アップロードしたら complete を呼ぶ。size_bytes が 16MB 以上なら、upload_url は null で、multipart(パートの大きさと数)を返す。パートの署名付き URL は parts で取る。width・height・duration_ms は、送信者が測った値をそのまま履歴に入れる(API は確かめない)。",
         "operationId": "createMediaUpload",
         "parameters": [
@@ -728,6 +1650,16 @@
           },
           "404": {
             "description": "ルームがない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Connect の申請中か、アーカイブしたルーム",
             "content": {
               "application/json": {
                 "schema": {
@@ -1200,136 +2132,6 @@
         }
       }
     },
-    "/rooms": {
-      "get": {
-        "tags": [
-          "rooms"
-        ],
-        "summary": "ルームの一覧。管理者にはすべて、それ以外の人には自分がメンバーのルームを返す",
-        "operationId": "listRooms",
-        "responses": {
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "200": {
-            "description": "成功",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RoomList"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "トークンがない、または不正",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "このトークンでは使えない",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      },
-      "post": {
-        "tags": [
-          "rooms"
-        ],
-        "summary": "ルームを作る(管理者)。同じ room_id の前のルームの履歴とメディアが残っていれば消す",
-        "operationId": "createRoom",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateRoomRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          },
-          "201": {
-            "description": "作った",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Room"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "トークンがない、または不正",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "このトークンでは使えない",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "同じ room_id のルームが既にある",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
     "/users/me": {
       "get": {
         "tags": [
@@ -1465,7 +2267,8 @@
         "tags": [
           "users"
         ],
-        "summary": "ユーザーの一覧(管理者)。プロフィールを登録した人だけを返す",
+        "summary": "ユーザーの一覧。プロフィールを登録した人だけを返す",
+        "description": "運営者にはすべての人(所属の無い人も)、それ以外の人には自分のテナントの人を返す(ルームに招待する相手を選ぶ)。",
         "operationId": "listUsers",
         "responses": {
           "422": {
@@ -1521,7 +2324,8 @@
         "tags": [
           "livekit"
         ],
-        "summary": "LiveKit の参加用トークンを発行する(管理者かルームのメンバー)",
+        "summary": "LiveKit の参加用トークンを発行する(ルームのメンバー)",
+        "description": "参加者の属性に language と audio(on か off)を入れる。",
         "operationId": "createLiveKitToken",
         "requestBody": {
           "content": {
@@ -1585,7 +2389,428 @@
             }
           },
           "409": {
-            "description": "プロフィール(表示名と言語)をまだ登録していない",
+            "description": "プロフィール(表示名と言語)をまだ登録していない、Connect の申請中、アーカイブしたルーム",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/rooms": {
+      "get": {
+        "tags": [
+          "rooms"
+        ],
+        "summary": "ルームの一覧",
+        "description": "scope が member(既定)なら自分がメンバーのルーム(アーカイブしたものも)、joinable なら自分のテナントの Public のうち参加していないもの、tenant なら自分のテナントに関わるすべてのルーム(管理者。申請中の Connect も)を名前の順に返す。",
+        "operationId": "listRooms",
+        "parameters": [
+          {
+            "description": "どのルームを返すか",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "member",
+                "joinable",
+                "tenant"
+              ],
+              "title": "Scope",
+              "description": "どのルームを返すか",
+              "default": "member"
+            },
+            "name": "scope",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoomList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "rooms"
+        ],
+        "summary": "ルームを作る。作った人がオーナーになる",
+        "description": "member_ids は同じテナントの人だけ。Connect はここでは作れない(POST /connect-requests)。",
+        "operationId": "createRoom",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRoomRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "作った",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Room"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "ほかのテナントの人が入っている",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/connect-requests": {
+      "get": {
+        "tags": [
+          "connect"
+        ],
+        "summary": "Connect の申請の一覧(管理者)。自分のテナントが出したものと、受けたもの",
+        "operationId": "listConnectRequests",
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectRequestList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "connect"
+        ],
+        "summary": "ほかのテナントに Connect を申請する(管理者)。申請した人がオーナーになる",
+        "operationId": "createConnectRequest",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateConnectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "申請した",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectRequest"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "自分のテナント",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "相手のテナントがない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/tenants": {
+      "get": {
+        "tags": [
+          "tenants"
+        ],
+        "summary": "テナントの一覧(運営者)",
+        "operationId": "listTenants",
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "tenants"
+        ],
+        "summary": "テナントを作る(運営者)",
+        "operationId": "createTenant",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTenantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "作った",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tenant"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "トークンがない、または不正",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "このトークンでは使えない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "同じ tenant_id のテナントが既にある",
             "content": {
               "application/json": {
                 "schema": {
@@ -1769,6 +2994,80 @@
         ],
         "title": "CompletedPart"
       },
+      "ConnectRequest": {
+        "properties": {
+          "room": {
+            "$ref": "#/components/schemas/Room"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "outgoing",
+              "incoming"
+            ],
+            "title": "Direction",
+            "description": "自分のテナントが申請した(outgoing)か、受けた(incoming)か"
+          },
+          "from_tenant_name": {
+            "type": "string",
+            "title": "From Tenant Name",
+            "description": "申請したテナントの表示名"
+          },
+          "to_tenant_name": {
+            "type": "string",
+            "title": "To Tenant Name",
+            "description": "申請を受けたテナントの表示名"
+          }
+        },
+        "type": "object",
+        "required": [
+          "room",
+          "direction",
+          "from_tenant_name",
+          "to_tenant_name"
+        ],
+        "title": "ConnectRequest",
+        "description": "Connect の申請(申請中の Connect のルーム)。"
+      },
+      "ConnectRequestList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectRequest"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "ConnectRequestList"
+      },
+      "CreateConnectRequest": {
+        "properties": {
+          "tenant_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,30}[a-z0-9]$",
+            "title": "Tenant Id",
+            "description": "相手のテナント"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "description": "ルームの表示名"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tenant_id",
+          "name"
+        ],
+        "title": "CreateConnectRequest"
+      },
       "CreateMediaUploadRequest": {
         "properties": {
           "content_type": {
@@ -1854,12 +3153,6 @@
       },
       "CreateRoomRequest": {
         "properties": {
-          "room_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,64}$",
-            "title": "Room Id",
-            "description": "ルームの ID"
-          },
           "name": {
             "type": "string",
             "maxLength": 100,
@@ -1867,22 +3160,53 @@
             "title": "Name",
             "description": "ルームの表示名"
           },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "public",
+              "private"
+            ],
+            "title": "Kind"
+          },
           "member_ids": {
             "items": {
               "type": "string"
             },
             "type": "array",
             "title": "Member Ids",
-            "description": "メンバーの user_id(Cognito の sub)。返すときは user_id の順",
+            "description": "一緒にメンバーにする人(同じテナントの人)。作った人は入れなくてよい",
             "default": []
           }
         },
         "type": "object",
         "required": [
-          "room_id",
-          "name"
+          "name",
+          "kind"
         ],
         "title": "CreateRoomRequest"
+      },
+      "CreateTenantRequest": {
+        "properties": {
+          "tenant_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,30}[a-z0-9]$",
+            "title": "Tenant Id",
+            "description": "テナントの ID"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "description": "テナントの表示名"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tenant_id",
+          "name"
+        ],
+        "title": "CreateTenantRequest"
       },
       "CreateUploadPartUrlsRequest": {
         "properties": {
@@ -1960,6 +3284,12 @@
             "pattern": "^[A-Za-z0-9_-]{1,64}$",
             "title": "Room Name",
             "description": "入るルームの名前"
+          },
+          "audio": {
+            "type": "boolean",
+            "title": "Audio",
+            "description": "音声をつなぐ(マイクとスピーカーを使う)か。false ならデータだけでつなぐ",
+            "default": true
           }
         },
         "type": "object",
@@ -2096,6 +3426,21 @@
           "skipped"
         ],
         "title": "NotificationResult"
+      },
+      "PutRoomMemberRequest": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "member"
+            ],
+            "title": "Role",
+            "default": "member"
+          }
+        },
+        "type": "object",
+        "title": "PutRoomMemberRequest"
       },
       "PutTimelineEventRequest": {
         "properties": {
@@ -2290,6 +3635,48 @@
             "title": "Name",
             "description": "ルームの表示名"
           },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "public",
+              "private",
+              "connect"
+            ],
+            "title": "Kind"
+          },
+          "tenant_id": {
+            "type": "string",
+            "title": "Tenant Id",
+            "description": "ルームを作ったテナント(Connect では申請した側)"
+          },
+          "connect_tenant_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connect Tenant Id",
+            "description": "Connect の相手のテナント(申請を受けた側)。Connect でなければ null"
+          },
+          "connect_status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "active"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connect Status",
+            "description": "Connect の申請中(pending)か、受けられた(active)か"
+          },
           "member_ids": {
             "items": {
               "type": "string"
@@ -2297,6 +3684,27 @@
             "type": "array",
             "title": "Member Ids",
             "description": "メンバーの user_id(Cognito の sub)。返すときは user_id の順"
+          },
+          "owner_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Owner Ids",
+            "description": "オーナーの user_id(user_id の順)"
+          },
+          "archived_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "ISO 8601(UTC)"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At",
+            "description": "アーカイブした時刻"
           },
           "created_at": {
             "type": "string",
@@ -2313,7 +3721,10 @@
         "required": [
           "room_id",
           "name",
+          "kind",
+          "tenant_id",
           "member_ids",
+          "owner_ids",
           "created_at",
           "updated_at"
         ],
@@ -2334,6 +3745,100 @@
           "items"
         ],
         "title": "RoomList"
+      },
+      "RoomMember": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "member"
+            ],
+            "title": "Role"
+          },
+          "tenant_id": {
+            "type": "string",
+            "title": "Tenant Id",
+            "description": "その人のテナント"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name",
+            "description": "表示名。プロフィールが無ければ null"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "role",
+          "tenant_id",
+          "display_name"
+        ],
+        "title": "RoomMember"
+      },
+      "RoomMemberList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RoomMember"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "RoomMemberList"
+      },
+      "SetAudioRequest": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "description": "マイクとスピーカーを使うか(音声をつないでいるか)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "title": "SetAudioRequest"
+      },
+      "SetUserTenantRequest": {
+        "properties": {
+          "tenant_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,30}[a-z0-9]$",
+                "description": "テナントの ID"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Id",
+            "description": "入れるテナント。null なら所属を外す"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tenant_id"
+        ],
+        "title": "SetUserTenantRequest"
       },
       "SpeakingNotificationRequest": {
         "properties": {
@@ -2360,6 +3865,48 @@
           "speaker_id"
         ],
         "title": "SpeakingNotificationRequest"
+      },
+      "Tenant": {
+        "properties": {
+          "tenant_id": {
+            "type": "string",
+            "title": "Tenant Id",
+            "description": "テナントの ID"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "テナントの表示名"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At",
+            "description": "ISO 8601(UTC)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tenant_id",
+          "name",
+          "created_at"
+        ],
+        "title": "Tenant"
+      },
+      "TenantList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Tenant"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "TenantList"
       },
       "TextNotificationRequest": {
         "properties": {
@@ -2751,20 +4298,21 @@
             ],
             "title": "Name"
           },
-          "member_ids": {
+          "kind": {
             "anyOf": [
               {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array",
-                "description": "メンバーの user_id(Cognito の sub)。返すときは user_id の順"
+                "type": "string",
+                "enum": [
+                  "public",
+                  "private"
+                ]
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Member Ids"
+            "title": "Kind",
+            "description": "Public と Private の間でだけ変えられる"
           }
         },
         "type": "object",
@@ -2857,6 +4405,18 @@
             ],
             "title": "Language",
             "description": "話す言語。翻訳音声もこの言語で聞く"
+          },
+          "tenant_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Id",
+            "description": "所属するテナント。運営者が決める"
           },
           "created_at": {
             "type": "string",

@@ -3,8 +3,11 @@ import { UserManager, WebStorageStateStore, type User } from "oidc-client-ts";
 
 import { config } from "./config.ts";
 
-// 管理コンソールを使えるグループ(infra/modules/cognito の aws_cognito_user_group.admin)
+// 管理コンソールを使えるグループ(infra/modules/cognito の aws_cognito_user_group)。
+// テナントの管理者(自分のテナントのルーム・ユーザー・Connect の申請を扱う)
 export const ADMIN_GROUP = "admin";
+// 運営者(テナントを作り、ユーザーの所属を決める)
+export const OPERATOR_GROUP = "operator";
 
 // ビルドのとき(SPA の index.html を作るとき)は Node で読み込まれ window が無いので、
 // 最初に使うときに作る

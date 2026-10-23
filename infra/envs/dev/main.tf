@@ -93,28 +93,47 @@ module "timeline_table" {
   point_in_time_recovery = false
 }
 
-# ユーザーのプロフィール(表示名、話す言語、翻訳先の言語)と FCM の端末トークン。user_id は Cognito の sub
+# ユーザーのプロフィール(表示名、話す言語、翻訳先の言語、所属するテナント)と FCM の端末トークン。
+# user_id は Cognito の sub。テナントのユーザーは GSI(tenant_id-index)で取る
 module "users_table" {
   source = "../../modules/dynamodb"
 
-  name                   = "${local.name_prefix}-users"
-  hash_key               = "user_id"
+  name     = "${local.name_prefix}-users"
+  hash_key = "user_id"
+  global_secondary_indexes = [
+    { name = "tenant_id-index", hash_key = "tenant_id", projection_type = "ALL" },
+  ]
   deletion_protection    = false
   point_in_time_recovery = false
 }
 
-# ルームの設定(名前、作った時刻)。メンバーは room_members に持つ(services/api の store.py)
+# テナント(運営者が作る。services/api の tenants.py)
+module "tenants_table" {
+  source = "../../modules/dynamodb"
+
+  name                   = "${local.name_prefix}-tenants"
+  hash_key               = "tenant_id"
+  deletion_protection    = false
+  point_in_time_recovery = false
+}
+
+# ルームの設定(名前、テナント、種別、アーカイブ、Connect の相手)。メンバーは room_members に持つ
+# (services/api の store.py)。テナントのルームは GSI(作ったテナントと、Connect の相手)で取る
 module "rooms_table" {
   source = "../../modules/dynamodb"
 
-  name                   = "${local.name_prefix}-rooms"
-  hash_key               = "room_id"
+  name     = "${local.name_prefix}-rooms"
+  hash_key = "room_id"
+  global_secondary_indexes = [
+    { name = "tenant_id-index", hash_key = "tenant_id", projection_type = "ALL" },
+    { name = "connect_tenant_id-index", hash_key = "connect_tenant_id", projection_type = "ALL" },
+  ]
   deletion_protection    = false
   point_in_time_recovery = false
 }
 
-# ルームのメンバー。1人1行(room_id × user_id)。ルームのメンバーはテーブルの Query で、
-# 「自分がメンバーのルーム」は GSI(user_id-index)の Query で取る
+# ルームのメンバー。1人1行(room_id × user_id)で、役割(owner か member)とその人のテナントを持つ。
+# ルームのメンバーはテーブルの Query で、「自分がメンバーのルーム」は GSI(user_id-index)の Query で取る
 module "room_members_table" {
   source = "../../modules/dynamodb"
 
@@ -132,7 +151,10 @@ locals {
   table_arns = [
     module.timeline_table.table_arn,
     module.users_table.table_arn,
+    "${module.users_table.table_arn}/index/*",
+    module.tenants_table.table_arn,
     module.rooms_table.table_arn,
+    "${module.rooms_table.table_arn}/index/*",
     module.room_members_table.table_arn,
     "${module.room_members_table.table_arn}/index/*",
   ]
@@ -216,10 +238,10 @@ data "aws_iam_policy_document" "api" {
     resources = local.table_arns
   }
 
-  # 管理者向けのルームとユーザーの一覧(すべてを返すので Scan で取る)。timeline は Query だけにする
+  # 運営者向けのユーザーとテナントの一覧(すべてを返すので Scan で取る)。timeline は Query だけにする
   statement {
     actions   = ["dynamodb:Scan"]
-    resources = [module.users_table.table_arn, module.rooms_table.table_arn, module.room_members_table.table_arn]
+    resources = [module.users_table.table_arn, module.tenants_table.table_arn]
   }
 
   # 署名付き URL の発行(アップロードと、必要なら直接の取得)。HeadObject は GetObject の権限で動く。
@@ -295,6 +317,7 @@ module "api" {
     OIDC_CLIENT_IDS    = join(",", local.client_ids)
     TIMELINE_TABLE     = module.timeline_table.table_name
     USERS_TABLE        = module.users_table.table_name
+    TENANTS_TABLE      = module.tenants_table.table_name
     ROOMS_TABLE        = module.rooms_table.table_name
     ROOM_MEMBERS_TABLE = module.room_members_table.table_name
     MEDIA_BUCKET       = module.media.bucket_name

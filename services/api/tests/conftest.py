@@ -18,6 +18,7 @@ LIVEKIT_API_SECRET = "secret-secret-secret-secret-secret"
 ROOMS_TABLE = "voice-intercom-test-rooms"
 ROOM_MEMBERS_TABLE = "voice-intercom-test-room-members"
 USERS_TABLE = "voice-intercom-test-users"
+TENANTS_TABLE = "voice-intercom-test-tenants"
 
 
 @pytest.fixture(scope="session")
@@ -71,6 +72,7 @@ def env(monkeypatch: pytest.MonkeyPatch, verifier: auth.TokenVerifier) -> Iterat
         "ROOMS_TABLE": ROOMS_TABLE,
         "ROOM_MEMBERS_TABLE": ROOM_MEMBERS_TABLE,
         "USERS_TABLE": USERS_TABLE,
+        "TENANTS_TABLE": TENANTS_TABLE,
     }.items():
         monkeypatch.setenv(name, value)
     config.get_settings.cache_clear()
@@ -81,7 +83,7 @@ def env(monkeypatch: pytest.MonkeyPatch, verifier: auth.TokenVerifier) -> Iterat
 
 @pytest.fixture
 def tables(monkeypatch: pytest.MonkeyPatch, env: None) -> Iterator[None]:
-    """moto で DynamoDB を模擬し、rooms、room_members、users のテーブルを作る。
+    """moto で DynamoDB を模擬し、rooms、room_members、users、tenants のテーブルを作る。
 
     キーは dev 環境と揃える。
     """
@@ -94,34 +96,50 @@ def tables(monkeypatch: pytest.MonkeyPatch, env: None) -> Iterator[None]:
     monkeypatch.setenv("AWS_REGION", "ap-northeast-1")
     with mock_aws():
         dynamodb = boto3.client("dynamodb")
-        for name, key in [(ROOMS_TABLE, "room_id"), (USERS_TABLE, "user_id")]:
+
+        def gsi(name: str, hash_key: str, range_key: str | None = None) -> dict[str, Any]:
+            keys = [{"AttributeName": hash_key, "KeyType": "HASH"}]
+            if range_key:
+                keys.append({"AttributeName": range_key, "KeyType": "RANGE"})
+            projection = "KEYS_ONLY" if range_key else "ALL"
+            return {
+                "IndexName": name,
+                "KeySchema": keys,
+                "Projection": {"ProjectionType": projection},
+            }
+
+        def create(
+            name: str, key: str, range_key: str | None = None, gsis: tuple[dict[str, Any], ...] = ()
+        ) -> None:
+            attrs = {key, range_key, *(k["AttributeName"] for g in gsis for k in g["KeySchema"])}
+            keys = [{"AttributeName": key, "KeyType": "HASH"}]
+            if range_key:
+                keys.append({"AttributeName": range_key, "KeyType": "RANGE"})
             dynamodb.create_table(
                 TableName=name,
                 BillingMode="PAY_PER_REQUEST",
-                AttributeDefinitions=[{"AttributeName": key, "AttributeType": "S"}],
-                KeySchema=[{"AttributeName": key, "KeyType": "HASH"}],
+                AttributeDefinitions=[
+                    {"AttributeName": a, "AttributeType": "S"} for a in sorted(attrs - {None})
+                ],
+                KeySchema=keys,
+                **({"GlobalSecondaryIndexes": list(gsis)} if gsis else {}),
             )
-        dynamodb.create_table(
-            TableName=ROOM_MEMBERS_TABLE,
-            BillingMode="PAY_PER_REQUEST",
-            AttributeDefinitions=[
-                {"AttributeName": "room_id", "AttributeType": "S"},
-                {"AttributeName": "user_id", "AttributeType": "S"},
-            ],
-            KeySchema=[
-                {"AttributeName": "room_id", "KeyType": "HASH"},
-                {"AttributeName": "user_id", "KeyType": "RANGE"},
-            ],
-            GlobalSecondaryIndexes=[
-                {
-                    "IndexName": store.MEMBER_ROOMS_INDEX,
-                    "KeySchema": [
-                        {"AttributeName": "user_id", "KeyType": "HASH"},
-                        {"AttributeName": "room_id", "KeyType": "RANGE"},
-                    ],
-                    "Projection": {"ProjectionType": "KEYS_ONLY"},
-                }
-            ],
+
+        create(
+            ROOMS_TABLE,
+            "room_id",
+            gsis=(
+                gsi(store.TENANT_ROOMS_INDEX, "tenant_id"),
+                gsi(store.CONNECT_ROOMS_INDEX, "connect_tenant_id"),
+            ),
+        )
+        create(USERS_TABLE, "user_id", gsis=(gsi(store.TENANT_USERS_INDEX, "tenant_id"),))
+        create(TENANTS_TABLE, "tenant_id")
+        create(
+            ROOM_MEMBERS_TABLE,
+            "room_id",
+            "user_id",
+            gsis=(gsi(store.MEMBER_ROOMS_INDEX, "user_id", "room_id"),),
         )
         store._table.cache_clear()  # pyright: ignore[reportPrivateUsage]
         yield

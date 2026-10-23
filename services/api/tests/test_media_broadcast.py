@@ -51,7 +51,9 @@ class FakeNotify:
 @pytest.fixture(autouse=True)
 def timeline(tables: None, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     setup_timeline(monkeypatch)
-    store.create_room("room-m", "現場M", ["member-1", "member-2", "member-3", "member-4"])
+    store.create_room(
+        "room-m", "現場M", ["member-1", "member-2", "member-3", "member-4"], tenant_id="t1"
+    )
     store.put_user("member-1", display_name="太郎", language="ja")
     yield
     teardown_timeline()
@@ -342,18 +344,17 @@ def test_file_message_and_push(make_token: Token, lk: FakeLiveKit, push: FakeNot
     assert push.calls[0]["body"] == "太郎さんがファイルを送りました"
 
 
-def test_admin_upload_pushes_to_all_members(
+def test_upload_pushes_to_absent_members(
     make_token: Token, lk: FakeLiveKit, push: FakeNotify
 ) -> None:
-    # メンバーではない管理者(管理コンソール)が上げても、同じに届く
-    admin = make_token(sub="admin-1")
+    token = make_token(sub="member-1", **{"cognito:groups": []})
     lk.participants = [("member-2", STANDARD)]
 
-    status, _ = upload(admin)
+    status, _ = upload(token)
 
     assert status == 200
     assert len(lk.sent) == 1
-    assert push.calls[0]["user_ids"] == ["member-1", "member-3", "member-4"]
+    assert push.calls[0]["user_ids"] == ["member-3", "member-4"]
 
 
 def test_everyone_present_sends_no_push(
@@ -370,7 +371,7 @@ def test_everyone_present_sends_no_push(
 def test_push_is_throttled_per_recipient_and_room(
     make_token: Token, member: str, lk: FakeLiveKit, push: FakeNotify
 ) -> None:
-    store.create_room("room-x", "現場X", ["member-1", "member-3"])
+    store.create_room("room-x", "現場X", ["member-1", "member-3"], tenant_id="t1")
 
     upload(member)
     # 続けて送っても、間隔の内側の人には送らない

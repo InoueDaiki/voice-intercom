@@ -9,7 +9,7 @@ import { type LocalAudioTrack, ParticipantKind } from "livekit-client";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import type { TimelineEvent } from "../api.ts";
-import { deferred, fakeMic, fakeRoom } from "../testing/fakeRoom.ts";
+import { deferred, fakeMic, fakeRoom, fakeSpeaker } from "../testing/fakeRoom.ts";
 import {
   caption as textCaption,
   deletionFor,
@@ -309,5 +309,114 @@ describe("入室とマイク", () => {
     expect(mic.track.stop).not.toHaveBeenCalled();
     session.dispose();
     expect(mic.track.stop).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("音声をつなぐ・切る", () => {
+  test("audio が false なら、データだけでつなぐ(マイクを publish せず、音声を購読しない)", async () => {
+    const { room, asRoom } = fakeRoom();
+    const bob = fakeSpeaker("bob");
+    room.remoteParticipants.set("bob", bob.participant);
+    const createMicTrack = vi.fn(async () => fakeMic().asTrack);
+    const startBackground = vi.fn(async () => true);
+    const session = newSession({ room: asRoom, audio: false, createMicTrack, platform: { startBackground } });
+
+    await session.connect("wss://example", "token");
+    session.setPressing(true);
+    await flush();
+
+    expect(session.connected).toBe(true);
+    expect(createMicTrack).not.toHaveBeenCalled();
+    expect(bob.pub.setSubscribed).not.toHaveBeenCalled();
+    expect(startBackground).not.toHaveBeenCalled();
+    // 音声をつないでいなければ、PTT は押せない
+    expect(session.pressing).toBe(false);
+  });
+
+  test("つないだまま音声をつなぐと、マイクを publish し、購読し、属性を変える", async () => {
+    const { room, asRoom } = fakeRoom();
+    const bob = fakeSpeaker("bob");
+    room.remoteParticipants.set("bob", bob.participant);
+    const mic = fakeMic();
+    const setAudioAttribute = vi.fn(async () => {});
+    const session = newSession({
+      room: asRoom,
+      audio: false,
+      createMicTrack: async () => mic.asTrack,
+      setAudioAttribute,
+    });
+    await session.connect("wss://example", "token");
+
+    await session.setAudio(true);
+
+    expect(session.audio).toBe(true);
+    expect(room.localParticipant.publishTrack).toHaveBeenCalledTimes(1);
+    expect(mic.track.mute).toHaveBeenCalled();
+    expect(bob.pub.setSubscribed).toHaveBeenCalledWith(true);
+    expect(setAudioAttribute).toHaveBeenCalledWith(true);
+
+    session.setPressing(true);
+    await flush();
+    expect(session.talking).toBe(true);
+  });
+
+  test("音声を切ると、PTT を離し、マイクを unpublish して放し、購読をやめる", async () => {
+    const { room, asRoom } = fakeRoom();
+    const bob = fakeSpeaker("bob");
+    room.remoteParticipants.set("bob", bob.participant);
+    const mic = fakeMic();
+    const releaseMicTrack = vi.fn();
+    const setAudioAttribute = vi.fn(async () => {});
+    const session = newSession({
+      room: asRoom,
+      createMicTrack: async () => mic.asTrack,
+      releaseMicTrack,
+      setAudioAttribute,
+    });
+    await session.connect("wss://example", "token");
+    // トークンで audio を入れたので、入っただけでは属性を変えない
+    expect(setAudioAttribute).not.toHaveBeenCalled();
+    expect(bob.pub.isSubscribed).toBe(true);
+    session.setPressing(true);
+
+    await session.setAudio(false);
+
+    expect(session.pressing).toBe(false);
+    expect(session.talking).toBe(false);
+    expect(room.localParticipant.unpublishTrack).toHaveBeenCalledWith(mic.asTrack, false);
+    expect(releaseMicTrack).toHaveBeenCalledWith(mic.asTrack);
+    expect(bob.pub.setSubscribed).toHaveBeenLastCalledWith(false);
+    expect(setAudioAttribute).toHaveBeenCalledWith(false);
+    // dispose で2度は放さない
+    session.dispose();
+    expect(releaseMicTrack).toHaveBeenCalledTimes(1);
+  });
+
+  test("入室を待つ間に音声を切り替えたら、入室した後に属性を揃える", async () => {
+    const connecting = deferred<void>();
+    const { asRoom } = fakeRoom({ connect: () => connecting.promise });
+    const setAudioAttribute = vi.fn(async () => {});
+    const createMicTrack = vi.fn(async () => fakeMic().asTrack);
+    const session = newSession({ room: asRoom, audio: false, createMicTrack, setAudioAttribute });
+
+    const joined = session.connect("wss://example", "token");
+    const switched = session.setAudio(true);
+    connecting.resolve();
+    await joined;
+    await switched;
+    await flush();
+
+    expect(createMicTrack).toHaveBeenCalledTimes(1);
+    expect(setAudioAttribute).toHaveBeenCalledWith(true);
+  });
+
+  test("つないでいない間に切り替えたら、次に入るときに使う", async () => {
+    const setAudioAttribute = vi.fn(async () => {});
+    const session = newSession({ audio: false, setAudioAttribute });
+
+    await session.setAudio(true);
+
+    expect(session.audio).toBe(true);
+    expect(setAudioAttribute).not.toHaveBeenCalled();
   });
 });

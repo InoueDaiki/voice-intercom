@@ -265,27 +265,39 @@ SSM の値を変えたときは、新しいタスクでないと読み直さな�
 
 ## REST API
 
-`services/api`(API Gateway + Lambda)。`/health` 以外はアクセストークン(Bearer)が要る。管理者は `cognito:groups` に `admin` がある人。型の正は Pydantic のモデルで、仕様は [packages/api-client/openapi.json](packages/api-client/openapi.json)。
+`services/api`(API Gateway + Lambda)。`/health` 以外はアクセストークン(Bearer)が要る。管理者(テナントの管理者)は `cognito:groups` に `admin` がある人、運営者は `operator` がある人。利用者は users の行の `tenant_id` でテナントに属し、ルームの一覧・作成・招待・管理者の権限は自分のテナントの中だけ(Connect だけが2つのテナントにまたがる。設計メモの「テナントとルームの種別」)。管理者もメンバーでなければ、ルームに入れず履歴も読めない。型の正は Pydantic のモデルで、仕様は [packages/api-client/openapi.json](packages/api-client/openapi.json)。
 
 | エンドポイント | 内容 | 使える人 |
 | --- | --- | --- |
 | `GET /health` | 死活監視 | だれでも |
-| `GET /rooms` | ルームの一覧(`{items}`) | 管理者はすべて、それ以外は自分がメンバーのルーム |
-| `POST /rooms` | ルームを作る。同じ `room_id` があれば 409。同じ `room_id` の前のルームの履歴とメディアが残っていれば消す | 管理者 |
-| `GET /rooms/{room_id}` | ルームを取る | 管理者、メンバー |
-| `PATCH /rooms/{room_id}` | 名前とメンバー(`member_ids`、Cognito の sub)を変える。`member_ids` は user_id の順で返す。外した人が LiveKit のルームにいれば出す | 管理者 |
-| `DELETE /rooms/{room_id}` | ルームを消す(204)。LiveKit のルームを消して全員(Agent も)を切り、履歴(timeline)と S3 の `rooms/<room_id>/` を消して CloudFront を無効にする。無いルームは 404 だが、後始末はやり直す | 管理者 |
+| `GET /rooms` | ルームの一覧(`{items}`、名前の順)。`scope` が `member`(既定)なら自分がメンバーのルーム(アーカイブしたものも)、`joinable` なら自分のテナントの Public で参加していないもの、`tenant` なら自分のテナントに関わるすべて(申請中の Connect も) | だれでも(`tenant` は管理者) |
+| `POST /rooms` | ルームを作る(`{name, kind: "public" \| "private", member_ids}`)。`room_id` はサーバーが乱数で作る。作った人がオーナーになる。`member_ids` は同じテナントの人だけ(違えば 400) | テナントに属する人 |
+| `GET /rooms/{room_id}` | ルームを取る。`kind`、`tenant_id`、`connect_tenant_id`・`connect_status`(Connect)、`member_ids`、`owner_ids`、`archived_at` を返す | メンバー、オーナーか管理者、同じテナントの Public なら誰でも |
+| `PATCH /rooms/{room_id}` | 名前と種別(Public と Private の間だけ)を変える | オーナーか管理者 |
+| `DELETE /rooms/{room_id}` | ルームを消す(204)。LiveKit のルームを消して全員(Agent も)を切り、履歴(timeline)と S3 の `rooms/<room_id>/` を消して CloudFront を無効にする。無いルームは 404 だが、後始末はやり直す | ルームを作ったテナントの管理者 |
+| `POST /rooms/{room_id}/join` | Public に参加する。参加していれば何もしない。アーカイブしていれば 409 | 同じテナントの人 |
+| `GET /rooms/{room_id}/members` | メンバーの一覧(`user_id`、`role`、`tenant_id`、`display_name`) | メンバー、オーナーか管理者 |
+| `PUT /rooms/{room_id}/members/{user_id}` | メンバーに足すか、役割(`{role: "owner" \| "member"}`)を変える。承諾は待たない。足せるのは自分のテナントの人だけ(違えば 400、相手のテナントのメンバーは 403)。最後のオーナーをメンバーに戻すと 409 | オーナーか管理者 |
+| `DELETE /rooms/{room_id}/members/{user_id}` | 外す(204)。自分なら抜ける。最後のオーナーは 409(アーカイブする)。外した人が LiveKit のルームにいれば出す | 自分、オーナーか管理者(自分のテナントの人だけ) |
+| `POST /rooms/{room_id}/archive`、`DELETE .../archive` | アーカイブする・戻す。アーカイブすると LiveKit のルームを消して全員を切り、トークン・アップロード・削除を 409 にする(履歴は読める) | オーナーか管理者 |
+| `PUT /rooms/{room_id}/audio` | 音声をつなぐ・切る(`{enabled}`、204)。LiveKit の参加者の属性 `audio` を `on` / `off` にする(Agent は `on` の人の言語にだけ翻訳の音声と読み上げを作る)。LiveKit のルームにいなければ 409 | メンバー |
+| `GET /connect-requests` | Connect の申請(申請中の Connect のルーム)。`direction` が `outgoing`(出した)か `incoming`(届いた) | 管理者 |
+| `POST /connect-requests` | 相手のテナントに Connect を申請する(`{tenant_id, name}`)。申請した人がオーナーになる。自分のテナントは 400、無いテナントは 404 | 管理者 |
+| `POST /connect-requests/{room_id}/accept` | 申請を受ける。受けた人もオーナーになり、ルームが使えるようになる | 申請を受けたテナントの管理者 |
+| `DELETE /connect-requests/{room_id}` | 申請を断る・取り下げる(ルームを消す) | どちらかのテナントの管理者 |
+| `GET /tenants`、`POST /tenants` | テナントの一覧と作成(`{tenant_id, name}`。`tenant_id` は英小文字・数字・ハイフンの 2〜32 文字) | 運営者 |
+| `PUT /users/{user_id}/tenant` | ユーザーの所属を変える(`{tenant_id}`、null で外す) | 運営者 |
 | `GET /users/me` | 自分のプロフィール(表示名、言語)。未登録なら 404 | 本人 |
 | `PUT /users/me` | プロフィールを登録・更新する | 本人 |
 | `PUT /users/me/devices` | push 通知の端末トークンを登録する(`{token, platform: "ios" \| "android"}`、204)。アプリの起動時とトークンの更新時に呼ぶ | 本人 |
 | `DELETE /users/me/devices` | 端末トークンを外す(本文に `{token}`、204)。ログアウトのときに呼ぶ。登録されていなくても 204 | 本人 |
-| `GET /users` | プロフィールを登録したユーザーの一覧(`{items}`) | 管理者 |
-| `POST /livekit/token` | LiveKit の参加用トークン。プロフィールの表示名を name に、言語を参加者の属性 `language` に入れる。Agent のディスパッチ(`AGENT_NAME`、既定 `voice-intercom`)も入れ、ルームが作られたときに Agent が入る。ルームがなければ 404、プロフィールが未登録なら 409 | 管理者、メンバー |
-| `GET /rooms/{room_id}/timeline` | ルームの履歴(`{items, next_before}`)を新しい順に。`limit`(1〜100、既定 50)と `before`(前の応答の `next_before`)でページングする | 管理者、メンバー |
-| `GET /rooms/{room_id}/timeline/event?event_id=...` | 履歴の1件(強い整合の読み取り)。消した行は墓石(`deleted` 付き)で返す。無ければ 404 | 管理者、メンバー |
+| `GET /users` | プロフィールを登録したユーザーの一覧(`{items}`)。運営者にはすべて(所属の無い人も)、それ以外には自分のテナントの人(招待の相手を選ぶ) | だれでも |
+| `POST /livekit/token` | LiveKit の参加用トークン(`{room_name, audio}`)。プロフィールの表示名を name に、言語を参加者の属性 `language` に、`audio`(既定 true。前のアプリは送らない)を属性 `audio`(`on` / `off`)に入れる。Agent のディスパッチ(`AGENT_NAME`、既定 `voice-intercom`)も入れ、ルームが作られたときに Agent が入る。ルームがなければ 404、プロフィールが未登録・申請中の Connect・アーカイブしたルームなら 409 | メンバー |
+| `GET /rooms/{room_id}/timeline` | ルームの履歴(`{items, next_before}`)を新しい順に。`limit`(1〜100、既定 50)と `before`(前の応答の `next_before`)でページングする。アーカイブしたルームも読める | メンバー |
+| `GET /rooms/{room_id}/timeline/event?event_id=...` | 履歴の1件(強い整合の読み取り)。消した行は墓石(`deleted` 付き)で返す。無ければ 404 | メンバー |
 | `DELETE /rooms/{room_id}/timeline/event?event_id=...` | 送ったテキスト入力か画像・動画を消す。行は残して墓石にし(`deleted` を付け、`text`・`translations`・`media` は空)、2回目からは同じ墓石を返す。今ルームにいる人へデータチャネル(topic `deletion`)で知らせ、画像・動画なら S3 の本体とサムネイルを消して CloudFront のキャッシュを無効にする。他人の行と音声の発話は 403 | 送った本人 |
 | `PUT /rooms/{room_id}/timeline/{source_id}` | 発話(`utterance`、字幕の区切りごと)かテキスト入力(`text`。アプリが振った `message_id` も持つ)を履歴に保存する。`event_id` は `<occurred_at>#<source_id>` で、同じなら置き換える(再送しても1件)。消した行(墓石)は置き換えず、墓石を返す | Agent |
-| `POST /rooms/{room_id}/media/uploads` | 画像・動画・ファイルを S3 に PUT する署名付き URL(本体と、`has_thumbnail` ならサムネイル)。`content_type` は MIME タイプなら何でもよく、画像4種は画像、`video/*` は動画、それ以外はファイル(`file_name` も送る)。ファイルは `content_disposition` も返す。期限は1時間。`size_bytes` は 10GB まで。16MB 以上ならマルチパートにし、`upload_url` の代わりに `multipart`(`part_size`・`part_count`)を返す。送信者が測った `width`・`height`(1〜65535、両方か無し)と、動画なら `duration_ms`(1〜86,400,000)を任意で送り、履歴に入れる | 管理者、メンバー |
+| `POST /rooms/{room_id}/media/uploads` | 画像・動画・ファイルを S3 に PUT する署名付き URL(本体と、`has_thumbnail` ならサムネイル)。`content_type` は MIME タイプなら何でもよく、画像4種は画像、`video/*` は動画、それ以外はファイル(`file_name` も送る)。ファイルは `content_disposition` も返す。期限は1時間。`size_bytes` は 10GB まで。16MB 以上ならマルチパートにし、`upload_url` の代わりに `multipart`(`part_size`・`part_count`)を返す。送信者が測った `width`・`height`(1〜65535、両方か無し)と、動画なら `duration_ms`(1〜86,400,000)を任意で送り、履歴に入れる | メンバー |
 | `POST /rooms/{room_id}/media/{media_id}/parts` | マルチパートのパートを PUT する署名付き URL(`part_numbers` で 100 個まで、期限1時間。`thumbnail: true` ならサムネイルの URL も取り直す)。マルチパートでない・保存した後は 409 | アップロードした本人 |
 | `POST /rooms/{room_id}/media/{media_id}/complete` | 1回の PUT なら本文なし。マルチパートなら `parts`(全パートの `part_number` と `etag`)を送り、API が完了させる。アップロードした画像・動画・ファイルを履歴(`media`)に保存し、今ルームにいる人へデータチャネル(topic `media`)で配信する。最初の complete では、ルームにいないメンバーに push 通知も送る。本体かサムネイルがまだ置かれていない、大きさが申告と違えば 409。マルチパートを完了できなければ 410(uploads からやり直す)。2回目からは同じ履歴を返し、配信だけをやり直す | アップロードした本人 |
 | `POST /rooms/{room_id}/notifications/speaking` | 誰かが話し始めたことを push 通知する(`{speaker_id, present_ids}`)。ルームのメンバーから話者と `present_ids` を除いた人に送り、`{sent, skipped}` を返す。同じルーム × 同じ受け手には `NOTIFY_INTERVAL_S`(既定 300 秒。テキスト・画像・動画の通知と共通)に1回まで。ルームがなければ 404。送信に失敗しても 500 にせず `sent: 0` | Agent |
@@ -344,13 +356,14 @@ complete で履歴に保存した後に、API が LiveKit の Server API でル�
 - 画像・動画は、S3 の本体とサムネイルを消し、CloudFront を `/rooms/<room_id>/<media_id>/*` の1パスで無効にする(`MEDIA_DISTRIBUTION_ID`。ローカルでは空で、無効化を飛ばす)。Lambda には `s3:DeleteObject` と `cloudfront:CreateInvalidation` を許してある。
 - 知らせや後始末が失敗しても DELETE は 200 で墓石を返す。もう一度呼べばやり直す。push 通知は取り消さない。
 
-### メンバーを外したとき・ルームを消したとき
+### メンバーを外したとき・アーカイブしたとき・ルームを消したとき
 
 入室の権限は LiveKit のトークンを出すときにしか確かめず、接続した後のトークンは LiveKit サーバーが更新し続ける。そのため API が LiveKit の Server API で後始末をする(`services/api` の `room_cleanup.py`。決めた理由は設計メモの「メンバーを外したとき・ルームを消したときの後始末」)。
 
-- メンバーを外したら、`ListParticipants` で今ルームにいる人を取り、外した人を `RemoveParticipant` で出す。管理者もメンバーから外せば出る(入り直せる)。
+- メンバーを外したら(抜けたときも)、`ListParticipants` で今ルームにいる人を取り、外した人を `RemoveParticipant` で出す。
+- アーカイブしたら、`DeleteRoom` で全員(Agent も)を切る。履歴とメディアは消さない。
 - ルームを消したら、`DeleteRoom` で全員(Agent も)を切り、timeline テーブルのルームのパーティション(履歴、`media-upload#<room_id>`、`notify#<room_id>`)と S3 の `rooms/<room_id>/` の下(途中のマルチパートも)を消し、CloudFront を `/rooms/<room_id>/*` で無効にする。録音のバケットは消さない。
-- 後始末が失敗しても、PATCH と DELETE は成功で返す(ログに残す)。履歴とメディアの削除は6秒で打ち切り、残りは同じ `room_id` でルームを作るとき(か DELETE のやり直し)に消す。
+- 後始末が失敗しても、外す・アーカイブ・DELETE は成功で返す(ログに残す)。履歴とメディアの削除は6秒で打ち切り、残りは DELETE のやり直しで消す(`room_id` は乱数なので、作り直しは起きない)。
 - Lambda には `s3:ListBucketMultipartUploads` も許してある(ほかは画像・動画の削除と同じ権限)。
 - 出した人も、出す前に受け取ったトークン(15分)で入り直すことはできる(アプリは入り直さない)。
 
@@ -406,10 +419,11 @@ result = notify.send_to_users(
 
   | ユーザー | 役割 |
   | --- | --- |
-  | `admin` | 管理者(`cognito:groups` に `admin`)。管理コンソールで使う |
+  | `admin` | テナントの管理者(`cognito:groups` に `admin`)。管理コンソールで使う |
+  | `operator` | 運営者(`cognito:groups` に `operator`)。管理コンソールでテナントとユーザーの所属を扱う |
   | `user1`、`user2`、`user3` | メンバー。Web 版・モバイル版で使う |
 
-  ほかの名前も「ほかのユーザー」の欄で入れられる。`admin` で始まる名前は管理者になる。
+  ほかの名前も「ほかのユーザー」の欄で入れられる。`admin` で始まる名前は管理者、`operator` で始まる名前は運営者になる。
 - username が `sub`(users テーブルの `user_id`、LiveKit の identity、ルームの `member_ids`)になる。
 - claims は、username と、ログインしたアプリの `client_id` から決まる(設定は [.devcontainer/mock-oidc.json](.devcontainer/mock-oidc.json) の `requestMappings`)。Cognito のアクセストークンに寄せて、`sub`、`client_id`、`token_use: "access"`、`email`(`<username>@example.com`)を入れる。
   - 「ほかのユーザー」の欄では claims(JSON)を足せる(`cognito:groups` を足せば `admin` で始まらない名前も管理者になる)。ただし上の claims は上書きできない。
@@ -434,15 +448,18 @@ result = notify.send_to_users(
 
 `mise run admin` で起動し、ホストのブラウザで `http://localhost:5173` を開く(Cognito のリダイレクト先に合わせて、`localhost` で開く)。
 
-- ログインは標準の OIDC(認可コード + PKCE)。ローカルでは模擬 OIDC のログイン画面で `admin` を押す([ローカルの認証](#ローカルの認証模擬-oidc-サーバー))。管理者でないユーザーは、ログインできても画面は見られない。
+- ログインは標準の OIDC(認可コード + PKCE)。ローカルでは模擬 OIDC のログイン画面で `admin`(テナントの管理者)か `operator`(運営者)を押す([ローカルの認証](#ローカルの認証模擬-oidc-サーバー))。どちらでもないユーザーは、ログインできても画面は見られない。
+- 管理者も、自分のテナントを知るためにプロフィールと所属が要る。Web 版でプロフィールを登録し、運営者に所属を決めてもらう。
 
 - 画面:
 
   | パス | 内容 |
   | --- | --- |
   | `/` | ホーム(API の死活) |
-  | `/rooms` | ルームの一覧。`/rooms/new` で作成、`/rooms/:roomId` で名前とメンバーの編集、削除 |
-  | `/users` | プロフィールを登録したユーザーの一覧と、所属しているルーム。名前で絞り込める |
+  | `/rooms` | 自分のテナントに関わるルームの一覧(管理者)。`/rooms/new` で作成(作った人がオーナー)、`/rooms/:roomId` で名前・種別・メンバー(自分のテナントの人だけ)・オーナーの編集、アーカイブ、削除(ルームを作ったテナントだけ) |
+  | `/connect` | Connect の申請(管理者)。相手のテナントの ID で申請し、届いた申請を受ける・断る |
+  | `/users` | プロフィールを登録したユーザーの一覧。管理者には自分のテナントの人と所属しているルーム、運営者にはすべての人と所属するテナント(選んで変える)。名前で絞り込める |
+  | `/tenants` | テナントの一覧と作成(運営者) |
 
   ルームの中身(履歴)は管理コンソールでは見せない(設計メモの「管理コンソールにルームの履歴を出さない」)。
 
@@ -468,10 +485,11 @@ result = notify.send_to_users(
 `mise run web` で起動し、ホストのブラウザで `http://localhost:5174` を開く(Cognito の web クライアントの戻り先に合わせて、`localhost` で開く。マイクも `localhost` か HTTPS でないと使えない)。ルームの処理は `packages/client-core` の `RoomSession`、タブを裏に回したとき・画面を消したときの扱い(PTT を離す、戻ったら入り直す、画面を消させない)は `RoomKeeper` で、画面は `apps/web/src/routes`。
 
 - ログインは標準の OIDC(認可コード + PKCE)。ローカルでは模擬 OIDC のログイン画面で `user1` などを押す([ローカルの認証](#ローカルの認証模擬-oidc-サーバー))。username が LiveKit の identity(ルームの `member_ids` の sub)になる。
-- ローカルで入室を試す順番。管理コンソールのメンバーの候補は、プロフィールを登録した人だけなので、先に Web 版で登録する。
+- ローカルで試す順番。ルームを使うにはテナントに属している必要があり、所属を決められるのはプロフィールを登録した人だけなので、先に Web 版で登録する。
   1. Web 版に `user1` でログインし、`/profile` で表示名と言語を登録する(2人で試すなら、別のブラウザかシークレットウィンドウで `user2` も)。
-  2. 管理コンソールに `admin` でログインし、ルームを作って `user1`(と `user2`)をメンバーに足す。
-  3. Web 版のルームの一覧から入室する。
+  2. 管理コンソールに `operator` でログインし、テナントを作って `user1`(と `user2`)を入れる。または、前のデータを移すスクリプト(下の「ローカルの DynamoDB と S3」)で、所属の無い人を1つのテナントに入れる。
+  3. Web 版の「ルームを作る」で作り(作った人がオーナー)、「メンバーと設定」から招待する。Public なら、同じテナントの人は一覧の「参加できるルーム」から参加できる。
+  4. ルームを開くと字幕とテキストが見え、テキストを送れる(データだけでつなぐ)。「音声をつなぐ」でマイクとスピーカーも使う。
 
 - ローカルの API が `web` のトークンを受け付けるよう、`.env` の `OIDC_CLIENT_IDS` に `web` を入れておく(`.env.example` には入っている)。
 - ログインは `localStorage` に持ち、タブを閉じても続く(Cognito の web クライアントのリフレッシュトークンは30日)。
@@ -479,12 +497,16 @@ result = notify.send_to_users(
 
   | パス | 内容 |
   | --- | --- |
-  | `/` | 自分がメンバーのルームの一覧 |
+  | `/` | ルームの一覧。自分のルーム・参加できるルーム(テナントの Public)・アーカイブに分ける |
   | `/profile` | 表示名と言語の登録・変更。未登録のうちは、ほかの画面からここへ送る(LiveKit のトークンにプロフィールが要るため) |
-  | `/rooms/:roomId` | 入室。開くと入り、閉じると出る。履歴と、入室してから届いたものを1本のタイムラインで出し、PTT、テキスト入力、画像・動画・ファイルで送る |
+  | `/rooms/new` | ルームを作る(Public か Private、一緒に入れる人) |
+  | `/rooms/:roomId` | ルーム。開いている間はデータだけでつなぎ、履歴と届いたものを1本のタイムラインで出し、テキストと画像・動画・ファイルで送る。「音声をつなぐ」で PTT と受信の音も使う。アーカイブしたルームは読むだけ |
+  | `/rooms/:roomId/settings` | メンバーと設定。招待・オーナーにする・外す・名前と種類・抜ける・アーカイブ |
+
+- **ユーザーの3つの状態**(設計メモの「ユーザーの3つの状態の表し方」): 参加していない → **参加する**でメンバー(ルームを開けばタイムラインを見て送れる) → **音声をつなぐ**で音声中(マイクとスピーカーを使う)。音声をつないだルームは、画面を移ってもつないだまま(`packages/client-core` の `RoomHub`)で、どの画面でも下の「音声中」の帯に並ぶ。ページを読み込み直すと切れる。
 
 - ルームの画面:
-  - **PTT**: ボタンを押している間か、テキスト欄の外で Space を押している間だけマイクのミュートを外す。押したままタブを離れたら離したことにする。
+  - **PTT**: ボタンを押している間か、テキスト欄の外で Space を押している間だけマイクのミュートを外す。音声をつないだ全部のルームに届く(2つ以上なら「押して話す(2ルーム)」と出す)。帯の「ここだけ」を押している間は、そのルームだけに届く。押したままタブを離れたら離したことにする。マイクは1本を取り、ルームごとに clone して使う(`SharedMicrophone`)。
   - **音**: 購読した音声トラックは `<audio>` に付けて鳴らす(`src/roomPlatform.ts`)。ブラウザの自動再生の制限で鳴らせないときは「音を出す」のボタンを出す(PTT やボタンを押せば鳴る)。
   - **タイムライン**: 履歴の行(発話、テキスト、画像・動画・ファイル)と、入室してから届いた字幕を、時刻の順に1本で出す。履歴の画面は分けない。
     - 入室とつなぎ直しで最新の50件を読む。つないでいなかった間が50件を超えれば、知っている行に届くまで古いほうへ読む(5ページまで)。上へ戻ると、50件ずつ古いほうを読み足す(見ていた位置は保つ)。
@@ -512,8 +534,10 @@ AWS に接続せずに API を動かせるように、devContainer と一緒に�
 | DynamoDB | [DynamoDB Local](https://hub.docker.com/r/amazon/dynamodb-local)(compose の `dynamodb`) | コンテナ内は `http://dynamodb:8000`、ホストからは `http://localhost:8000` |
 | S3 + CloudFront | [SeaweedFS](https://github.com/seaweedfs/seaweedfs) の S3 API(compose の `s3`) | `http://${DEV_HOST}:8333` |
 
-1. 初回と、ボリュームを消した後に `mise run local:init` を実行する。テーブル(`voice-intercom-local-timeline` / `-users` / `-rooms` / `-room-members`)とバケット(`voice-intercom-local-media`、Agent の録音の `voice-intercom-local-recordings`)を作る。キーは `infra/envs/dev/main.tf` と揃えてある。DynamoDB Local はポイントインタイムリカバリの API がなく、Terraform のモジュールでは作れないので、スクリプトで作る。
+1. 初回と、ボリュームを消した後に `mise run local:init` を実行する。テーブル(`voice-intercom-local-timeline` / `-users` / `-tenants` / `-rooms` / `-room-members`)とバケット(`voice-intercom-local-media`、Agent の録音の `voice-intercom-local-recordings`)を作る。キーは `infra/envs/dev/main.tf` と揃えてある。DynamoDB Local はポイントインタイムリカバリの API がなく、Terraform のモジュールでは作れないので、スクリプトで作る。
    - room-members を足す前に作ったルーム(rooms の行に `member_ids` がある)は、`mise run local:init` の後に `scripts/with-local-aws.sh uv run python -m voice_intercom_api.migrate_room_members` で移す。dev 環境も、`terraform apply` の後に同じスクリプトを、テーブル名(`ROOMS_TABLE`、`ROOM_MEMBERS_TABLE`)と AWS の認証情報を渡して1回実行する(設計メモの「ルームのメンバーを別のテーブルにする」)。
+   - 前に作ったテーブルに無い GSI(テナントを入れたときに users と rooms に足した)は、`mise run local:init` が足す。
+   - テナントを入れる前のユーザーとルームは、`scripts/with-local-aws.sh uv run python -m voice_intercom_api.migrate_tenants <tenant_id> <名前>` で1つのテナントに移す(所属の無いユーザーを入れ、ルームを Private にする。オーナーは決めない)。dev 環境も、`terraform apply` の後にテーブル名(`TENANTS_TABLE`、`USERS_TABLE`、`ROOMS_TABLE`、`ROOM_MEMBERS_TABLE`)を渡して1回実行する(設計メモの「前のデータの移し方」)。
 2. API などを動かすときは、`scripts/with-local-aws.sh <起動コマンド>` で包む。接続先(`AWS_ENDPOINT_URL_DYNAMODB`、`AWS_ENDPOINT_URL_S3`)、ローカル用の鍵、テーブル名とバケット名(`TIMELINE_TABLE` など、Lambda と同じ名前。Agent の録音の `RECORDING_BUCKET` も)を環境変数で渡す。Agent も `scripts/with-local-aws.sh uv run python -m voice_intercom_agent start` で動かすと、録音をローカルの S3 に書く(`services/agent/README.md` の「録音を確かめる」)。AWS SDK の標準の環境変数なので、アプリにローカル用の分岐は要らない。
 
 注意:

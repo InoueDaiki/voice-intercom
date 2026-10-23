@@ -6,6 +6,10 @@ import { createApiClient, type Schemas } from "@voice-intercom/api-client";
 // ---- 型 ----
 
 export type Room = Schemas["Room"];
+// public は同じテナントの誰でも参加でき、private と connect は招待された人だけが入れる
+export type RoomKind = Room["kind"];
+export type RoomMember = Schemas["RoomMember"];
+export type MemberRole = RoomMember["role"];
 export type User = Schemas["User"];
 export type Language = User["language"];
 export type LiveKitToken = Schemas["LiveKitTokenResponse"];
@@ -134,11 +138,42 @@ export function createClientApi(options: ClientApiOptions) {
     putMyProfile: (display_name: string, language: Language) =>
       call(api.PUT("/users/me", { body: { display_name, language } })),
 
+    // 自分がメンバーのルーム(アーカイブしたものも)
     listRooms: async () => (await call(api.GET("/rooms"))).items,
+    // 自分のテナントの Public のうち、参加していないもの
+    listJoinableRooms: async () => (await call(api.GET("/rooms", { params: { query: { scope: "joinable" } } }))).items,
     getRoom: (roomId: string) => call(api.GET("/rooms/{room_id}", room(roomId))),
+    // ルームを作る。作った人がオーナーになる。member_ids は同じテナントの人だけ
+    createRoom: (name: string, kind: Exclude<RoomKind, "connect">, memberIds: string[] = []) =>
+      call(api.POST("/rooms", { body: { name, kind, member_ids: memberIds } })),
+    // 名前と種別(Public と Private の間)を変える(オーナーか管理者)
+    updateRoom: (roomId: string, body: { name?: string; kind?: Exclude<RoomKind, "connect"> }) =>
+      call(api.PATCH("/rooms/{room_id}", { ...room(roomId), body })),
+    // Public に参加する
+    joinRoom: (roomId: string) => call(api.POST("/rooms/{room_id}/join", room(roomId))),
+    listRoomMembers: async (roomId: string) => (await call(api.GET("/rooms/{room_id}/members", room(roomId)))).items,
+    // メンバーに足すか、役割を変える(オーナーか管理者。自分のテナントの人だけ)
+    putRoomMember: (roomId: string, userId: string, role: MemberRole = "member") =>
+      call(
+        api.PUT("/rooms/{room_id}/members/{user_id}", {
+          params: { path: { room_id: roomId, user_id: userId } },
+          body: { role },
+        }),
+      ),
+    // メンバーから外す。自分なら抜ける。最後のオーナーは 409 の ApiError
+    deleteRoomMember: (roomId: string, userId: string) =>
+      call(api.DELETE("/rooms/{room_id}/members/{user_id}", { params: { path: { room_id: roomId, user_id: userId } } })),
+    archiveRoom: (roomId: string) => call(api.POST("/rooms/{room_id}/archive", room(roomId))),
+    unarchiveRoom: (roomId: string) => call(api.DELETE("/rooms/{room_id}/archive", room(roomId))),
+    // つないだまま音声を切り替えたことを Agent に知らせる(参加者の属性 audio)
+    setRoomAudio: (roomId: string, enabled: boolean) =>
+      call(api.PUT("/rooms/{room_id}/audio", { ...room(roomId), body: { enabled } })),
+    // 自分のテナントのユーザー(ルームに招待する相手)
+    listUsers: async () => (await call(api.GET("/users"))).items,
 
-    // LiveKit の参加用トークン。プロフィールが未登録なら 409 の ApiError
-    createLiveKitToken: (roomId: string) => call(api.POST("/livekit/token", { body: { room_name: roomId } })),
+    // LiveKit の参加用トークン。audio が false ならデータだけでつなぐ。プロフィールが未登録なら 409 の ApiError
+    createLiveKitToken: (roomId: string, audio = true) =>
+      call(api.POST("/livekit/token", { body: { room_name: roomId, audio } })),
 
     // 履歴を新しい順に。before は前の応答の next_before
     listTimeline: (roomId: string, query: { limit?: number; before?: string } = {}) =>

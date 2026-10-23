@@ -1,14 +1,22 @@
-import { Alert, Field, Input, LoadErrorAlert, PageHeader, Table, Td, Th } from "@voice-intercom/ui-web";
+import { Alert, Field, Input, LoadErrorAlert, PageHeader, Select, Table, Td, Th } from "@voice-intercom/ui-web";
 import { useState } from "react";
+import { useAuth } from "react-oidc-context";
 import { Link } from "react-router";
 
-import { ApiError, type Room } from "../adminApi.ts";
-import { useRooms, useUsers } from "../queries.ts";
+import { ApiError, type Room, type Tenant, type User } from "../adminApi.ts";
+import { ADMIN_GROUP, groupsOf, OPERATOR_GROUP } from "../auth.ts";
+import { useRooms, useSetUserTenant, useTenants, useUsers } from "../queries.ts";
 import { errorMessage, formatDateTime, LANGUAGE_LABELS } from "../rooms.ts";
 
+// 管理者には自分のテナントの人と所属しているルームを、運営者にはすべての人とテナント(変えられる)を出す
 export default function UserList() {
+  const { user } = useAuth();
+  const groups = user ? groupsOf(user) : [];
+  const isAdmin = groups.includes(ADMIN_GROUP);
+  const isOperator = groups.includes(OPERATOR_GROUP);
   const users = useUsers();
-  const rooms = useRooms();
+  const rooms = useRooms(isAdmin);
+  const tenants = useTenants(isOperator);
   const [filter, setFilter] = useState("");
 
   // user_id → 所属しているルーム(ルーム一覧の member_ids と突き合わせる)
@@ -26,7 +34,14 @@ export default function UserList() {
 
   return (
     <section>
-      <PageHeader title="ユーザー" description="アプリでプロフィール(表示名と言語)を登録したユーザーです。" />
+      <PageHeader
+        title="ユーザー"
+        description={
+          isOperator
+            ? "アプリでプロフィール(表示名と言語)を登録したユーザーです。テナントを選ぶと、そのテナントに入れます。"
+            : "自分のテナントで、アプリでプロフィール(表示名と言語)を登録したユーザーです。"
+        }
+      />
       {users.isPending && <p className="text-fg-muted">読み込み中…</p>}
       {users.isError && (
         <LoadErrorAlert
@@ -53,7 +68,7 @@ export default function UserList() {
                 {users.data.length}人中 {shown.length}人
               </span>
             </div>
-            {rooms.isError && (
+            {isAdmin && rooms.isError && (
               <Alert tone="danger">
                 ルームの一覧を取得できないため、所属しているルームを出せません: {errorMessage(rooms.error)}
               </Alert>
@@ -68,7 +83,8 @@ export default function UserList() {
                     <Th shrink>言語</Th>
                     <Th shrink>ユーザー ID</Th>
                     <Th shrink>登録日時</Th>
-                    <Th>所属しているルーム</Th>
+                    {isOperator && <Th>テナント</Th>}
+                    {isAdmin && <Th>所属しているルーム</Th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -85,21 +101,28 @@ export default function UserList() {
                         <Td shrink className="text-fg-muted">
                           {formatDateTime(user.created_at)}
                         </Td>
-                        <Td className="min-w-48">
-                          {rooms.isPending && <span className="text-fg-muted">読み込み中…</span>}
-                          {rooms.isSuccess &&
-                            (joined.length === 0 ? (
-                              <span className="text-fg-muted">なし</span>
-                            ) : (
-                              <ul className="flex flex-wrap gap-x-3 gap-y-1">
-                                {joined.map((room) => (
-                                  <li key={room.room_id}>
-                                    <Link to={`/rooms/${encodeURIComponent(room.room_id)}`}>{room.name}</Link>
-                                  </li>
-                                ))}
-                              </ul>
-                            ))}
-                        </Td>
+                        {isOperator && (
+                          <Td className="min-w-48">
+                            <TenantSelect user={user} tenants={tenants.data} />
+                          </Td>
+                        )}
+                        {isAdmin && (
+                          <Td className="min-w-48">
+                            {rooms.isPending && <span className="text-fg-muted">読み込み中…</span>}
+                            {rooms.isSuccess &&
+                              (joined.length === 0 ? (
+                                <span className="text-fg-muted">なし</span>
+                              ) : (
+                                <ul className="flex flex-wrap gap-x-3 gap-y-1">
+                                  {joined.map((room) => (
+                                    <li key={room.room_id}>
+                                      <Link to={`/rooms/${encodeURIComponent(room.room_id)}`}>{room.name}</Link>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ))}
+                          </Td>
+                        )}
                       </tr>
                     );
                   })}
@@ -109,5 +132,28 @@ export default function UserList() {
           </div>
         ))}
     </section>
+  );
+}
+
+// ユーザーの所属(運営者)。選んだらすぐに変える
+function TenantSelect({ user, tenants }: { user: User; tenants: Tenant[] | undefined }) {
+  const set = useSetUserTenant();
+  return (
+    <span className="grid gap-1">
+      <Select
+        aria-label={`${user.display_name} のテナント`}
+        value={user.tenant_id ?? ""}
+        disabled={!tenants || set.isPending}
+        onChange={(e) => set.mutate({ userId: user.user_id, tenantId: e.target.value || null })}
+      >
+        <option value="">所属なし</option>
+        {tenants?.map((t) => (
+          <option key={t.tenant_id} value={t.tenant_id}>
+            {t.name}({t.tenant_id})
+          </option>
+        ))}
+      </Select>
+      {set.isError && <span className="text-xs text-danger-fg">{errorMessage(set.error)}</span>}
+    </span>
   );
 }

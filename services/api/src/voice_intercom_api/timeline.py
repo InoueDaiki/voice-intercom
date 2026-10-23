@@ -21,10 +21,12 @@ from voice_intercom_api.auth import AgentPrincipal, CurrentUser
 from voice_intercom_api.routing import (
     AUTH,
     ROOM_NOT_FOUND,
+    ROOM_READ_ERRORS,
     RoomIdPath,
     existing_room,
     responses,
     visible_room,
+    writable_room,
 )
 from voice_intercom_api.timeline_models import (
     DELETABLE_KINDS,
@@ -43,11 +45,11 @@ MAX_LIMIT = 100
 
 @router.get(
     "/rooms/<room_id>/timeline",
-    summary="ルームの履歴を新しい順に取る(管理者かメンバー)",
+    summary="ルームの履歴を新しい順に取る(メンバー)",
     operation_id="listTimeline",
     tags=["timeline"],
     security=AUTH,
-    responses=responses(TimelinePage, errors=ROOM_NOT_FOUND),
+    responses=responses(TimelinePage, errors=ROOM_READ_ERRORS),
 )
 def list_timeline(
     room_id: RoomIdPath,
@@ -77,7 +79,7 @@ EVENT_NOT_FOUND = {404: "ルームか、event_id の行がない"}
 
 @router.get(
     "/rooms/<room_id>/timeline/event",
-    summary="履歴の1件を取る(管理者かメンバー)。消した行は墓石(deleted)で返す",
+    summary="履歴の1件を取る(メンバー)。消した行は墓石(deleted)で返す",
     description="強い整合の読み取りなので、保存や削除の直後でも反映されている。"
     "アプリは、データチャネル(topic deletion)で届いた知らせを、これで確かめる。",
     operation_id="getTimelineEvent",
@@ -111,11 +113,11 @@ def get_timeline_event(
 def delete_timeline_event(
     room_id: RoomIdPath, event_id: EventIdQuery, user: CurrentUser
 ) -> TimelineEvent:
-    visible_room(room_id, user)
+    writable_room(room_id, user)
     event = timeline_store.get_event(room_id, event_id, consistent=True)
     if event is None:
         raise NotFoundError("行がない")
-    # 管理者でも他人の行は消せない(管理コンソールではルームの中身を扱わない)
+    # 他人の行は消せない(オーナーでも)
     if event.sender_id != user.sub:
         raise ForbiddenError("送った本人ではない")
     if event.kind not in DELETABLE_KINDS:

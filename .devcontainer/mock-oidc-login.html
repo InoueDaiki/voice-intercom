@@ -142,7 +142,12 @@
       <div class="users">
         <form method="post">
           <button name="username" value="admin">
-            <span class="name">admin</span><span class="note">管理者(管理コンソール用)</span>
+            <span class="name">admin</span><span class="note">テナントの管理者(管理コンソール用)</span>
+          </button>
+        </form>
+        <form method="post">
+          <button name="username" value="operator">
+            <span class="name">operator</span><span class="note">運営者(テナントを作る。管理コンソール用)</span>
           </button>
         </form>
         <form method="post">
@@ -165,7 +170,7 @@
       <form method="post">
         <fieldset>
           <legend>ほかのユーザー</legend>
-          <label for="username">ユーザー名(<code>admin</code> で始まると管理者)</label>
+          <label for="username">ユーザー名(<code>admin</code> で始まると管理者、<code>operator</code> で始まると運営者)</label>
           <input id="username" name="username" required autocomplete="off" />
           <label for="claims">足す claims(JSON。任意。username から決まる claims は上書きできない)</label>
           <textarea id="claims" name="claims" rows="4" placeholder='{ "custom": "value" }'></textarea>

@@ -93,22 +93,32 @@ class MessageTranslator(Protocol):
 
 @dataclass(frozen=True)
 class TextPlan:
-    # 原文を読み上げるか。送信者と同じ言語の聞き手がいるときだけ読む
+    # 原文を読み上げるか。送信者と同じ言語で、音声を聞いている人がいるときだけ読む
     read_original: bool
-    # 翻訳先の言語
+    # 翻訳先の言語(訳の字幕)
     targets: list[str] = field(default_factory=list)
+    # 訳を読み上げる言語(音声を聞いている人の言語)。targets の一部
+    spoken: list[str] = field(default_factory=list)
 
 
-def plan_text(sender_language: str | None, listeners: Iterable[str | None]) -> TextPlan:
+def plan_text(
+    sender_language: str | None,
+    listeners: Iterable[str | None],
+    audio_listeners: Iterable[str | None] | None = None,
+) -> TextPlan:
     """原文の読み上げと翻訳先を決める。listeners は送信者と Agent を除く参加者の言語。
 
+    audio_listeners は、そのうち音声を聞いている人の言語(None なら listeners と同じ)。
+    読み上げは、音声を聞いている人の言語にだけ作る。
     送信者の言語が分からなければ、原文は読まず(流すトラックが決まらない)、聞き手の言語を
     すべて翻訳先にする。送信者自身のためには読み上げない。
     """
     langs = list(listeners)
+    audio = langs if audio_listeners is None else list(audio_listeners)
     return TextPlan(
-        read_original=sender_language is not None and sender_language in langs,
+        read_original=sender_language is not None and sender_language in audio,
         targets=target_languages(sender_language, langs),
+        spoken=target_languages(sender_language, audio),
     )
 
 
@@ -221,10 +231,12 @@ class TextInput:
         sender_language: str | None,
         listeners: list[str | None],
         message: TextMessage,
+        audio_listeners: list[str | None] | None = None,
     ) -> None:
         """1通のテキストを処理する。読み上げが全部終わるまで戻らない。
 
         listeners は、送信者と Agent を除く参加者の言語(受け取った時点のルーム)。
+        audio_listeners は、そのうち音声を聞いている人の言語(None なら listeners と同じ)。
         同じ (送信者, message_id) が送り直されたら、処理はやり直さず、字幕と状態を送り直す。
         """
         mid = message.message_id
@@ -257,7 +269,7 @@ class TextInput:
         if self._on_accepted is not None:
             self._on_accepted(sender, text)
         received_at = self._now()
-        plan = plan_text(sender_language, listeners)
+        plan = plan_text(sender_language, listeners, audio_listeners)
         segment_id = new_segment_id()
 
         def caption(language: str, *, translated: bool) -> CaptionTrack:
@@ -310,7 +322,7 @@ class TextInput:
                     if self._history is not None:
                         self._history.translation(segment_id, lang, translated)
                     logger.info("テキストの訳(%s): %s", lang, translated)
-                    if translated:
+                    if translated and lang in plan.spoken:
                         speeches.append((lang, asyncio.create_task(self._speak(translated, lang))))
             except Exception:
                 logger.exception("テキストの翻訳に失敗した")

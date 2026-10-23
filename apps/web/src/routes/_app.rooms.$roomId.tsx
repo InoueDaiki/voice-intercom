@@ -10,14 +10,40 @@ import {
   NotSavedYetError,
   type OutgoingMedia,
   outgoingTextLabel,
-  RoomKeeper,
+  type Room,
+  type RoomConnection,
   RoomSession,
   type TimelineEntry,
   type TimelineEvent,
   type User,
 } from "@voice-intercom/client-core";
-import { Alert, BackIcon, backLinkClass, Badge, Button, ConfirmDialog, cx, PttButton, Textarea } from "@voice-intercom/ui-web";
-import { FileText, Image, Keyboard, Mic, Paperclip, SendHorizontal, Users } from "lucide-react";
+import {
+  Alert,
+  BackIcon,
+  backLinkClass,
+  Badge,
+  Button,
+  buttonClass,
+  ConfirmDialog,
+  cx,
+  KeyButton,
+  SignalLamp,
+  type SignalState,
+  Textarea,
+} from "@voice-intercom/ui-web";
+import {
+  Archive,
+  FileText,
+  Headphones,
+  Image,
+  Keyboard,
+  Mic,
+  Paperclip,
+  PhoneOff,
+  SendHorizontal,
+  Settings,
+  Users,
+} from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -32,13 +58,16 @@ import { useAuth } from "react-oidc-context";
 import { Link, useParams } from "react-router";
 
 import { api } from "../api.ts";
+import { MainPtt } from "../AudioDock.tsx";
 import { formatBytes, formatDuration, formatTime } from "../format.ts";
-import { errorMessage, useMe, useRoom } from "../queries.ts";
-import { webAppPresence, webRoomPlatform, webScreenAwake } from "../roomPlatform.ts";
+import { errorMessage, useMe, useRoom, useRoomMutation } from "../queries.ts";
+import { receivingCaption } from "../receiving.ts";
+import { RoomKindBadge } from "../RoomKind.tsx";
+import { useRoomHub } from "../roomHub.tsx";
 import { useObservable } from "../useObservable.ts";
 import { webMediaPreparer, xhrSignedPut } from "../webMedia.ts";
 
-// 履歴の1ページの件数
+// 履歴の1ページの件数(アーカイブしたルーム。つないでいるルームは roomHub.tsx)
 const PAGE_LIMIT = 50;
 
 // 上端からこれより近づいたら、古いほうを読み足す(ピクセル)
@@ -74,7 +103,13 @@ export default function RoomPage() {
       </div>
     );
   }
-  return <RoomScreen key={roomId} roomId={roomId} roomName={room.data.name} me={me.data} myIdentity={myIdentity} />;
+  if (!room.data.member_ids.includes(myIdentity)) {
+    return <JoinRoom room={room.data} />;
+  }
+  if (room.data.archived_at) {
+    return <ArchivedRoom key={roomId} room={room.data} me={me.data} myIdentity={myIdentity} />;
+  }
+  return <RoomScreen key={roomId} room={room.data} me={me.data} myIdentity={myIdentity} />;
 }
 
 const roomMessageClass = "mx-auto max-w-3xl px-4 py-6 text-fg-muted";
@@ -88,20 +123,104 @@ function BackLink() {
   );
 }
 
-// 入室できなかった理由の文言
+// つなげなかった理由の文言
 function joinErrorMessage(e: unknown): string {
-  return e instanceof ApiError && e.status === 409
-    ? "プロフィールが登録されていないので入室できません。"
-    : `入室できませんでした: ${errorMessage(e)}`;
+  if (e instanceof ApiError && e.status === 409) {
+    return e.detail === "プロフィールをまだ登録していない"
+      ? "プロフィールが登録されていないので、つなげません。"
+      : `つなげませんでした: ${e.detail ?? e.message}`;
+  }
+  return `つなげませんでした: ${errorMessage(e)}`;
 }
 
-// 入室している間の画面。開いたら入室し、閉じたら退室する。
-// タブを裏に回したとき・画面を消したときは RoomKeeper が受け持つ(PTT を離す、戻ったら入り直す、画面を消させない)
-function RoomScreen({ roomId, roomName, me, myIdentity }: { roomId: string; roomName: string; me: User; myIdentity: string }) {
+// 画面の上の、ルームの名前と種別と設定への入り口
+function RoomHeader({ room, children }: { room: Room; children?: ReactNode }) {
+  return (
+    <header className="border-b border-border">
+      <div className={cx(columnClass, "grid gap-1 py-3")}>
+        <BackLink />
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <h1 className="min-w-0 truncate">{room.name}</h1>
+          <RoomKindBadge kind={room.kind} />
+          {children}
+          <Link
+            to={`/rooms/${encodeURIComponent(room.room_id)}/settings`}
+            className={buttonClass({ variant: "ghost", size: "sm", className: "ml-auto" })}
+          >
+            <Settings aria-hidden="true" className="size-4" />
+            メンバーと設定
+          </Link>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+// メンバーでない Public のルーム(一覧から開いた、リンクを受け取った)。参加すれば入れる
+function JoinRoom({ room }: { room: Room }) {
+  const join = useRoomMutation(room.room_id, () => api.joinRoom(room.room_id));
+  return (
+    <section className={cx(roomMessageClass, "grid gap-3")}>
+      <BackLink />
+      <h1 className="text-fg">{room.name}</h1>
+      <p>
+        {room.kind === "public"
+          ? `このルームにはまだ参加していません(${room.member_ids.length}人が参加しています)。`
+          : "このルームのメンバーではありません。"}
+      </p>
+      {join.isError && <Alert tone="danger">参加できませんでした: {errorMessage(join.error)}</Alert>}
+      {room.kind === "public" && !room.archived_at && (
+        <div>
+          <Button variant="primary" disabled={join.isPending} onClick={() => join.mutate(undefined)}>
+            参加する
+          </Button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// アーカイブしたルーム。履歴を読むだけで、つながない
+function ArchivedRoom({ room, me, myIdentity }: { room: Room; me: User; myIdentity: string }) {
   const [session, setSession] = useState<RoomSession>();
-  const [keeper, setKeeper] = useState<RoomKeeper>();
+  useObservable(session);
+  useEffect(() => {
+    const s = new RoomSession({
+      myIdentity,
+      myLanguage: me.language,
+      roomName: room.name,
+      fetchTimelinePage: (before) => api.listTimeline(room.room_id, { limit: PAGE_LIMIT, before }),
+    });
+    setSession(s);
+    void s.timeline.syncLatest().then(() => s.applyTimeline([]));
+    return () => s.dispose();
+  }, [room.room_id, room.name, me.language, myIdentity]);
+  return (
+    <section className="flex h-full flex-col">
+      <RoomHeader room={room} />
+      {session ? <Timeline session={session} myLanguage={me.language} readOnly /> : <div className="flex-1" />}
+      <div className="border-t border-border bg-surface">
+        <p className={cx(columnClass, "flex items-center gap-2 py-4 text-sm text-fg-muted")}>
+          <Archive aria-hidden="true" className="size-4 shrink-0" />
+          アーカイブしたルームです。履歴を読めますが、話したり送ったりはできません。
+        </p>
+      </div>
+    </section>
+  );
+}
+
+// ルームの画面。開いている間はデータだけでつなぎ(タイムラインを見て、テキストと画像を送れる)、
+// 「音声をつなぐ」でマイクとスピーカーも使う。音声をつないだら、画面を離れてもつないだまま(RoomHub)。
+// タブを裏に回したとき・画面を消したときは RoomKeeper が受け持つ(PTT を離す、戻ったら入り直す、画面を消させない)
+function RoomScreen({ room, me, myIdentity }: { room: Room; me: User; myIdentity: string }) {
+  const roomId = room.room_id;
+  const roomName = room.name;
+  const hub = useRoomHub();
+  const [connection, setConnection] = useState<RoomConnection>();
   const [uploader, setUploader] = useState<Uploader>();
   const [dragging, setDragging] = useState(false);
+  const session = connection?.session;
+  const keeper = connection?.keeper;
   useObservable(session);
   useObservable(keeper);
   useObservable(uploader);
@@ -114,15 +233,8 @@ function RoomScreen({ roomId, roomName, me, myIdentity }: { roomId: string; room
   );
 
   useEffect(() => {
-    const s = new RoomSession({
-      myIdentity,
-      myLanguage: me.language,
-      roomName,
-      platform: webRoomPlatform,
-      fetchTimelinePage: (before) => api.listTimeline(roomId, { limit: PAGE_LIMIT, before }),
-      fetchTimelineEvent: (eventId) => api.getTimelineEvent(roomId, eventId),
-      deleteTimelineEvent: (eventId) => api.deleteTimelineEvent(roomId, eventId),
-    });
+    const c = hub.open(roomId, roomName);
+    const s = c.session;
     const u: Uploader = new MediaUploader({
       roomId,
       backend: apiMediaBackend(api, xhrSignedPut),
@@ -130,27 +242,14 @@ function RoomScreen({ roomId, roomName, me, myIdentity }: { roomId: string; room
       // 送ったものは、配信を待たずにすぐタイムラインに出す
       onCompleted: (event) => s.addMedia([event]),
     });
-    const k = new RoomKeeper({
-      session: s,
-      // 入室と入り直しのたびに、新しいトークンを取る
-      getToken: async () => {
-        const token = await api.createLiveKitToken(roomId);
-        return { url: token.server_url, token: token.participant_token };
-      },
-      presence: webAppPresence,
-      awake: webScreenAwake(),
-    });
-    setSession(s);
-    setKeeper(k);
+    setConnection(c);
     setUploader(u);
-    // 入れなかった理由は keeper.joinError に入る
-    k.start().catch(() => {});
+    // 画面を離れたら、アップロードは取りやめる。音声をつないでいなければ切る
     return () => {
-      k.dispose();
       u.dispose();
-      s.dispose();
+      hub.close(roomId);
     };
-  }, [roomId, roomName, me.language, myIdentity]);
+  }, [hub, roomId, roomName]);
 
   const sendFiles = (files: Iterable<File>) => {
     for (const f of files) {
@@ -188,15 +287,9 @@ function RoomScreen({ roomId, roomName, me, myIdentity }: { roomId: string; room
       }}
       onDrop={onDrop}
     >
-      <header className="border-b border-border">
-        <div className={cx(columnClass, "grid gap-1 py-3")}>
-          <BackLink />
-          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-            <h1>{roomName}</h1>
-            {session && <RoomStatus session={session} rejoining={keeper?.rejoining ?? false} />}
-          </div>
-        </div>
-      </header>
+      <RoomHeader room={room}>
+        {session && <RoomStatus session={session} rejoining={keeper?.rejoining ?? false} />}
+      </RoomHeader>
       {(joinError ||
         session?.error ||
         session?.warning ||
@@ -234,7 +327,14 @@ function RoomScreen({ roomId, roomName, me, myIdentity }: { roomId: string; room
       )}
       {session && <Timeline session={session} myLanguage={me.language} />}
       {session && (
-        <Console session={session} uploader={uploader} myIdentity={myIdentity} myLanguage={me.language} onFiles={sendFiles} />
+        <Console
+          session={session}
+          uploader={uploader}
+          myIdentity={myIdentity}
+          myLanguage={me.language}
+          onFiles={sendFiles}
+          onAudio={(enabled) => void hub.setAudio(roomId, roomName, enabled)}
+        />
       )}
     </section>
   );
@@ -246,12 +346,18 @@ const columnClass = "mx-auto w-full max-w-3xl px-4 sm:px-6";
 function RoomStatus({ session, rejoining }: { session: RoomSession; rejoining: boolean }) {
   if (!session.connected) {
     if (rejoining) {
-      return <Badge tone="neutral">入り直し中…</Badge>;
+      return <Badge tone="neutral">つなぎ直し中…</Badge>;
     }
-    return <Badge tone={session.error ? "danger" : "neutral"}>{session.error ? "切断" : "入室中…"}</Badge>;
+    return <Badge tone={session.error ? "danger" : "neutral"}>{session.error ? "切断" : "接続中…"}</Badge>;
   }
   return (
     <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-fg-muted">
+      {session.audio && (
+        <span className="inline-flex items-center gap-1 font-medium text-fg">
+          <Headphones aria-hidden="true" className="size-4" />
+          音声中
+        </span>
+      )}
       <span className="inline-flex items-center gap-1">
         <Users aria-hidden="true" className="size-4" />
         {session.participantCount}人
@@ -268,7 +374,8 @@ function RoomStatus({ session, rejoining }: { session: RoomSession; rejoining: b
 
 // 履歴と、入室してから届いたものを1本にしたタイムライン。新しいものが下に来る。
 // 下端を見ていれば新しいものを追いかけ、上端に近づいたら古いほうを読み足す
-function Timeline({ session, myLanguage }: { session: RoomSession; myLanguage: Language }) {
+// readOnly はアーカイブしたルーム(話したり送ったりできない)
+function Timeline({ session, myLanguage, readOnly = false }: { session: RoomSession; myLanguage: Language; readOnly?: boolean }) {
   const entries = session.entries;
   const timeline = session.timeline;
   const listRef = useRef<HTMLDivElement>(null);
@@ -357,10 +464,19 @@ function Timeline({ session, myLanguage }: { session: RoomSession; myLanguage: L
         {timeline.loaded && entries.length === 0 && (
           // 文の区切りで折り返す(幅の狭い画面で、語の途中で切れないように)
           <li className="my-auto py-12 text-center text-fg-muted">
-            まだ誰も話していません。
+            {readOnly ? "履歴はありません。" : "まだ誰も話していません。"}
             <br />
-            <span className="inline-block">「押して話す」を押している間、</span>
-            <span className="inline-block">声がルームの全員に届きます。</span>
+            {readOnly ? null : session.audio ? (
+              <>
+                <span className="inline-block">「押して話す」を押している間、</span>
+                <span className="inline-block">声がルームの全員に届きます。</span>
+              </>
+            ) : (
+              <>
+                <span className="inline-block">テキストはこのまま送れます。</span>
+                <span className="inline-block">声で話すときは「音声をつなぐ」を押します。</span>
+              </>
+            )}
           </li>
         )}
         {entries.map((entry, i) => {
@@ -736,21 +852,56 @@ function Console({
   myIdentity,
   myLanguage,
   onFiles,
+  onAudio,
 }: {
   session: RoomSession;
   uploader: Uploader | undefined;
   myIdentity: string;
   myLanguage: Language;
   onFiles: (files: Iterable<File>) => void;
+  onAudio: (enabled: boolean) => void;
 }) {
   return (
     <div className="border-t border-border bg-surface">
       <div className={cx(columnClass, "grid gap-3 pt-3 pb-4")}>
-        <OnAir session={session} myIdentity={myIdentity} myLanguage={myLanguage} />
+        {session.audio && <OnAir session={session} myIdentity={myIdentity} myLanguage={myLanguage} />}
         <OutgoingTexts session={session} />
         {uploader && <OutgoingMediaList uploader={uploader} />}
         <Controls session={session} onFiles={onFiles} />
+        <AudioControls session={session} onAudio={onAudio} />
       </div>
+    </div>
+  );
+}
+
+// 音声をつないでいなければ「音声をつなぐ」、つないでいれば PTT(音声をつないだ全部のルームに届く)と「音声を切る」。
+// PTT の場所に置き、状態が替わっても下の段が動かないようにする
+function AudioControls({ session, onAudio }: { session: RoomSession; onAudio: (enabled: boolean) => void }) {
+  const hub = useRoomHub();
+  if (!session.audio) {
+    return (
+      <KeyButton
+        className="w-full"
+        icon={<Headphones aria-hidden="true" />}
+        detail="マイクとスピーカーを使います"
+        disabled={!session.connected || session.switchingAudio}
+        onClick={() => {
+          // 自動再生の制限を、利用者の操作の中で外しておく
+          void session.startAudio();
+          onAudio(true);
+        }}
+      >
+        {session.switchingAudio ? "つないでいます…" : "音声をつなぐ"}
+      </KeyButton>
+    );
+  }
+  return (
+    <div className="grid grid-cols-[1fr_auto] items-stretch gap-2">
+      <MainPtt hub={hub} />
+      <Button className="h-auto" title="マイクとスピーカーを使うのをやめる" onClick={() => onAudio(false)}>
+        <PhoneOff aria-hidden="true" className="size-4" />
+        <span className="max-sm:sr-only">音声を切る</span>
+      </Button>
     </div>
   );
 }
@@ -758,29 +909,24 @@ function Console({
 // いま声が流れているか。自分が送っていれば TX(赤)、ほかの人の確定していない字幕が流れていれば RX(緑)、
 // どちらでもなければ消灯。高さを変えず、灯りが替わるだけにする(下のキーが動かないように)
 function OnAir({ session, myIdentity, myLanguage }: { session: RoomSession; myIdentity: string; myLanguage: Language }) {
-  const receiving = session.entries.findLast(
-    (e): e is Extract<TimelineEntry, { type: "caption" }> =>
-      e.type === "caption" &&
-      !e.isText &&
-      e.speakerIdentity !== myIdentity &&
-      e.original !== undefined &&
-      !e.original.isFinal,
-  );
+  const hub = useRoomHub();
+  const receiving = receivingCaption(session, myIdentity);
+  const audioRooms = hub.audioRooms.length;
 
-  let lampClass = "bg-border-strong";
+  let signal: SignalState = "off";
   let label = "待機中";
   let detail: ReactNode = <span className="text-fg-muted">話している人はいません</span>;
   let rowClass = "bg-surface-muted";
   if (session.talking) {
-    lampClass = "bg-live motion-safe:animate-pulse";
+    signal = "tx";
     label = "送話中";
     // 幅の狭い画面でも1行に収まる長さにする
-    detail = "ルームの全員に届いています";
+    detail = audioRooms > 1 ? `音声中の${audioRooms}ルームに届いています` : "ルームの全員に届いています";
     rowClass = "bg-surface-muted";
   } else if (receiving) {
     const translation =
       receiving.originalLanguage === myLanguage ? undefined : receiving.translations.get(myLanguage);
-    lampClass = "bg-rx motion-safe:animate-pulse";
+    signal = "rx";
     label = "受信中";
     detail = (
       <>
@@ -797,7 +943,7 @@ function OnAir({ session, myIdentity, myLanguage }: { session: RoomSession; myId
       role="status"
       aria-live="polite"
     >
-      <span aria-hidden="true" className={cx("size-2.5 shrink-0 rounded-full", lampClass)} />
+      <SignalLamp state={signal} />
       <span
         className={cx(
           "shrink-0 font-bold",
@@ -811,37 +957,10 @@ function OnAir({ session, myIdentity, myLanguage }: { session: RoomSession; myId
   );
 }
 
-// PTT、テキスト入力、ファイルの添付。PTT はボタンを押している間か、テキスト欄の外で Space を押している間
+// テキスト入力と、ファイルの添付。音声をつないでいなくても使える
 function Controls({ session, onFiles }: { session: RoomSession; onFiles: (files: Iterable<File>) => void }) {
   const [text, setText] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    const isTyping = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement | null;
-      return el?.closest("input, textarea, select, [contenteditable]") != null;
-    };
-    const down = (e: KeyboardEvent) => {
-      if (e.code === "Space" && !e.repeat && !isTyping(e)) {
-        e.preventDefault();
-        void session.startAudio();
-        session.setPressing(true);
-      }
-    };
-    const up = (e: KeyboardEvent) => {
-      if (e.code === "Space" && session.pressing) {
-        e.preventDefault();
-        session.setPressing(false);
-      }
-    };
-    // 押したままタブを離れた・画面を消したときに離すのは RoomKeeper(blur、visibilitychange、pagehide を聞く)
-    window.addEventListener("keydown", down);
-    window.addEventListener("keyup", up);
-    return () => {
-      window.removeEventListener("keydown", down);
-      window.removeEventListener("keyup", up);
-    };
-  }, [session]);
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -897,23 +1016,6 @@ function Controls({ session, onFiles }: { session: RoomSession; onFiles: (files:
           <span className="max-sm:sr-only">送信</span>
         </Button>
       </form>
-      <PttButton
-        className="w-full"
-        state={session.talking ? "talking" : session.pressing ? "pressing" : "idle"}
-        shortcut="Space"
-        disabled={disabled}
-        aria-pressed={session.pressing}
-        onPointerDown={(e) => {
-          e.currentTarget.setPointerCapture(e.pointerId);
-          void session.startAudio();
-          session.setPressing(true);
-        }}
-        onPointerUp={() => session.setPressing(false)}
-        onPointerCancel={() => session.setPressing(false)}
-        onContextMenu={(e) => e.preventDefault()}
-      >
-        {session.talking ? "送話中" : session.pressing ? "マイクを準備中…" : "押して話す"}
-      </PttButton>
     </>
   );
 }

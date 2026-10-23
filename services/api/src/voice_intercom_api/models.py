@@ -19,10 +19,33 @@ Language = Literal["es", "pt", "fr", "ja", "ru", "zh", "de", "ko", "hi", "id", "
 Timestamp = Annotated[str, Field(description="ISO 8601(UTC)")]
 
 
+# 作った人がオーナーになる。connect は申請(connect.py)でしか作れない
+RoomKind = Literal["public", "private", "connect"]
+CreatableRoomKind = Literal["public", "private"]
+# ルームの役割。オーナーは複数人いてよい
+MemberRole = Literal["owner", "member"]
+# 英小文字・数字・ハイフン。運営者が付け、Connect の申請で相手に伝える
+TenantId = Annotated[
+    str, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,30}[a-z0-9]$", description="テナントの ID")
+]
+TenantName = Annotated[str, Field(min_length=1, max_length=100, description="テナントの表示名")]
+
+
 class Room(BaseModel):
     room_id: RoomId
     name: RoomName
+    kind: RoomKind
+    tenant_id: str = Field(description="ルームを作ったテナント(Connect では申請した側)")
+    connect_tenant_id: str | None = Field(
+        default=None,
+        description="Connect の相手のテナント(申請を受けた側)。Connect でなければ null",
+    )
+    connect_status: Literal["pending", "active"] | None = Field(
+        default=None, description="Connect の申請中(pending)か、受けられた(active)か"
+    )
     member_ids: MemberIds
+    owner_ids: Annotated[list[str], Field(description="オーナーの user_id(user_id の順)")]
+    archived_at: Timestamp | None = Field(default=None, description="アーカイブした時刻")
     created_at: Timestamp
     updated_at: Timestamp
 
@@ -32,21 +55,84 @@ class RoomList(BaseModel):
 
 
 class CreateRoomRequest(BaseModel):
-    room_id: RoomId
     name: RoomName
-    member_ids: MemberIds = []
+    kind: CreatableRoomKind
+    member_ids: MemberIds = Field(
+        default=[], description="一緒にメンバーにする人(同じテナントの人)。作った人は入れなくてよい"
+    )
 
 
 class UpdateRoomRequest(BaseModel):
     # 省略した(null の)項目は変えない
     name: RoomName | None = None
-    member_ids: MemberIds | None = None
+    kind: CreatableRoomKind | None = Field(
+        default=None, description="Public と Private の間でだけ変えられる"
+    )
+
+
+class RoomMember(BaseModel):
+    user_id: str
+    role: MemberRole
+    tenant_id: str = Field(description="その人のテナント")
+    display_name: str | None = Field(description="表示名。プロフィールが無ければ null")
+
+
+class RoomMemberList(BaseModel):
+    items: list[RoomMember]
+
+
+class PutRoomMemberRequest(BaseModel):
+    role: MemberRole = "member"
+
+
+class SetAudioRequest(BaseModel):
+    enabled: bool = Field(description="マイクとスピーカーを使うか(音声をつないでいるか)")
+
+
+class Tenant(BaseModel):
+    tenant_id: str = Field(description="テナントの ID")
+    name: str = Field(description="テナントの表示名")
+    created_at: Timestamp
+
+
+class TenantList(BaseModel):
+    items: list[Tenant]
+
+
+class CreateTenantRequest(BaseModel):
+    tenant_id: TenantId
+    name: TenantName
+
+
+class SetUserTenantRequest(BaseModel):
+    tenant_id: TenantId | None = Field(description="入れるテナント。null なら所属を外す")
+
+
+class CreateConnectRequest(BaseModel):
+    tenant_id: TenantId = Field(description="相手のテナント")
+    name: RoomName
+
+
+class ConnectRequest(BaseModel):
+    """Connect の申請(申請中の Connect のルーム)。"""
+
+    room: Room
+    direction: Literal["outgoing", "incoming"] = Field(
+        description="自分のテナントが申請した(outgoing)か、受けた(incoming)か"
+    )
+    from_tenant_name: str = Field(description="申請したテナントの表示名")
+    to_tenant_name: str = Field(description="申請を受けたテナントの表示名")
+
+
+class ConnectRequestList(BaseModel):
+    items: list[ConnectRequest]
 
 
 class User(BaseModel):
     user_id: str = Field(description="Cognito の sub")
     display_name: DisplayName
     language: Language = Field(description="話す言語。翻訳音声もこの言語で聞く")
+    tenant_id: str | None = Field(default=None, description="所属するテナント。運営者が決める")
     created_at: Timestamp
     updated_at: Timestamp
 

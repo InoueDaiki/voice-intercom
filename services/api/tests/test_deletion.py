@@ -262,7 +262,8 @@ def test_get_event(agent: str, member: str, admin: str, outsider: str) -> None:
     event = put_text(agent)
 
     assert get(member, event["event_id"]) == (200, event)
-    assert get(admin, event["event_id"]) == (200, event)
+    # 管理者もメンバーでなければ読めない
+    assert get(admin, event["event_id"])[0] == 403
     assert get(outsider, event["event_id"])[0] == 403
     assert get(member, "2026-10-10T00:00:00.000Z#nothing")[0] == 404
 
