@@ -2,10 +2,12 @@ import { LANGUAGE_LABELS } from "@voice-intercom/client-core";
 import { Alert, Button, FullScreenMessage } from "@voice-intercom/ui-web";
 import { useEffect } from "react";
 import { hasAuthParams, useAuth } from "react-oidc-context";
-import { Link, Navigate, Outlet, useLocation } from "react-router";
+import { Link, Navigate, Outlet, useLocation, useMatch } from "react-router";
 
+import { AudioDock } from "../AudioDock.tsx";
 import { signOut } from "../auth.ts";
 import { errorMessage, useMe } from "../queries.ts";
+import { RoomHubProvider } from "../roomHub.tsx";
 
 // パスを持たないレイアウト。ログインしていなければログイン画面へ送り、
 // プロフィール(表示名と言語)が未登録ならプロフィールの画面へ送る(LiveKit のトークンに要る)
@@ -44,6 +46,8 @@ function SignedIn() {
   const { user } = useAuth();
   const location = useLocation();
   const me = useMe();
+  const roomMatch = useMatch("/rooms/:roomId");
+  const myIdentity = user?.profile.sub;
 
   let content;
   if (me.isPending) {
@@ -68,9 +72,10 @@ function SignedIn() {
     content = <Outlet />;
   }
 
-  return (
-    // 列は画面の幅を超えない(grid-cols-1)。中身の長い文字列で画面ごと横に広がらないように
-    <div className="grid h-dvh grid-cols-1 grid-rows-[auto_1fr]">
+  const layout = (
+    // 列は画面の幅を超えない(grid-cols-1)。中身の長い文字列で画面ごと横に広がらないように。
+    // 下の段は音声中の帯(音声をつないだルームがあるときだけ)
+    <div className="grid h-dvh grid-cols-1 grid-rows-[auto_1fr_auto]">
       <header className="flex h-12 items-center justify-between gap-4 bg-key px-4 text-on-key">
         <Link to="/" className="shrink-0 font-bold text-on-key no-underline">
           voice-intercom
@@ -95,7 +100,16 @@ function SignedIn() {
       </header>
       {/* 余白は各画面が持つ(ルームの画面は端まで使う) */}
       <main className="min-h-0 overflow-auto">{content}</main>
+      {me.data && myIdentity && <AudioDock currentRoomId={roomMatch?.params.roomId} myIdentity={myIdentity} />}
     </div>
+  );
+  // ルームの接続(音声中のルームを含む)は、画面を移っても保つ
+  return me.data && myIdentity ? (
+    <RoomHubProvider me={me.data} myIdentity={myIdentity}>
+      {layout}
+    </RoomHubProvider>
+  ) : (
+    layout
   );
 }
 
