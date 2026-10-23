@@ -57,7 +57,14 @@ resource "aws_cognito_user_pool_domain" "this" {
 resource "aws_cognito_user_group" "admin" {
   name         = "admin"
   user_pool_id = aws_cognito_user_pool.this.id
-  description  = "管理コンソールを使えるユーザー"
+  description  = "テナントの管理者。管理コンソールで自分のテナントを管理する"
+}
+
+# テナントを作り、ユーザーをテナントに入れる(services/api の tenants.py)
+resource "aws_cognito_user_group" "operator" {
+  name         = "operator"
+  user_pool_id = aws_cognito_user_pool.this.id
+  description  = "運営者。管理コンソールでテナントとユーザーの所属を管理する"
 }
 
 # Agent が API を呼ぶときのスコープ(voice-intercom/agent)

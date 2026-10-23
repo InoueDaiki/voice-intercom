@@ -50,8 +50,8 @@ def setup_timeline(monkeypatch: pytest.MonkeyPatch) -> None:
         Bucket=MEDIA_BUCKET,
         CreateBucketConfiguration={"LocationConstraint": "ap-northeast-1"},
     )
-    store.create_room("room-a", "A", ["member-1", "member-2"])
-    store.create_room("room-b", "B", ["member-2"])
+    store.create_room("room-a", "A", ["member-1", "member-2"], tenant_id="t1")
+    store.create_room("room-b", "B", ["member-2"], tenant_id="t1")
 
 
 def teardown_timeline() -> None:

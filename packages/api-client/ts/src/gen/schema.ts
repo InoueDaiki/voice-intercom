@@ -11,16 +11,175 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** ルームを取る(管理者かメンバー) */
+        /** ルームを取る(メンバー、オーナーか管理者、同じテナントの Public なら誰でも) */
         get: operations["getRoom"];
         put?: never;
         post?: never;
-        /** ルームを消す(管理者)。LiveKit のルームにいる全員を切り、履歴とメディアも消す */
+        /**
+         * ルームを消す(ルームを作ったテナントの管理者)
+         * @description LiveKit のルームにいる全員を切り、履歴とメディアも消す。
+         */
         delete: operations["deleteRoom"];
         options?: never;
         head?: never;
-        /** ルームの名前とメンバーを変える(管理者)。外した人が LiveKit のルームにいれば出す */
+        /**
+         * ルームの名前と種別を変える(オーナーか管理者)
+         * @description 種別は Public と Private の間でだけ変えられる。
+         */
         patch: operations["updateRoom"];
+        trace?: never;
+    };
+    "/rooms/{room_id}/join": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Public のルームに参加する(同じテナントの人)。参加していれば何もしない */
+        post: operations["joinRoom"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms/{room_id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** メンバーの一覧(メンバー、オーナーか管理者) */
+        get: operations["listRoomMembers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms/{room_id}/members/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * メンバーに足すか、役割(オーナーかメンバー)を変える(オーナーか管理者)
+         * @description 足せるのは、プロフィールを登録した自分のテナントの人だけ。承諾は待たずにメンバーになる。最後のオーナーをメンバーに戻すと 409。
+         */
+        put: operations["putRoomMember"];
+        post?: never;
+        /**
+         * メンバーから外す。自分なら抜ける(誰でも)、ほかの人ならオーナーか管理者
+         * @description 最後のオーナーは抜けられない(409)。外した人が LiveKit のルームにいれば出す。
+         */
+        delete: operations["deleteRoomMember"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms/{room_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * アーカイブする(オーナーか管理者)
+         * @description 読むだけのルームにし、LiveKit のルームにいる全員を切る。
+         */
+        post: operations["archiveRoom"];
+        /** アーカイブを戻す(オーナーか管理者) */
+        delete: operations["unarchiveRoom"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms/{room_id}/audio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 音声をつなぐ・切る(メンバー)。LiveKit の参加者の属性 audio を変える
+         * @description ルームにつないだまま、マイクとスピーカーを使うかを Agent に知らせる(翻訳の音声と読み上げは、audio が on の人の言語にだけ作る)。マイクの publish と音声の購読は、アプリが自分で切り替える。
+         */
+        put: operations["setRoomAudio"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connect-requests/{room_id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Connect の申請を受ける(申請を受けたテナントの管理者)。受けた人もオーナーになる */
+        post: operations["acceptConnectRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connect-requests/{room_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Connect の申請を断る・取り下げる(どちらかのテナントの管理者) */
+        delete: operations["deleteConnectRequest"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{user_id}/tenant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * ユーザーの所属を変える(運営者)。null なら外す
+         * @description 入っているルームのメンバーからは外さない。
+         */
+        put: operations["setUserTenant"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/rooms/{room_id}/timeline": {
@@ -30,7 +189,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** ルームの履歴を新しい順に取る(管理者かメンバー) */
+        /** ルームの履歴を新しい順に取る(メンバー) */
         get: operations["listTimeline"];
         put?: never;
         post?: never;
@@ -48,7 +207,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 履歴の1件を取る(管理者かメンバー)。消した行は墓石(deleted)で返す
+         * 履歴の1件を取る(メンバー)。消した行は墓石(deleted)で返す
          * @description 強い整合の読み取りなので、保存や削除の直後でも反映されている。アプリは、データチャネル(topic deletion)で届いた知らせを、これで確かめる。
          */
         get: operations["getTimelineEvent"];
@@ -94,7 +253,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 画像・動画・ファイルをアップロードする署名付き URL を発行する(管理者かメンバー)
+         * 画像・動画・ファイルをアップロードする署名付き URL を発行する(メンバー)
          * @description PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。ファイル(画像・動画でないもの)は、応答の content_disposition を Content-Disposition ヘッダーに付ける。アップロードしたら complete を呼ぶ。size_bytes が 16MB 以上なら、upload_url は null で、multipart(パートの大きさと数)を返す。パートの署名付き URL は parts で取る。width・height・duration_ms は、送信者が測った値をそのまま履歴に入れる(API は確かめない)。
          */
         post: operations["createMediaUpload"];
@@ -201,24 +360,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/rooms": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** ルームの一覧。管理者にはすべて、それ以外の人には自分がメンバーのルームを返す */
-        get: operations["listRooms"];
-        put?: never;
-        /** ルームを作る(管理者)。同じ room_id の前のルームの履歴とメディアが残っていれば消す */
-        post: operations["createRoom"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/users/me": {
         parameters: {
             query?: never;
@@ -244,7 +385,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** ユーザーの一覧(管理者)。プロフィールを登録した人だけを返す */
+        /**
+         * ユーザーの一覧。プロフィールを登録した人だけを返す
+         * @description 運営者にはすべての人(所属の無い人も)、それ以外の人には自分のテナントの人を返す(ルームに招待する相手を選ぶ)。
+         */
         get: operations["listUsers"];
         put?: never;
         post?: never;
@@ -263,8 +407,71 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** LiveKit の参加用トークンを発行する(管理者かルームのメンバー) */
+        /**
+         * LiveKit の参加用トークンを発行する(ルームのメンバー)
+         * @description 参加者の属性に language と audio(on か off)を入れる。
+         */
         post: operations["createLiveKitToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * ルームの一覧
+         * @description scope が member(既定)なら自分がメンバーのルーム(アーカイブしたものも)、joinable なら自分のテナントの Public のうち参加していないもの、tenant なら自分のテナントに関わるすべてのルーム(管理者。申請中の Connect も)を名前の順に返す。
+         */
+        get: operations["listRooms"];
+        put?: never;
+        /**
+         * ルームを作る。作った人がオーナーになる
+         * @description member_ids は同じテナントの人だけ。Connect はここでは作れない(POST /connect-requests)。
+         */
+        post: operations["createRoom"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connect-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Connect の申請の一覧(管理者)。自分のテナントが出したものと、受けたもの */
+        get: operations["listConnectRequests"];
+        put?: never;
+        /** ほかのテナントに Connect を申請する(管理者)。申請した人がオーナーになる */
+        post: operations["createConnectRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tenants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** テナントの一覧(運営者) */
+        get: operations["listTenants"];
+        put?: never;
+        /** テナントを作る(運営者) */
+        post: operations["createTenant"];
         delete?: never;
         options?: never;
         head?: never;
@@ -314,6 +521,47 @@ export interface components {
              */
             etag: string;
         };
+        /**
+         * ConnectRequest
+         * @description Connect の申請(申請中の Connect のルーム)。
+         */
+        ConnectRequest: {
+            room: components["schemas"]["Room"];
+            /**
+             * Direction
+             * @description 自分のテナントが申請した(outgoing)か、受けた(incoming)か
+             * @enum {string}
+             */
+            direction: "outgoing" | "incoming";
+            /**
+             * From Tenant Name
+             * @description 申請したテナントの表示名
+             */
+            from_tenant_name: string;
+            /**
+             * To Tenant Name
+             * @description 申請を受けたテナントの表示名
+             */
+            to_tenant_name: string;
+        };
+        /** ConnectRequestList */
+        ConnectRequestList: {
+            /** Items */
+            items: components["schemas"]["ConnectRequest"][];
+        };
+        /** CreateConnectRequest */
+        CreateConnectRequest: {
+            /**
+             * Tenant Id
+             * @description 相手のテナント
+             */
+            tenant_id: string;
+            /**
+             * Name
+             * @description ルームの表示名
+             */
+            name: string;
+        };
         /** CreateMediaUploadRequest */
         CreateMediaUploadRequest: {
             /**
@@ -356,21 +604,34 @@ export interface components {
         /** CreateRoomRequest */
         CreateRoomRequest: {
             /**
-             * Room Id
-             * @description ルームの ID
-             */
-            room_id: string;
-            /**
              * Name
              * @description ルームの表示名
              */
             name: string;
             /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "public" | "private";
+            /**
              * Member Ids
-             * @description メンバーの user_id(Cognito の sub)。返すときは user_id の順
+             * @description 一緒にメンバーにする人(同じテナントの人)。作った人は入れなくてよい
              * @default []
              */
             member_ids: string[];
+        };
+        /** CreateTenantRequest */
+        CreateTenantRequest: {
+            /**
+             * Tenant Id
+             * @description テナントの ID
+             */
+            tenant_id: string;
+            /**
+             * Name
+             * @description テナントの表示名
+             */
+            name: string;
         };
         /** CreateUploadPartUrlsRequest */
         CreateUploadPartUrlsRequest: {
@@ -413,6 +674,12 @@ export interface components {
              * @description 入るルームの名前
              */
             room_name: string;
+            /**
+             * Audio
+             * @description 音声をつなぐ(マイクとスピーカーを使う)か。false ならデータだけでつなぐ
+             * @default true
+             */
+            audio: boolean;
         };
         /** LiveKitTokenResponse */
         LiveKitTokenResponse: {
@@ -482,6 +749,15 @@ export interface components {
              * @description 前回の通知から間隔がたっていないので、送らなかった人数
              */
             skipped: number;
+        };
+        /** PutRoomMemberRequest */
+        PutRoomMemberRequest: {
+            /**
+             * Role
+             * @default member
+             * @enum {string}
+             */
+            role: "owner" | "member";
         };
         /**
          * PutTimelineEventRequest
@@ -576,10 +852,40 @@ export interface components {
              */
             name: string;
             /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "public" | "private" | "connect";
+            /**
+             * Tenant Id
+             * @description ルームを作ったテナント(Connect では申請した側)
+             */
+            tenant_id: string;
+            /**
+             * Connect Tenant Id
+             * @description Connect の相手のテナント(申請を受けた側)。Connect でなければ null
+             */
+            connect_tenant_id?: string | null;
+            /**
+             * Connect Status
+             * @description Connect の申請中(pending)か、受けられた(active)か
+             */
+            connect_status?: ("pending" | "active") | null;
+            /**
              * Member Ids
              * @description メンバーの user_id(Cognito の sub)。返すときは user_id の順
              */
             member_ids: string[];
+            /**
+             * Owner Ids
+             * @description オーナーの user_id(user_id の順)
+             */
+            owner_ids: string[];
+            /**
+             * Archived At
+             * @description アーカイブした時刻
+             */
+            archived_at?: string | null;
             /**
              * Created At
              * @description ISO 8601(UTC)
@@ -596,6 +902,47 @@ export interface components {
             /** Items */
             items: components["schemas"]["Room"][];
         };
+        /** RoomMember */
+        RoomMember: {
+            /** User Id */
+            user_id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "owner" | "member";
+            /**
+             * Tenant Id
+             * @description その人のテナント
+             */
+            tenant_id: string;
+            /**
+             * Display Name
+             * @description 表示名。プロフィールが無ければ null
+             */
+            display_name: string | null;
+        };
+        /** RoomMemberList */
+        RoomMemberList: {
+            /** Items */
+            items: components["schemas"]["RoomMember"][];
+        };
+        /** SetAudioRequest */
+        SetAudioRequest: {
+            /**
+             * Enabled
+             * @description マイクとスピーカーを使うか(音声をつないでいるか)
+             */
+            enabled: boolean;
+        };
+        /** SetUserTenantRequest */
+        SetUserTenantRequest: {
+            /**
+             * Tenant Id
+             * @description 入れるテナント。null なら所属を外す
+             */
+            tenant_id: string | null;
+        };
         /** SpeakingNotificationRequest */
         SpeakingNotificationRequest: {
             /**
@@ -609,6 +956,29 @@ export interface components {
              * @default []
              */
             present_ids: string[];
+        };
+        /** Tenant */
+        Tenant: {
+            /**
+             * Tenant Id
+             * @description テナントの ID
+             */
+            tenant_id: string;
+            /**
+             * Name
+             * @description テナントの表示名
+             */
+            name: string;
+            /**
+             * Created At
+             * @description ISO 8601(UTC)
+             */
+            created_at: string;
+        };
+        /** TenantList */
+        TenantList: {
+            /** Items */
+            items: components["schemas"]["Tenant"][];
         };
         /** TextNotificationRequest */
         TextNotificationRequest: {
@@ -783,8 +1153,11 @@ export interface components {
         UpdateRoomRequest: {
             /** Name */
             name?: string | null;
-            /** Member Ids */
-            member_ids?: string[] | null;
+            /**
+             * Kind
+             * @description Public と Private の間でだけ変えられる
+             */
+            kind?: ("public" | "private") | null;
         };
         /** UploadPartUrl */
         UploadPartUrl: {
@@ -829,6 +1202,11 @@ export interface components {
              * @enum {string}
              */
             language: "es" | "pt" | "fr" | "ja" | "ru" | "zh" | "de" | "ko" | "hi" | "id" | "vi" | "it" | "en";
+            /**
+             * Tenant Id
+             * @description 所属するテナント。運営者が決める
+             */
+            tenant_id?: string | null;
             /**
              * Created At
              * @description ISO 8601(UTC)
@@ -1007,6 +1385,15 @@ export interface operations {
                     "application/json": components["schemas"]["Room"];
                 };
             };
+            /** @description Connect の種別は変えられない */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description トークンがない、または不正 */
             401: {
                 headers: {
@@ -1026,6 +1413,660 @@ export interface operations {
                 };
             };
             /** @description ルームがない */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    joinRoom: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ルームの ID */
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 参加した */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Room"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description ルームがない */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description アーカイブしたルーム */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listRoomMembers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ルームの ID */
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoomMemberList"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description ルームがない */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    putRoomMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ルームの ID */
+                room_id: string;
+                /** @description user_id(Cognito の sub) */
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutRoomMemberRequest"];
+            };
+        };
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Room"];
+                };
+            };
+            /** @description 自分のテナントの人ではない */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description ルームがない */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 最後のオーナー、または Connect の申請中 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deleteRoomMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ルームの ID */
+                room_id: string;
+                /** @description user_id(Cognito の sub) */
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 外した */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description ルームがない */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 最後のオーナー、または Connect の申請中 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archiveRoom: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ルームの ID */
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Room"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description ルームがない */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Connect の申請中 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unarchiveRoom: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ルームの ID */
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Room"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description ルームがない */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    setRoomAudio: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ルームの ID */
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetAudioRequest"];
+            };
+        };
+        responses: {
+            /** @description 変えた */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description ルームがない */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description ルームにつないでいない、申請中、アーカイブした */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    acceptConnectRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ルームの ID */
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Room"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 申請がない */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deleteConnectRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description ルームの ID */
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 消した */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 申請がない */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    setUserTenant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description user_id */
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetUserTenantRequest"];
+            };
+        };
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description テナントか、プロフィールを登録したユーザーがない */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -1091,6 +2132,15 @@ export interface operations {
             };
             /** @description ルームがない */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Connect の申請中 */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1343,6 +2393,15 @@ export interface operations {
             };
             /** @description ルームがない */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Connect の申請中か、アーカイブしたルーム */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1673,113 +2732,6 @@ export interface operations {
             };
         };
     };
-    listRooms: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description 成功 */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RoomList"];
-                };
-            };
-            /** @description トークンがない、または不正 */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description このトークンでは使えない */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    createRoom: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateRoomRequest"];
-            };
-        };
-        responses: {
-            /** @description 作った */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Room"];
-                };
-            };
-            /** @description トークンがない、または不正 */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description このトークンでは使えない */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description 同じ room_id のルームが既にある */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     getMyProfile: {
         parameters: {
             query?: never;
@@ -1983,7 +2935,340 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description プロフィール(表示名と言語)をまだ登録していない */
+            /** @description プロフィール(表示名と言語)をまだ登録していない、Connect の申請中、アーカイブしたルーム */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listRooms: {
+        parameters: {
+            query?: {
+                /** @description どのルームを返すか */
+                scope?: "member" | "joinable" | "tenant";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoomList"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    createRoom: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateRoomRequest"];
+            };
+        };
+        responses: {
+            /** @description 作った */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Room"];
+                };
+            };
+            /** @description ほかのテナントの人が入っている */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listConnectRequests: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectRequestList"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    createConnectRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateConnectRequest"];
+            };
+        };
+        responses: {
+            /** @description 申請した */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectRequest"];
+                };
+            };
+            /** @description 自分のテナント */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 相手のテナントがない */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listTenants: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TenantList"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    createTenant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTenantRequest"];
+            };
+        };
+        responses: {
+            /** @description 作った */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Tenant"];
+                };
+            };
+            /** @description トークンがない、または不正 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description このトークンでは使えない */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 同じ tenant_id のテナントが既にある */
             409: {
                 headers: {
                     [name: string]: unknown;

@@ -23,8 +23,10 @@ _ALGORITHMS = ["RS256"]
 # Agent が client credentials で取るトークンのスコープ(infra/modules/cognito の resource server)
 AGENT_SCOPE = "voice-intercom/agent"
 
-# 管理者の Cognito のグループ(管理コンソールに入れる人)
+# テナントの管理者の Cognito のグループ(管理コンソールに入れる人。自分のテナントだけを管理する)
 ADMIN_GROUP = "admin"
+# 運営者の Cognito のグループ(テナントを作り、ユーザーをテナントに入れる。ルームの中身は扱わない)
+OPERATOR_GROUP = "operator"
 
 # トークンの kid から検証用の公開鍵を返す関数
 KeyResolver = Callable[[str], jwt.PyJWK | str | bytes]
@@ -47,6 +49,10 @@ class Principal:
     @property
     def is_admin(self) -> bool:
         return ADMIN_GROUP in self.groups
+
+    @property
+    def is_operator(self) -> bool:
+        return OPERATOR_GROUP in self.groups
 
 
 class TokenVerifier:
@@ -122,6 +128,13 @@ def admin_user(user: Annotated[Principal, Depends(current_user)]) -> Principal:
     return user
 
 
+def operator_user(user: Annotated[Principal, Depends(current_user)]) -> Principal:
+    """運営者(operator グループ)だけを通す。"""
+    if not user.is_operator:
+        raise ForbiddenError("運営者の権限が要る")
+    return user
+
+
 def agent_principal(principal: Annotated[Principal, Depends(current_principal)]) -> Principal:
     """Agent(client credentials)のトークンだけを通す。利用者のトークンは 403。"""
     if not principal.is_agent:
@@ -132,4 +145,5 @@ def agent_principal(principal: Annotated[Principal, Depends(current_principal)])
 # ルートの引数に付けて使う
 CurrentUser = Annotated[Principal, Depends(current_user)]
 AdminUser = Annotated[Principal, Depends(admin_user)]
+OperatorUser = Annotated[Principal, Depends(operator_user)]
 AgentPrincipal = Annotated[Principal, Depends(agent_principal)]

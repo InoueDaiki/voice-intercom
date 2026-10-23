@@ -10,7 +10,6 @@ from typing import Annotated
 from aws_lambda_powertools.event_handler import (
     APIGatewayHttpResolver,
     DependencyResolutionError,
-    Response,
 )
 from aws_lambda_powertools.event_handler.exceptions import (
     NotFoundError,
@@ -24,29 +23,24 @@ from pydantic import BaseModel, Field
 
 from voice_intercom_api import (
     agent_wake,
+    connect,
     devices,
     media,
     notifications,
-    room_cleanup,
+    participants,
+    rooms,
     store,
+    tenants,
     timeline,
 )
-from voice_intercom_api.auth import AdminUser, CurrentUser
+from voice_intercom_api.auth import CurrentUser
 from voice_intercom_api.config import get_settings
-from voice_intercom_api.models import (
-    CreateRoomRequest,
-    PutUserRequest,
-    Room,
-    RoomList,
-    UpdateRoomRequest,
-    User,
-    UserList,
-)
+from voice_intercom_api.models import PutUserRequest, User, UserList
 from voice_intercom_api.routing import AUTH as _AUTH
-from voice_intercom_api.routing import ROOM_NOT_FOUND as _ROOM_NOT_FOUND
-from voice_intercom_api.routing import RoomIdPath
+from voice_intercom_api.routing import ROOM_WRITE_ERRORS as _ROOM_WRITE_ERRORS
 from voice_intercom_api.routing import responses as _responses
-from voice_intercom_api.routing import visible_room as _visible_room
+from voice_intercom_api.routing import tenant_actor as _tenant_actor
+from voice_intercom_api.routing import writable_room as _writable_room
 
 # Agent が翻訳先を決めるのに使う、参加者の属性のキー(services/agent の languages.py)
 LANGUAGE_ATTRIBUTE = "language"
@@ -78,95 +72,6 @@ class HealthResponse(BaseModel):
 @app.get("/health", summary="死活監視", operation_id="getHealth", tags=["health"])
 def health() -> HealthResponse:
     return HealthResponse(status="ok")
-
-
-# ルーム
-
-
-@app.get(
-    "/rooms",
-    summary="ルームの一覧。管理者にはすべて、それ以外の人には自分がメンバーのルームを返す",
-    operation_id="listRooms",
-    tags=["rooms"],
-    security=_AUTH,
-    responses=_responses(RoomList),
-)
-def list_rooms(user: CurrentUser) -> RoomList:
-    return RoomList(items=store.list_rooms(None if user.is_admin else user.sub))
-
-
-@app.post(
-    "/rooms",
-    summary="ルームを作る(管理者)。同じ room_id の前のルームの履歴とメディアが残っていれば消す",
-    operation_id="createRoom",
-    tags=["rooms"],
-    security=_AUTH,
-    status_code=201,
-    responses=_responses(
-        Room, status=201, description="作った", errors={409: "同じ room_id のルームが既にある"}
-    ),
-)
-def create_room(body: Annotated[CreateRoomRequest, Body()], _admin: AdminUser) -> Room:
-    try:
-        room = store.create_room(body.room_id, body.name, body.member_ids)
-    except store.AlreadyExistsError as e:
-        raise ServiceError(HTTPStatus.CONFLICT, "同じ room_id のルームが既にある") from e
-    # 同じ room_id の前のルームの履歴とメディアが残っていれば消す(room_cleanup.py)
-    room_cleanup.purge(room.room_id, always_invalidate=False)
-    return room
-
-
-@app.get(
-    "/rooms/<room_id>",
-    summary="ルームを取る(管理者かメンバー)",
-    operation_id="getRoom",
-    tags=["rooms"],
-    security=_AUTH,
-    responses=_responses(Room, errors=_ROOM_NOT_FOUND),
-)
-def get_room(room_id: RoomIdPath, user: CurrentUser) -> Room:
-    return _visible_room(room_id, user)
-
-
-@app.patch(
-    "/rooms/<room_id>",
-    summary="ルームの名前とメンバーを変える(管理者)。外した人が LiveKit のルームにいれば出す",
-    operation_id="updateRoom",
-    tags=["rooms"],
-    security=_AUTH,
-    responses=_responses(Room, errors=_ROOM_NOT_FOUND),
-)
-def update_room(
-    room_id: RoomIdPath, body: Annotated[UpdateRoomRequest, Body()], _admin: AdminUser
-) -> Room:
-    try:
-        room, removed = store.update_room(room_id, name=body.name, member_ids=body.member_ids)
-    except store.NotFoundError as e:
-        raise NotFoundError("ルームがない") from e
-    # 接続中の人のトークンは LiveKit が更新し続けるので、外した人は LiveKit のルームから出す
-    room_cleanup.evict(room_id, removed)
-    return room
-
-
-@app.delete(
-    "/rooms/<room_id>",
-    summary="ルームを消す(管理者)。LiveKit のルームにいる全員を切り、履歴とメディアも消す",
-    operation_id="deleteRoom",
-    tags=["rooms"],
-    security=_AUTH,
-    status_code=204,
-    responses=_responses(None, status=204, description="消した", errors=_ROOM_NOT_FOUND),
-)
-def delete_room(room_id: RoomIdPath, _admin: AdminUser) -> Response[str]:
-    try:
-        store.delete_room(room_id)
-    except store.NotFoundError as e:
-        # 前の DELETE の後始末が途中で終わっていても、やり直せるようにする
-        room_cleanup.after_delete(room_id)
-        raise NotFoundError("ルームがない") from e
-    # LiveKit のルームを消して全員を切り、履歴とメディアを消す(room_cleanup.py)
-    room_cleanup.after_delete(room_id)
-    return Response(status_code=204, body="", content_type=None)
 
 
 # ユーザーのプロフィール
@@ -201,14 +106,18 @@ def put_my_profile(body: Annotated[PutUserRequest, Body()], user: CurrentUser) -
 
 @app.get(
     "/users",
-    summary="ユーザーの一覧(管理者)。プロフィールを登録した人だけを返す",
+    summary="ユーザーの一覧。プロフィールを登録した人だけを返す",
+    description="運営者にはすべての人(所属の無い人も)、それ以外の人には自分のテナントの人を返す"
+    "(ルームに招待する相手を選ぶ)。",
     operation_id="listUsers",
     tags=["users"],
     security=_AUTH,
     responses=_responses(UserList),
 )
-def list_users(_admin: AdminUser) -> UserList:
-    return UserList(items=store.list_users())
+def list_users(user: CurrentUser) -> UserList:
+    if user.is_operator:
+        return UserList(items=store.list_users())
+    return UserList(items=store.list_users(_tenant_actor(user).tenant_id))
 
 
 # LiveKit
@@ -216,6 +125,11 @@ def list_users(_admin: AdminUser) -> UserList:
 
 class LiveKitTokenRequest(BaseModel):
     room_name: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$", description="入るルームの名前")
+    # 前のアプリは送らないので、音声をつなぐ(今までと同じ)とみなす
+    audio: bool = Field(
+        default=True,
+        description="音声をつなぐ(マイクとスピーカーを使う)か。false ならデータだけでつなぐ",
+    )
 
 
 class LiveKitTokenResponse(BaseModel):
@@ -225,19 +139,24 @@ class LiveKitTokenResponse(BaseModel):
 
 @app.post(
     "/livekit/token",
-    summary="LiveKit の参加用トークンを発行する(管理者かルームのメンバー)",
+    summary="LiveKit の参加用トークンを発行する(ルームのメンバー)",
+    description="参加者の属性に language と audio(on か off)を入れる。",
     operation_id="createLiveKitToken",
     tags=["livekit"],
     security=_AUTH,
     responses=_responses(
         LiveKitTokenResponse,
-        errors=_ROOM_NOT_FOUND | {409: "プロフィール(表示名と言語)をまだ登録していない"},
+        errors=_ROOM_WRITE_ERRORS
+        | {
+            409: "プロフィール(表示名と言語)をまだ登録していない、Connect の申請中、"
+            "アーカイブしたルーム"
+        },
     ),
 )
 def create_livekit_token(
     body: Annotated[LiveKitTokenRequest, Body()], user: CurrentUser
 ) -> LiveKitTokenResponse:
-    _visible_room(body.room_name, user)
+    _writable_room(body.room_name, user)
     # 言語がないと、Agent はこの人を翻訳先に数えず、他の人にもこの人の言語が分からない。
     # 気づかないまま翻訳なしで入ってしまうより、先にプロフィールの登録を促す
     profile = store.get_user(user.sub)
@@ -253,7 +172,13 @@ def create_livekit_token(
         .with_identity(user.sub)
         .with_name(profile.display_name)
         # Agent は参加者の属性 language で翻訳先を決める(services/agent の README)
-        .with_attributes({LANGUAGE_ATTRIBUTE: profile.language})
+        # 音声をつないでいるか(participants.py)。つないだまま切り替えるときは API が変える
+        .with_attributes(
+            {
+                LANGUAGE_ATTRIBUTE: profile.language,
+                participants.AUDIO_ATTRIBUTE: participants.audio_value(body.audio),
+            }
+        )
         .with_ttl(LIVEKIT_TOKEN_TTL)
         .with_grants(livekit.VideoGrants(room_join=True, room=body.room_name))
         # Agent は明示ディスパッチ(services/agent の README)。トークンのディスパッチは
@@ -269,6 +194,9 @@ def create_livekit_token(
 
 
 # 機能ごとに Router に分けたルート
+app.include_router(rooms.router)
+app.include_router(connect.router)
+app.include_router(tenants.router)
 app.include_router(timeline.router)
 app.include_router(media.router)
 app.include_router(devices.router)

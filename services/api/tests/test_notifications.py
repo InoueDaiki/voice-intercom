@@ -47,7 +47,9 @@ class FakeNotify:
 def timeline(tables: None, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     setup_timeline(monkeypatch)
     monkeypatch.delenv("NOTIFY_INTERVAL_S", raising=False)
-    store.create_room("room-n", "現場A", ["speaker", "present-1", "away-1", "away-2"])
+    store.create_room(
+        "room-n", "現場A", ["speaker", "present-1", "away-1", "away-2"], tenant_id="t1"
+    )
     store.put_user("speaker", display_name="太郎", language="ja")
     yield
     teardown_timeline()
@@ -360,7 +362,7 @@ def test_kinds_share_the_interval(agent: str, fake: FakeNotify) -> None:
 
 
 def test_other_room_is_counted_separately(agent: str, fake: FakeNotify) -> None:
-    store.create_room("room-o", "現場B", ["speaker", "away-1"])
+    store.create_room("room-o", "現場B", ["speaker", "away-1"], tenant_id="t1")
     assert speak(agent)[1] == {"sent": 2, "skipped": 0}
 
     status, body = call(

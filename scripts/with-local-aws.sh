@@ -23,6 +23,7 @@ export AWS_ENDPOINT_URL_S3="http://${DEV_HOST}:8333"
 # Terraform の dev 環境が Lambda に渡すものと同じ名前
 export TIMELINE_TABLE=voice-intercom-local-timeline
 export USERS_TABLE=voice-intercom-local-users
+export TENANTS_TABLE=voice-intercom-local-tenants
 export ROOMS_TABLE=voice-intercom-local-rooms
 export ROOM_MEMBERS_TABLE=voice-intercom-local-room-members
 export MEDIA_BUCKET=voice-intercom-local-media

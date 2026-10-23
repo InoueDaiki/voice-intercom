@@ -6,20 +6,19 @@ docs/設計メモ.md の「メンバーを外したとき・ルームを消し�
 トークンは LiveKit サーバーが更新し続ける。DB を変えただけでは、外した人は出るまで聞き・話し続け、
 同じ room_id で作り直したルームには前のルームの履歴とメディアが見える。そこで次を行う。
 
-- メンバーを外したら(PATCH /rooms/{room_id})、外した人のうち今ルームにいる人を
-  RoomService.RemoveParticipant で出す(evict)。LiveKit の identity は Cognito の sub
-  (= user_id)なので、外した user_id と比べる。管理者はメンバーでなくても入れるが、LiveKit の
-  identity からは管理者か分からないので、メンバーから外した管理者も出す(入り直せばよい)。
+- メンバーを外したら(DELETE /rooms/{room_id}/members/{user_id}。抜けたときも)、外した人が
+  今ルームにいれば RoomService.RemoveParticipant で出す(evict)。LiveKit の identity は
+  Cognito の sub(= user_id)なので、外した user_id と比べる。
+- アーカイブしたら(POST /rooms/{room_id}/archive)、close_livekit_room で全員を切る。
 - ルームを消したら(DELETE /rooms/{room_id})、RoomService.DeleteRoom で全員(Agent も)を
   切り(close_livekit_room)、履歴とメディアを消す(purge)。
   - timeline テーブルの3つのパーティション(履歴、アップロード中の仮の行、push 通知の時刻。
     timeline_store.py)を Query して BatchWriteItem で消す。
   - S3 の rooms/<room_id>/ の下を消す。途中のマルチパートアップロードも取りやめる。
   - CloudFront を `/rooms/<room_id>/*` の1パスで無効にする(ローカルでは飛ばす)。
-- ルームを作るときにも purge する(POST /rooms)。前のルームの purge が途中で終わったり
-  失敗したりしても、作り直すときに残りが消える(メンバーの行と同じ考え方。store.py)。
-  消すものが無ければ、Query 3回と List 2回で終わる。無いルームの DELETE(404)でも
-  after_delete を行うので、管理者が DELETE をやり直しても残りが消える。
+- 前は、同じ room_id で作り直すときにも purge していた。room_id をサーバーが乱数で作るように
+  したので(rooms.py の new_room_id)、作り直しは起きない。無いルームの DELETE(404)でも
+  after_delete を行うので、管理者が DELETE をやり直せば残りが消える。
 
 - どれが失敗しても例外は外に出さず、ログに残す(HTTP の応答は失敗にしない)。
   無い参加者・無いルームのエラー(not_found)は、目的は果たせているので無視する。

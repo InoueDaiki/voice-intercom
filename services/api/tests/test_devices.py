@@ -110,7 +110,8 @@ def test_profile_and_devices_coexist(member: str, make_token: Token) -> None:
     # 端末だけを先に登録しても、プロフィールは未登録のまま
     register(FCM_TOKEN, "ios", member)
     assert call("GET", "/users/me", member)[0] == 404
-    assert call("GET", "/users", make_token(sub="admin-1"))[1] == {"items": []}
+    operator = make_token(sub="operator-1", **{"cognito:groups": ["operator"]})
+    assert call("GET", "/users", operator)[1] == {"items": []}
 
     # プロフィールの更新で端末は消えず、端末の登録でプロフィールは消えない
     call("PUT", "/users/me", member, {"display_name": "花子", "language": "ja"})

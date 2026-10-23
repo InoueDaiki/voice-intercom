@@ -7,6 +7,7 @@ import pytest
 from conftest import USERS_TABLE, auth_headers, http_event
 
 from voice_intercom_agent.languages import LANGUAGE_NAMES
+from voice_intercom_api import store
 from voice_intercom_api.app import handler
 from voice_intercom_api.models import Language
 
@@ -71,21 +72,40 @@ def test_put_validates(member: str, body: dict) -> None:
     assert call("PUT", "/users/me", member, body)[0] == 422
 
 
-def test_admin_lists_users(make_token: Token, member: str) -> None:
-    admin = make_token(sub="admin-1")
+def test_lists_users_of_own_tenant(make_token: Token, member: str) -> None:
+    other = make_token(sub="member-2", **{"cognito:groups": []})
+    outsider = make_token(sub="outsider-1", **{"cognito:groups": []})
     call("PUT", "/users/me", member, {"display_name": "花子", "language": "ja"})
-    call("PUT", "/users/me", admin, {"display_name": "管理者", "language": "en"})
+    call("PUT", "/users/me", other, {"display_name": "次郎", "language": "en"})
+    call("PUT", "/users/me", outsider, {"display_name": "外部", "language": "en"})
+    store.set_user_tenant("member-1", "t1")
+    store.set_user_tenant("member-2", "t1")
+    store.set_user_tenant("outsider-1", "t2")
 
-    status, body = call("GET", "/users", admin)
+    # ルームに招待する相手を選ぶので、管理者でなくても読める。自分のテナントの人だけ
+    status, body = call("GET", "/users", member)
 
     assert status == 200
-    assert [(u["user_id"], u["display_name"]) for u in body["items"]] == [
-        ("admin-1", "管理者"),
-        ("member-1", "花子"),
+    assert [(u["user_id"], u["display_name"], u["tenant_id"]) for u in body["items"]] == [
+        ("member-1", "花子", "t1"),
+        ("member-2", "次郎", "t1"),
     ]
 
 
-def test_list_users_requires_admin(member: str) -> None:
+def test_operator_lists_all_users(make_token: Token, member: str) -> None:
+    operator = make_token(sub="operator-1", **{"cognito:groups": ["operator"]})
+    call("PUT", "/users/me", member, {"display_name": "花子", "language": "ja"})
+
+    # 所属の無い人も出す(運営者が所属を決める)
+    status, body = call("GET", "/users", operator)
+
+    assert status == 200
+    assert [(u["user_id"], u["tenant_id"]) for u in body["items"]] == [("member-1", None)]
+
+
+def test_list_users_requires_tenant(member: str) -> None:
+    call("PUT", "/users/me", member, {"display_name": "花子", "language": "ja"})
+
     assert call("GET", "/users", member)[0] == 403
 
 

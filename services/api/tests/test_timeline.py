@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 from timeline_env import AGENT_SCOPE, Token, call, setup_timeline, teardown_timeline
 
-from voice_intercom_api import timeline_store
+from voice_intercom_api import store, timeline_store
 
 
 @pytest.fixture(autouse=True)
@@ -102,21 +102,21 @@ def test_agent_puts_text(agent: str) -> None:
     assert body["segment_index"] is None
 
 
-def test_put_is_idempotent(agent: str, admin: str) -> None:
+def test_put_is_idempotent(agent: str, member: str) -> None:
     first = put(agent, "seg-1", utterance())
     second = put(agent, "seg-1", utterance())
 
     assert first == second
-    status, page = call("GET", "/rooms/room-a/timeline", admin)
+    status, page = call("GET", "/rooms/room-a/timeline", member)
     assert status == 200
     assert [e["event_id"] for e in page["items"]] == ["2026-10-10T00:00:00.000Z#seg-1"]
 
 
-def test_put_replaces_same_event(agent: str, admin: str) -> None:
+def test_put_replaces_same_event(agent: str, member: str) -> None:
     put(agent, "seg-1", utterance(translations={}))
     put(agent, "seg-1", utterance(translations={"en": "Hello", "ko": "안녕하세요"}))
 
-    _, page = call("GET", "/rooms/room-a/timeline", admin)
+    _, page = call("GET", "/rooms/room-a/timeline", member)
     assert len(page["items"]) == 1
     assert page["items"][0]["translations"] == {"en": "Hello", "ko": "안녕하세요"}
 
@@ -162,8 +162,23 @@ def test_member_reads_timeline(member: str) -> None:
     assert call("GET", "/rooms/room-a/timeline", member) == (200, expected)
 
 
-def test_admin_reads_any_timeline(admin: str) -> None:
-    assert call("GET", "/rooms/room-b/timeline", admin)[0] == 200
+def test_admin_needs_membership(admin: str) -> None:
+    # 管理者もメンバーでなければ読めない(管理コンソールではルームの中身を扱わない)
+    assert call("GET", "/rooms/room-b/timeline", admin)[0] == 403
+
+
+def test_member_reads_archived_room(member: str) -> None:
+    store.update_room("room-a", archived_at=store.now())
+
+    assert call("GET", "/rooms/room-a/timeline", member)[0] == 200
+
+
+def test_pending_connect_cannot_be_read(make_token: Token) -> None:
+    store.create_room(
+        "room-c", "C", tenant_id="t1", kind="connect", owner_ids=["admin-1"], connect_tenant_id="t2"
+    )
+
+    assert call("GET", "/rooms/room-c/timeline", make_token(sub="admin-1"))[0] == 409
 
 
 def test_non_member_cannot_read(member: str, outsider: str) -> None:

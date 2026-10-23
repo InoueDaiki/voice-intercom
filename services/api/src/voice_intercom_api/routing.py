@@ -4,9 +4,15 @@ app.py と、Router に分けたモジュール(timeline.py、media.py など)�
 app.py に置くと、Router のモジュールが app.py を読むことになり、循環 import になるので分けた。
 """
 
+from dataclasses import dataclass
+from http import HTTPStatus
 from typing import Annotated
 
-from aws_lambda_powertools.event_handler.exceptions import ForbiddenError, NotFoundError
+from aws_lambda_powertools.event_handler.exceptions import (
+    ForbiddenError,
+    NotFoundError,
+    ServiceError,
+)
 from aws_lambda_powertools.event_handler.openapi.params import Path
 from aws_lambda_powertools.event_handler.openapi.types import OpenAPIResponse
 from pydantic import BaseModel
@@ -67,8 +73,66 @@ def existing_room(room_id: str) -> Room:
 
 
 def visible_room(room_id: str, user: Principal) -> Room:
-    """管理者かメンバーなら、ルームを返す。"""
+    """メンバーなら、ルームを返す(読むとき。アーカイブしたルームも読める)。
+
+    管理者もメンバーでなければ読めない(docs/設計メモ.md の「テナントとルームの種別」)。
+    申請中の Connect は 409。
+    """
     room = existing_room(room_id)
-    if not user.is_admin and user.sub not in room.member_ids:
+    if user.sub not in room.member_ids:
         raise ForbiddenError("このルームのメンバーではない")
+    if room.connect_status == "pending":
+        raise ServiceError(HTTPStatus.CONFLICT, "Connect の申請中")
+    return room
+
+
+def writable_room(room_id: str, user: Principal) -> Room:
+    """メンバーで、アーカイブしていなければ、ルームを返す(入る・送る・消すとき)。"""
+    room = visible_room(room_id, user)
+    if room.archived_at is not None:
+        raise ServiceError(HTTPStatus.CONFLICT, "アーカイブしたルーム")
+    return room
+
+
+ROOM_READ_ERRORS = ROOM_NOT_FOUND | {409: "Connect の申請中"}
+ROOM_WRITE_ERRORS = ROOM_NOT_FOUND | {409: "Connect の申請中か、アーカイブしたルーム"}
+
+
+@dataclass(frozen=True)
+class Actor:
+    """テナントに所属する利用者。"""
+
+    user: Principal
+    tenant_id: str
+
+    @property
+    def sub(self) -> str:
+        return self.user.sub
+
+
+def tenant_actor(user: Principal) -> Actor:
+    """利用者のテナントを読む(users の行を1件)。所属が無ければ 403。"""
+    tenant_id = store.tenant_of(user.sub)
+    if not tenant_id:
+        raise ForbiddenError("テナントに所属していない")
+    return Actor(user=user, tenant_id=tenant_id)
+
+
+def room_tenants(room: Room) -> set[str]:
+    """ルームに関わるテナント(作ったテナントと、Connect の相手)。"""
+    return {room.tenant_id} | ({room.connect_tenant_id} if room.connect_tenant_id else set())
+
+
+def can_manage(room: Room, actor: Actor) -> bool:
+    """オーナーか、ルームに関わるテナントの管理者か。"""
+    if actor.tenant_id not in room_tenants(room):
+        return False
+    return actor.sub in room.owner_ids or actor.user.is_admin
+
+
+def managed_room(room_id: str, actor: Actor) -> Room:
+    """オーナーか管理者なら、ルームを返す。変えられるのは、自分のテナントの人だけ。"""
+    room = existing_room(room_id)
+    if not can_manage(room, actor):
+        raise ForbiddenError("ルームのオーナーか管理者の権限が要る")
     return room

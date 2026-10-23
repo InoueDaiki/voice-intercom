@@ -109,8 +109,14 @@ def test_upload_without_thumbnail(member: str) -> None:
     assert body["thumbnail_upload_url"] is None
 
 
-def test_admin_creates_upload(admin: str) -> None:
-    assert create_upload(admin, room_id="room-b")[0] == 200
+def test_admin_needs_membership(admin: str) -> None:
+    assert create_upload(admin, room_id="room-b")[0] == 403
+
+
+def test_archived_room_rejects_upload(member: str) -> None:
+    store.update_room("room-a", archived_at=store.now())
+
+    assert create_upload(member)[0] == 409
 
 
 def test_non_member_cannot_upload(member: str, outsider: str, agent: str) -> None:
@@ -283,7 +289,7 @@ def test_old_media_row_hides_text_and_has_no_dimensions(member: str) -> None:
     assert (media["width"], media["height"], media["duration_ms"]) == (None, None, None)
 
 
-def test_complete_is_idempotent(member: str, admin: str) -> None:
+def test_complete_is_idempotent(member: str) -> None:
     _, upload = create_upload(member)
     media_id = upload["media_id"]
     put_object(f"rooms/room-a/{media_id}/upload-original", "image/png")
@@ -293,7 +299,7 @@ def test_complete_is_idempotent(member: str, admin: str) -> None:
 
     assert first[0] == 200
     assert first == second
-    _, page = call("GET", "/rooms/room-a/timeline", admin)
+    _, page = call("GET", "/rooms/room-a/timeline", member)
     assert len(page["items"]) == 1
 
 
@@ -466,7 +472,7 @@ def test_complete_unknown_media(member: str) -> None:
     assert complete(member, "0" * 32)[0] == 404
     # 別のルームの media_id は、そのルームにはない
     _, upload = create_upload(member)
-    store.update_room("room-b", name=None, member_ids=["member-1"])
+    store.put_member("room-b", "member-1", role="member", tenant_id="t1")
     assert complete(member, upload["media_id"], room_id="room-b")[0] == 404
 
 

@@ -11,6 +11,7 @@ ENV = {
     "ROOMS_TABLE": "rooms",
     "ROOM_MEMBERS_TABLE": "room-members",
     "USERS_TABLE": "users",
+    "TENANTS_TABLE": "tenants",
 }
 
 
