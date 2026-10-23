@@ -45,23 +45,24 @@ export const DEFAULT_POLICY: PacingPolicy = {
 const NO_SPACE_LANGS: ReadonlySet<LangCode> = new Set(["ja", "zh", "ko"]);
 
 /**
- * 1.0倍で1秒に読む文字数の初期値(推測。ページで声ごとに実測して置き換える)。
+ * 1.0倍で1秒に読む文字数の初期値。ページで声ごとに実測して置き換える。
+ * Mac の Chrome での実測(2026-10-23、長めの文。macOS の声と Google の声の間を 0.5 刻みで丸めた)。
  * ja・zh・ko は空白を除いた文字数、ほかは空白を1つにまとめた文字数で数える。
  */
 export const DEFAULT_CHARS_PER_SEC: Record<LangCode, number> = {
-  es: 14,
-  pt: 14,
-  fr: 14,
-  ja: 8,
-  ru: 13,
-  zh: 5,
-  de: 14,
-  ko: 7,
-  hi: 12,
-  id: 14,
-  vi: 12,
-  it: 14,
-  en: 14,
+  es: 15.5,
+  pt: 11.5,
+  fr: 16,
+  ja: 5,
+  ru: 12,
+  zh: 4,
+  de: 12.5,
+  ko: 5.5,
+  hi: 13,
+  id: 11.5,
+  vi: 11,
+  it: 14.5,
+  en: 15.5,
 };
 
 /** 読み上げの長さを見積もるための文字数(コードポイントで数える) */

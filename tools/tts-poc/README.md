@@ -16,6 +16,12 @@ mise run poc:tts   # pnpm --dir tools/tts-poc dev と同じ。ポートは 5176
 
 devContainer には声が無いので、ページはホストやスマートフォンのブラウザで開く。
 
+ホスト(Mac)で直接動かしてもよい。devContainer を動かしたままだと 5176 番を compose が押さえているので、別のポートを使う:
+
+```sh
+pnpm --dir tools/tts-poc exec vite --port 5186   # http://localhost:5186
+```
+
 ## 作り
 
 | パス | 内容 |
