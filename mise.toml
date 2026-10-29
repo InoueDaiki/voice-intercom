@@ -17,6 +17,13 @@ buf = "1.73.0"
 "github:livekit/livekit-cli" = { version = "2.18.8", bin = "lk" }
 # GitHub CLI(PR や CI の確認。devContainer で使う。CI では入れない)
 gh = "2.102.0"
+# iOS のビルド(CocoaPods)。モバイル版はホストで作るので、macOS でだけ入れる
+ruby = { version = "3.4.12", os = ["macos"] }
+"gem:cocoapods" = { version = "1.16.2", os = ["macos"] }
+
+[settings]
+# Ruby はソースからビルドせず、ビルド済みのものを使う
+ruby.compile = false
 
 [env]
 _.file = ".env"
@@ -136,6 +143,19 @@ run = "pnpm --dir packages/ui-web/catalog dev"
 [tasks."poc:tts"]
 description = "端末の TTS(ブラウザの speechSynthesis)の PoC(tools/tts-poc)の開発サーバーを起動する(http://localhost:5176)"
 run = "pnpm --dir tools/tts-poc dev"
+
+[tasks."poc:ptt"]
+description = "Push to Talk の spike(tools/ptt-poc)の Metro を起動する。ビルドは poc:ptt:ios(ホスト)"
+run = "pnpm --dir tools/ptt-poc start"
+
+[tasks."poc:ptt:ios"]
+description = "Push to Talk の spike を iOS 向けにビルドして入れる(ホスト。例: mise run poc:ptt:ios --device)"
+run = "pnpm --dir tools/ptt-poc exec expo run:ios"
+
+[tasks."poc:ptt:push"]
+description = "Push to Talk の push を APNs に送る(例: mise run poc:ptt:push --token <トークン> --speaker user2)"
+# ホストでは .venv が devContainer のものなので、スクリプト用の環境を uv に作らせる
+run = "env -u VIRTUAL_ENV uv run --script tools/ptt-poc/scripts/send_ptt_push.py"
 
 [tasks.api]
 description = "REST API をローカルで起動する(http://localhost:3000。ローカルの DynamoDB・S3・模擬 OIDC につなぐ)"

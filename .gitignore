@@ -45,3 +45,9 @@ services/agent/poc/cache/
 
 # Agent の確認用ツールの出力(翻訳音声の WAV)
 services/agent/devtools/out/
+
+# Expo の PoC(prebuild が作るネイティブのプロジェクトと、APNs の鍵)
+tools/ptt-poc/ios/
+tools/ptt-poc/android/
+tools/ptt-poc/.expo/
+*.p8

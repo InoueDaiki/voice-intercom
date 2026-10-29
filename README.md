@@ -91,7 +91,9 @@ flowchart LR
 | `packages/client-core` | クライアントの画面を持たない処理(ルームの状態、字幕、テキスト入力、画像・動画の送受信と削除)。Web 版とモバイル版で使い回す。[packages/client-core/README.md](packages/client-core/README.md) | devContainer |
 | `packages/design-tokens` | デザイントークン(色、角丸、書体)。3つのアプリで共有する。Tailwind のテーマと React Native の値を生成し、生成物もコミットする。[packages/design-tokens/README.md](packages/design-tokens/README.md) | 生成は devContainer |
 | `packages/ui-web` | 管理コンソールと Web 版の UI 部品と、Tailwind の入口の CSS。画面を書くときの決まりもここ。[packages/ui-web/README.md](packages/ui-web/README.md)。部品の見本帳は `packages/ui-web/catalog`(`mise run catalog`) | devContainer |
+| `packages/intercom-os` | OS とのやり取り(iOS の Push to Talk の仕組み)を包むネイティブのモジュール。本体は React Native に依らない Swift。[packages/intercom-os/README.md](packages/intercom-os/README.md) | ホスト |
 | `tools/tts-poc` | 端末の TTS(ブラウザの `speechSynthesis`)で翻訳後のテキストを読み上げる案の PoC のページ(配信しない)。[tools/tts-poc/README.md](tools/tts-poc/README.md) | devContainer |
+| `tools/ptt-poc` | iOS の Push to Talk の仕組みと LiveKit(React Native)を合わせて動かす spike のアプリ(配信しない)。[tools/ptt-poc/README.md](tools/ptt-poc/README.md) | ホスト |
 | `packages/api-client/ts` | REST API のクライアント(TypeScript)。`services/api` の Pydantic のモデルから出した `openapi.json` をもとに生成する。生成物もコミットする | 生成は devContainer |
 | `infra/` | Terraform(`envs/dev`、`envs/prod`。同じ AWS アカウントで名前を分ける) | devContainer |
 
@@ -123,6 +125,7 @@ GitHub CLI(`gh`。版は `mise.toml`)を使うときは、初回に `gh auth log
 | `mise run web` | Web 版クライアントの開発サーバーを起動する(`http://localhost:5174`) | devContainer |
 | `mise run catalog` | UI 部品とデザイントークンの見本帳(`packages/ui-web/catalog`)を起動する(`http://localhost:5175`) | devContainer |
 | `mise run poc:tts` | 端末の TTS の PoC(`tools/tts-poc`)を起動する(`http://localhost:5176`。スマートフォンからは `http://${DEV_HOST}:5176`) | devContainer |
+| `mise run poc:ptt:ios` | Push to Talk の spike(`tools/ptt-poc`)を iOS 向けにビルドして入れる(`--device` で実機)。`mise run poc:ptt` は Metro だけ、`mise run poc:ptt:push` は PTT の push を送る | ホスト |
 | `mise run livekit` | ローカルの LiveKit サーバーを起動する(`--dev`。compose が 7880、7881、7882/udp を LAN に公開する) | devContainer |
 | `mise run agent` | LiveKit Agent をローカルで起動する(ローカルの S3 に録音する。`OPENAI_API_KEY` が要る) | devContainer |
 | `mise run build:api` | Lambda に載せるディレクトリ(`.build/api`)を作る | devContainer |

@@ -1,0 +1,10 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    // client-core は拡張子付き(.ts)で import する
+    "allowImportingTsExtensions": true
+  },
+  "include": ["index.ts", "App.tsx", "app.config.ts", "src"]
+}

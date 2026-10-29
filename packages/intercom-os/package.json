@@ -1,0 +1,18 @@
+{
+  "name": "@voice-intercom/intercom-os",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OS とのやり取り(iOS の Push to Talk の仕組み。Android の foreground service は後から)を包むネイティブのモジュール。本体は React Native に依らない",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "expo": "*"
+  },
+  "devDependencies": {
+    "expo": "58.0.21",
+    "typescript": "^7.0.2"
+  }
+}
