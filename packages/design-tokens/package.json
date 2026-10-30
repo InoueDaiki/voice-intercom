@@ -6,6 +6,7 @@
   "type": "module",
   "exports": {
     "./theme.css": "./generated/theme.css",
+    "./theme.native.css": "./generated/theme.native.css",
     "./native": "./generated/native.ts",
     "./tokens": "./src/tokens.ts",
     "./color": "./src/color.ts"

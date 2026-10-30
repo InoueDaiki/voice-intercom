@@ -1,5 +1,6 @@
-// src/tokens.ts から generated/ の4つを作る(mise run gen:tokens)。
-// - theme.css: Tailwind v4 のテーマ(Web。React Native の Uniwind でも読める形にしている)
+// src/tokens.ts から generated/ の5つを作る(mise run gen:tokens)。
+// - theme.css: Tailwind v4 のテーマ(Web)
+// - theme.native.css: React Native の Uniwind のテーマ(明と暗を、どちらも @variant で書く)
 // - native.ts: React Native で JS から色を使うときの値(HEX)
 // - TOKENS.md: トークンの一覧(人と AI が名前を選ぶときに読む)
 // - cognito-branding.json: Cognito のマネージドログインのブランディング(infra/modules/cognito が読む)
@@ -39,6 +40,22 @@ ${fonts.join("\n")}
   :root {
     @variant dark {
 ${dark.join("\n")}
+    }
+  }
+}
+`;
+}
+
+// Uniwind は、明と暗の両方に同じ変数があることを求める(Web の Tailwind には light の variant が無いので、ファイルを分ける)
+function themeNativeCss(): string {
+  const scheme = (key: "light" | "dark") =>
+    entries.map(([name, t]) => `      --color-${name}: ${toCss(t[key])};`).join("\n");
+  return `${themeCss()}
+/* 明るい配色も variant で書く(Uniwind はテーマごとに同じ変数を求める) */
+@layer theme {
+  :root {
+    @variant light {
+${scheme("light")}
     }
   }
 }
@@ -100,6 +117,7 @@ ${radii.join("\n")}
 
 mkdirSync(outDir, { recursive: true });
 writeFileSync(join(outDir, "theme.css"), themeCss());
+writeFileSync(join(outDir, "theme.native.css"), themeNativeCss());
 writeFileSync(join(outDir, "native.ts"), nativeTs());
 writeFileSync(join(outDir, "TOKENS.md"), tokensMd());
 // JSON にはコメントを書けないので、生成物であることは README に書く

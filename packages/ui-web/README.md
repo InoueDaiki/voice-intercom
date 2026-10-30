@@ -63,4 +63,4 @@
 
 ## モバイル版(React Native)
 
-モバイル版を作るときに `packages/ui-native` を足し、**同じ名前と props の部品**を React Native で作る。スタイルは Uniwind(React Native で Tailwind のクラスを使う)で、`design-tokens/generated/theme.css` を読み込む。クラスの書き方は Web とそろう。JS で色が要るとき(アイコンの色など)は `@voice-intercom/design-tokens/native` を使う。
+モバイル版の部品は [packages/ui-native](../ui-native/README.md) にあり、**同じ名前と props** で作ってある。スタイルは Uniwind(React Native で Tailwind のクラスを使う)で、`design-tokens/generated/theme.css` を読み込む。クラスの書き方は Web とそろう。React Native に合わせて変えたところ(文字は `Text` に書く、アイコンの色はトークンの名前、イベントは `onPress` など)は ui-native の README に書いた。部品を足したり props を変えたりしたら、ui-native もそろえる。

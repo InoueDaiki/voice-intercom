@@ -1,14 +1,10 @@
 import {
-  ApiError,
   apiMediaBackend,
   DELETED_TEXT_LABEL,
   deletedLabel,
   deletionWhat,
-  LANGUAGE_LABELS,
   type Language,
   MediaUploader,
-  NotSavedYetError,
-  type OutgoingMedia,
   outgoingTextLabel,
   type Room,
   type RoomConnection,
@@ -17,6 +13,26 @@ import {
   type TimelineEvent,
   type User,
 } from "@voice-intercom/client-core";
+import {
+  captionLanguageLabel,
+  captionTranslation,
+  continuesPrevious,
+  type DeleteEntry,
+  errorMessage,
+  formatBytes,
+  formatDuration,
+  formatTime,
+  joinErrorMessage,
+  outgoingMediaLabel,
+  PAGE_LIMIT,
+  receivingCaption,
+  useDeleteEntry,
+  useMe,
+  useObservable,
+  useRoom,
+  useRoomHub,
+  useRoomMutation,
+} from "@voice-intercom/client-react";
 import {
   Alert,
   BackIcon,
@@ -59,22 +75,11 @@ import { Link, useParams } from "react-router";
 
 import { api } from "../api.ts";
 import { MainPtt } from "../AudioDock.tsx";
-import { formatBytes, formatDuration, formatTime } from "../format.ts";
-import { errorMessage, useMe, useRoom, useRoomMutation } from "../queries.ts";
-import { receivingCaption } from "../receiving.ts";
 import { RoomKindBadge } from "../RoomKind.tsx";
-import { useRoomHub } from "../roomHub.tsx";
-import { useObservable } from "../useObservable.ts";
 import { webMediaPreparer, xhrSignedPut } from "../webMedia.ts";
-
-// 履歴の1ページの件数(アーカイブしたルーム。つないでいるルームは roomHub.tsx)
-const PAGE_LIMIT = 50;
 
 // 上端からこれより近づいたら、古いほうを読み足す(ピクセル)
 const LOAD_OLDER_THRESHOLD = 200;
-
-// 同じ人の続けての発言を、名前を出さずにまとめる間隔(ミリ秒)
-const GROUP_WINDOW_MS = 60_000;
 
 type Uploader = MediaUploader<File, Blob>;
 
@@ -121,16 +126,6 @@ function BackLink() {
       ルームの一覧
     </Link>
   );
-}
-
-// つなげなかった理由の文言
-function joinErrorMessage(e: unknown): string {
-  if (e instanceof ApiError && e.status === 409) {
-    return e.detail === "プロフィールをまだ登録していない"
-      ? "プロフィールが登録されていないので、つなげません。"
-      : `つなげませんでした: ${e.detail ?? e.message}`;
-  }
-  return `つなげませんでした: ${errorMessage(e)}`;
 }
 
 // 画面の上の、ルームの名前と種別と設定への入り口
@@ -492,48 +487,6 @@ function Timeline({ session, myLanguage, readOnly = false }: { session: RoomSess
   );
 }
 
-function senderOf(entry: TimelineEntry): string {
-  return entry.type === "caption" ? entry.speakerIdentity : entry.event.sender_id;
-}
-
-// 前の行と同じ人の、間を置かない続きなら、名前と時刻を省いて1つの発言のように見せる
-function continuesPrevious(prev: TimelineEntry | undefined, entry: TimelineEntry): boolean {
-  return (
-    prev !== undefined &&
-    senderOf(prev) === senderOf(entry) &&
-    entry.at.getTime() - prev.at.getTime() < GROUP_WINDOW_MS
-  );
-}
-
-// 消す操作と確認。ask で確認のダイアログを開き、確定したら消す。失敗したら理由を返す
-function useDelete(session: RoomSession, entry: TimelineEntry, what: string) {
-  const [confirming, setConfirming] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [error, setError] = useState<string>();
-  const run = async () => {
-    setConfirming(false);
-    setDeleting(true);
-    setError(undefined);
-    try {
-      await session.deleteEntry(entry);
-    } catch (e) {
-      setError(e instanceof NotSavedYetError ? "まだ履歴に保存されていません。少し待ってからやり直してください。" : errorMessage(e));
-    } finally {
-      setDeleting(false);
-    }
-  };
-  return {
-    what,
-    confirming,
-    ask: () => setConfirming(true),
-    cancel: () => setConfirming(false),
-    deleting,
-    error,
-    run,
-    can: session.canDeleteEntry(entry),
-  };
-}
-
 // タイムラインの1行。左に時刻、右に話した人と中身を置く(議事録のように、時刻の列で追える)。
 // 続きの行は名前と時刻を省く
 function FeedRow({
@@ -574,7 +527,7 @@ function FeedHead({
   at: Date;
   icon: ReactNode;
   children?: ReactNode;
-  remove: ReturnType<typeof useDelete>;
+  remove: DeleteEntry;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
@@ -621,12 +574,10 @@ function CaptionItem({
   myLanguage: Language;
   continued: boolean;
 }) {
-  const remove = useDelete(session, entry, "テキスト");
+  const remove = useDeleteEntry(session, entry, "テキスト");
   // 話者と同じ言語なら訳は無い(Agent が作らない)
-  const translation = entry.originalLanguage === myLanguage ? undefined : entry.translations.get(myLanguage);
-  const language = entry.originalLanguage
-    ? (LANGUAGE_LABELS[entry.originalLanguage as Language] ?? entry.originalLanguage)
-    : undefined;
+  const translation = captionTranslation(entry, myLanguage);
+  const language = captionLanguageLabel(entry);
 
   return (
     <FeedRow
@@ -691,7 +642,7 @@ function MediaItem({
   continued: boolean;
 }) {
   const event = entry.event;
-  const remove = useDelete(session, entry, deletionWhat(event));
+  const remove = useDeleteEntry(session, entry, deletionWhat(event));
 
   return (
     <FeedRow
@@ -829,22 +780,6 @@ function OutgoingMediaList({ uploader }: { uploader: Uploader }) {
 const outgoingListClass = "grid gap-1 text-sm";
 const outgoingRowClass = "flex items-center gap-2";
 
-function outgoingMediaLabel(item: OutgoingMedia<File, Blob>): string {
-  switch (item.state) {
-    case "preparing":
-      // 進み具合が出るのは動画の変換(H.264 の MP4 にしている)の間だけ
-      return item.progress === undefined ? "準備中" : `変換中 ${Math.floor(item.progress * 100)}%`;
-    case "uploading":
-      return item.progress === undefined ? "送信中" : `送信中 ${Math.floor(item.progress * 100)}%`;
-    case "completing":
-      return "保存中";
-    case "done":
-      return "送信済み";
-    case "failed":
-      return `送れませんでした: ${item.error ?? "理由不明"}`;
-  }
-}
-
 // 画面の下の操作の台。上から、いまの通話の表示灯、送信中のもの、テキスト入力、PTT のキー
 function Console({
   session,
@@ -924,8 +859,7 @@ function OnAir({ session, myIdentity, myLanguage }: { session: RoomSession; myId
     detail = audioRooms > 1 ? `音声中の${audioRooms}ルームに届いています` : "ルームの全員に届いています";
     rowClass = "bg-surface-muted";
   } else if (receiving) {
-    const translation =
-      receiving.originalLanguage === myLanguage ? undefined : receiving.translations.get(myLanguage);
+    const translation = captionTranslation(receiving, myLanguage);
     signal = "rx";
     label = "受信中";
     detail = (

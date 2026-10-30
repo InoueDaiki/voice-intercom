@@ -5,14 +5,13 @@
 //   ほかの画面では、この帯に出す
 // - ルームの並びはたためる。幅の狭い画面では、たたんで始める(画面の下を取りすぎないよう)。たたんでいても、
 //   どこかで声が流れていれば見出しの灯りでわかる
-import type { RoomConnection, RoomHub, RoomSession } from "@voice-intercom/client-core";
+import type { RoomConnection, RoomHub } from "@voice-intercom/client-core";
+import { mainPttState, pressAll, pressOne, receivingCaption, signalOf, useRoomHub } from "@voice-intercom/client-react";
 import { Button, cx, PttButton, SignalLamp, type SignalState } from "@voice-intercom/ui-web";
 import { ChevronDown, Headphones, Mic, PhoneOff } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
 
-import { receivingCaption } from "./receiving.ts";
-import { pressAll, pressOne, useRoomHub } from "./roomHub.tsx";
 
 export function AudioDock({ currentRoomId, myIdentity }: { currentRoomId: string | undefined; myIdentity: string }) {
   const hub = useRoomHub();
@@ -74,19 +73,14 @@ export function AudioDock({ currentRoomId, myIdentity }: { currentRoomId: string
 
 // 音声をつないだ全部のルームに届く PTT
 export function MainPtt({ hub, className }: { hub: RoomHub; className?: string }) {
-  const rooms = hub.audioRooms;
-  const talking = rooms.some((r) => r.session.talking);
-  const pressing = hub.pressingAny;
-  const connected = rooms.some((r) => r.session.connected);
-  // 2つ以上つないでいるときは、全部に届くことを文言で示す
-  const target = rooms.length > 1 ? `(${rooms.length}ルーム)` : "";
+  const { state, label, connected } = mainPttState(hub);
   return (
     <PttButton
       className={cx("w-full", className)}
-      state={talking ? "talking" : pressing ? "pressing" : "idle"}
+      state={state}
       shortcut="Space"
       disabled={!connected}
-      aria-pressed={pressing}
+      aria-pressed={hub.pressingAny}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId);
         pressAll(hub, true);
@@ -95,17 +89,9 @@ export function MainPtt({ hub, className }: { hub: RoomHub; className?: string }
       onPointerCancel={() => pressAll(hub, false)}
       onContextMenu={(e) => e.preventDefault()}
     >
-      {talking ? `送話中${target}` : pressing ? "マイクを準備中…" : `押して話す${target}`}
+      {label}
     </PttButton>
   );
-}
-
-// ルームでいま声が流れているか。自分が送っていれば TX、ほかの人が話していれば RX
-export function signalOf(session: RoomSession, myIdentity: string): SignalState {
-  if (session.talking) {
-    return "tx";
-  }
-  return receivingCaption(session, myIdentity) ? "rx" : "off";
 }
 
 function AudioRoomRow({

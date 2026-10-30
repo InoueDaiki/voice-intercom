@@ -4,7 +4,8 @@
 
 | 生成物 | 使う所 |
 | --- | --- |
-| [generated/theme.css](generated/theme.css) | Tailwind v4 のテーマ。`packages/ui-web/styles.css` が読み込む。React Native の Uniwind でも読める形(`@layer theme` の中の `@variant dark`)にしてある(Uniwind ではまだ試していない) |
+| [generated/theme.css](generated/theme.css) | Tailwind v4 のテーマ。`packages/ui-web/styles.css` が読み込む |
+| [generated/theme.native.css](generated/theme.native.css) | React Native の Uniwind のテーマ。`apps/mobile/src/global.css` が読み込む。Uniwind は明と暗の両方に同じ変数を求めるので、theme.css に明るい配色の `@variant light` を足してある(Web の Tailwind には light の variant が無いので、ファイルを分けた) |
 | [generated/native.ts](generated/native.ts) | React Native で JS から色を使うとき(アイコンの色、アニメーションなど)。`@voice-intercom/design-tokens/native` |
 | [generated/TOKENS.md](generated/TOKENS.md) | トークンの一覧と使う場面。名前を選ぶときに読む |
 | [generated/cognito-branding.json](generated/cognito-branding.json) | Cognito のマネージドログイン(ログイン画面)のブランディングの設定。`infra/modules/cognito` が読む。写し方は [src/cognito.ts](src/cognito.ts) |

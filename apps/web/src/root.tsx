@@ -3,8 +3,10 @@ import { useState, type ReactNode } from "react";
 import { AuthProvider } from "react-oidc-context";
 import { Links, Meta, Outlet, Scripts, ScrollRestoration, useNavigate } from "react-router";
 
+import { ApiProvider } from "@voice-intercom/client-react";
 import { FullScreenMessage } from "@voice-intercom/ui-web";
 
+import { api } from "./api.ts";
 import { getUserManager } from "./auth.ts";
 import "./index.css";
 
@@ -58,7 +60,9 @@ export default function App() {
       }}
     >
       <QueryClientProvider client={queryClient}>
-        <Outlet />
+        <ApiProvider api={api}>
+          <Outlet />
+        </ApiProvider>
       </QueryClientProvider>
     </AuthProvider>
   );

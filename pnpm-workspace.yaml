@@ -1,10 +1,13 @@
 packages:
   - apps/admin
+  - apps/mobile
   - apps/web
   - packages/api-client/ts
   - packages/client-core
+  - packages/client-react
   - packages/intercom-os
   - packages/design-tokens
+  - packages/ui-native
   - packages/ui-web
   - packages/ui-web/catalog
   - packages/schema/ts

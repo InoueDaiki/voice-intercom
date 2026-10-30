@@ -14,6 +14,7 @@
     "@mediabunny/aac-encoder": "1.61.1",
     "@tanstack/react-query": "^5.104.1",
     "@voice-intercom/client-core": "workspace:*",
+    "@voice-intercom/client-react": "workspace:*",
     "@voice-intercom/ui-web": "workspace:*",
     "isbot": "5.2.2",
     "livekit-client": "2.22.3",

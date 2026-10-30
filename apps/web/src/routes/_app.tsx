@@ -1,4 +1,5 @@
 import { LANGUAGE_LABELS } from "@voice-intercom/client-core";
+import { errorMessage, RoomHubProvider, useMe } from "@voice-intercom/client-react";
 import { AppHeader, appHeaderLinkClass, appHeaderTextClass, Button, FullScreenMessage, LoadErrorAlert } from "@voice-intercom/ui-web";
 import { useEffect } from "react";
 import { hasAuthParams, useAuth } from "react-oidc-context";
@@ -6,8 +7,8 @@ import { Link, Navigate, Outlet, useLocation, useMatch } from "react-router";
 
 import { AudioDock } from "../AudioDock.tsx";
 import { signOut } from "../auth.ts";
-import { errorMessage, useMe } from "../queries.ts";
-import { RoomHubProvider } from "../roomHub.tsx";
+import { webAppPresence, webRoomPlatform, webScreenAwake } from "../roomPlatform.ts";
+import { SpacePtt } from "../spacePtt.ts";
 
 // パスを持たないレイアウト。ログインしていなければログイン画面へ送り、
 // プロフィール(表示名と言語)が未登録ならプロフィールの画面へ送る(LiveKit のトークンに要る)
@@ -89,7 +90,14 @@ function SignedIn() {
   );
   // ルームの接続(音声中のルームを含む)は、画面を移っても保つ
   return me.data && myIdentity ? (
-    <RoomHubProvider me={me.data} myIdentity={myIdentity}>
+    <RoomHubProvider
+      me={me.data}
+      myIdentity={myIdentity}
+      platform={webRoomPlatform}
+      presence={webAppPresence}
+      createAwake={webScreenAwake}
+    >
+      <SpacePtt />
       {layout}
     </RoomHubProvider>
   ) : (

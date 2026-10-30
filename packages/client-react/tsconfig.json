@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    // DOM の型は入れない(React Native でも動くよう、ブラウザの API を直接使わない。client-core と同じ)
+    "lib": ["ES2023"],
+    "jsx": "react-jsx",
+    "types": [],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  // client-core の型を読むときに、ブラウザと React Native の両方にある API の宣言も要る
+  "include": ["src", "../client-core/src/host.d.ts"]
+}

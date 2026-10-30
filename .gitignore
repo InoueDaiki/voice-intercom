@@ -51,3 +51,9 @@ tools/ptt-poc/ios/
 tools/ptt-poc/android/
 tools/ptt-poc/.expo/
 *.p8
+
+# モバイル版のネイティブのプロジェクト(expo prebuild が app.config.ts から作る)と、Expo が作るもの
+apps/mobile/ios/
+apps/mobile/android/
+apps/mobile/.expo/
+apps/mobile/expo-env.d.ts

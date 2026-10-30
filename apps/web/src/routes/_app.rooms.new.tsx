@@ -1,14 +1,11 @@
 import { LANGUAGE_LABELS } from "@voice-intercom/client-core";
+import { errorMessage, roomNameError, useCreateRoom, useUsers } from "@voice-intercom/client-react";
 import { Alert, BackIcon, backLinkClass, Button, Card, CheckboxList, ChoiceGroup, Field, Input, PageHeader } from "@voice-intercom/ui-web";
 import { useState, type FormEvent } from "react";
 import { useAuth } from "react-oidc-context";
 import { Link, useNavigate } from "react-router";
 
-import { errorMessage, useCreateRoom, useUsers } from "../queries.ts";
 import { ROOM_KINDS } from "../RoomKind.tsx";
-
-// services/api の RoomName と同じ上限
-const ROOM_NAME_MAX = 100;
 
 // ルームを作る。作った人がオーナーになる。Connect はテナントの管理者が管理コンソールで申請する
 export default function NewRoom() {
@@ -21,12 +18,7 @@ export default function NewRoom() {
   const [memberIds, setMemberIds] = useState<string[]>([]);
 
   const trimmed = name.trim();
-  const invalid =
-    trimmed === ""
-      ? "名前を入力してください"
-      : [...trimmed].length > ROOM_NAME_MAX
-        ? `名前は${ROOM_NAME_MAX}文字以内にしてください`
-        : undefined;
+  const invalid = roomNameError(trimmed);
   // 名前の順に並べ、同じ名前の人を見分けられるよう話す言語を添える
   const others = (users.data ?? [])
     .filter((u) => u.user_id !== myIdentity)

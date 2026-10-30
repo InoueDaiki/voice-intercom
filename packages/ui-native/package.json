@@ -1,0 +1,33 @@
+{
+  "name": "@voice-intercom/ui-native",
+  "version": "0.1.0",
+  "private": true,
+  "description": "モバイル版(React Native)の UI 部品。ui-web と同じ名前と props で作り、Uniwind で Tailwind のクラスを書く",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@voice-intercom/design-tokens": "workspace:*",
+    "tailwind-merge": "3.7.0"
+  },
+  "peerDependencies": {
+    "lucide-react-native": "^1.56.0",
+    "react": "^19.3.0",
+    "react-native": "^0.88.1",
+    "react-native-svg": "^15.16.0",
+    "uniwind": "^1.12.2"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "lucide-react-native": "1.56.0",
+    "react": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-svg": "15.16.0",
+    "typescript": "^7.0.2",
+    "uniwind": "1.12.2"
+  }
+}

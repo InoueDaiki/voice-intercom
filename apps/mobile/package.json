@@ -1,0 +1,51 @@
+{
+  "name": "@voice-intercom/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "モバイル版クライアント(React Native。Expo の開発ビルドと Expo Router)",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "ios": "expo run:ios",
+    "android": "expo run:android",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@config-plugins/react-native-webrtc": "15.0.2",
+    "@livekit/react-native": "3.1.0",
+    "@livekit/react-native-expo-plugin": "1.1.0",
+    "@livekit/react-native-webrtc": "150.1.1",
+    "@tanstack/react-query": "^5.104.1",
+    "@voice-intercom/client-core": "workspace:*",
+    "@voice-intercom/client-react": "workspace:*",
+    "@voice-intercom/design-tokens": "workspace:*",
+    "@voice-intercom/ui-native": "workspace:*",
+    "expo": "58.0.21",
+    "expo-auth-session": "~58.0.16",
+    "expo-constants": "~58.0.14",
+    "expo-crypto": "~58.0.7",
+    "expo-image": "~58.0.18",
+    "expo-keep-awake": "~58.0.3",
+    "expo-linking": "~58.0.15",
+    "expo-localization": "~58.0.5",
+    "expo-router": "~58.0.28",
+    "expo-secure-store": "~58.0.2",
+    "expo-status-bar": "~58.0.4",
+    "expo-system-ui": "~58.0.7",
+    "expo-web-browser": "~58.0.7",
+    "livekit-client": "2.22.3",
+    "lucide-react-native": "1.56.0",
+    "react": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-get-random-values": "2.1.0",
+    "react-native-safe-area-context": "~5.10.1",
+    "react-native-screens": "~4.30.0",
+    "react-native-svg": "15.16.0",
+    "tailwindcss": "4.3.3",
+    "uniwind": "1.12.2"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "typescript": "^7.0.2"
+  }
+}

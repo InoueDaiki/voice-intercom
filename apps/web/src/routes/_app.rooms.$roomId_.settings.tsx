@@ -1,4 +1,5 @@
 import { LANGUAGE_LABELS, type MemberRole, type Room, type RoomMember } from "@voice-intercom/client-core";
+import { errorMessage, useMe, useRoom, useRoomHub, useRoomMembers, useRoomMutation, useUsers } from "@voice-intercom/client-react";
 import {
   Alert,
   BackIcon,
@@ -19,9 +20,7 @@ import { useAuth } from "react-oidc-context";
 import { Link, useNavigate, useParams } from "react-router";
 
 import { api } from "../api.ts";
-import { errorMessage, useMe, useRoom, useRoomMembers, useRoomMutation, useUsers } from "../queries.ts";
 import { ROOM_KINDS, RoomKindBadge } from "../RoomKind.tsx";
-import { useRoomHub } from "../roomHub.tsx";
 
 // ルームのメンバーと設定。オーナーと管理者は、名前・種類・メンバー(自分のテナントの人だけ)を変え、
 // アーカイブできる。誰でも抜けられるが、最後のオーナーは抜けられない(設計メモの「テナントとルームの種別」)

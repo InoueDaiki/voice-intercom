@@ -1,13 +1,12 @@
 import type { Room } from "@voice-intercom/client-core";
+import { errorMessage, useJoinableRooms, useMe, useRoomHub, useRoomMutation, useRooms } from "@voice-intercom/client-react";
 import { Alert, Badge, Button, buttonClass, LoadErrorAlert, PageHeader } from "@voice-intercom/ui-web";
 import { ChevronRight, Headphones, Plus } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 
 import { api } from "../api.ts";
-import { errorMessage, useJoinableRooms, useMe, useRoomMutation, useRooms } from "../queries.ts";
 import { ROOM_KINDS } from "../RoomKind.tsx";
-import { useRoomHub } from "../roomHub.tsx";
 
 // ルームの一覧。自分のルーム(参加している)、参加できるルーム(テナントの Public)、アーカイブの3つに分ける
 // (設計メモの「ユーザーの3つの状態の表し方」)

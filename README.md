@@ -83,14 +83,16 @@ flowchart LR
 | --- | --- | --- |
 | `apps/admin` | 管理コンソール(Vite + React Router の SPA) | devContainer |
 | `apps/web` | Web 版クライアント(Vite + React Router の SPA) | devContainer |
-| `apps/mobile` | モバイル版クライアント(React Native)。Web 版がある程度できてから作る | ホスト |
+| `apps/mobile` | モバイル版クライアント(React Native。Expo の開発ビルドと Expo Router)。下の「モバイル版」 | ホスト |
 | `services/agent` | LiveKit Agent(Python) | devContainer |
 | `services/api` | API Gateway + Lambda(Python) | devContainer |
 | `proto/` | データチャネルで流すメッセージの定義(Protobuf) | devContainer |
 | `packages/schema/{python,ts}` | `proto/` から生成した型。生成物もコミットする | 生成は devContainer |
+| `packages/client-react` | Web 版とモバイル版で共有する、React に依る画面の状態とふるまい(データの取得、ルームの接続、誤りの文言、入力の検証、整形)。見た目は持たない | devContainer |
 | `packages/client-core` | クライアントの画面を持たない処理(ルームの状態、字幕、テキスト入力、画像・動画の送受信と削除)。Web 版とモバイル版で使い回す。[packages/client-core/README.md](packages/client-core/README.md) | devContainer |
 | `packages/design-tokens` | デザイントークン(色、角丸、書体)。3つのアプリで共有する。Tailwind のテーマと React Native の値を生成し、生成物もコミットする。[packages/design-tokens/README.md](packages/design-tokens/README.md) | 生成は devContainer |
 | `packages/ui-web` | 管理コンソールと Web 版の UI 部品と、Tailwind の入口の CSS。画面を書くときの決まりもここ。[packages/ui-web/README.md](packages/ui-web/README.md)。部品の見本帳は `packages/ui-web/catalog`(`mise run catalog`) | devContainer |
+| `packages/ui-native` | モバイル版の UI 部品(ui-web と同じ名前と props。Uniwind)。[packages/ui-native/README.md](packages/ui-native/README.md) | ホスト |
 | `packages/intercom-os` | OS とのやり取り(iOS の Push to Talk の仕組み)を包むネイティブのモジュール。本体は React Native に依らない Swift。[packages/intercom-os/README.md](packages/intercom-os/README.md) | ホスト |
 | `tools/tts-poc` | 端末の TTS(ブラウザの `speechSynthesis`)で翻訳後のテキストを読み上げる案の PoC のページ(配信しない)。[tools/tts-poc/README.md](tools/tts-poc/README.md) | devContainer |
 | `tools/ptt-poc` | iOS の Push to Talk の仕組みと LiveKit(React Native)を合わせて動かす spike のアプリ(配信しない)。[tools/ptt-poc/README.md](tools/ptt-poc/README.md) | ホスト |
@@ -125,6 +127,7 @@ GitHub CLI(`gh`。版は `mise.toml`)を使うときは、初回に `gh auth log
 | `mise run web` | Web 版クライアントの開発サーバーを起動する(`http://localhost:5174`) | devContainer |
 | `mise run catalog` | UI 部品とデザイントークンの見本帳(`packages/ui-web/catalog`)を起動する(`http://localhost:5175`) | devContainer |
 | `mise run poc:tts` | 端末の TTS の PoC(`tools/tts-poc`)を起動する(`http://localhost:5176`。スマートフォンからは `http://${DEV_HOST}:5176`) | devContainer |
+| `mise run mobile:ios` | モバイル版(`apps/mobile`)を iOS 向けにビルドしてシミュレーターに入れる(`--device` で実機)。`mise run mobile` は Metro だけ | ホスト |
 | `mise run poc:ptt:ios` | Push to Talk の spike(`tools/ptt-poc`)を iOS 向けにビルドして入れる(`--device` で実機)。`mise run poc:ptt` は Metro だけ、`mise run poc:ptt:push` は PTT の push を送る | ホスト |
 | `mise run livekit` | ローカルの LiveKit サーバーを起動する(`--dev`。compose が 7880、7881、7882/udp を LAN に公開する) | devContainer |
 | `mise run agent` | LiveKit Agent をローカルで起動する(ローカルの S3 に録音する。`OPENAI_API_KEY` が要る) | devContainer |
@@ -527,6 +530,28 @@ result = notify.send_to_users(
 - Web 版では push 通知をせず、バックグラウンドの音声も扱わない(設計メモの「Web 版で決めたこと」)。
 - 設定は管理コンソールと同じ `VITE_` の環境変数(`VITE_OIDC_CLIENT_ID` の既定は `web`。AWS では `cognito_client_ids.web`)。API は Vite が中継する(`/api` → `http://localhost:3000`)。
 - dev 環境への配信は `mise run deploy:web dev`([管理コンソールと Web 版の配信](#管理コンソールと-web-版の配信s3--cloudfront))。CloudFront は HTTPS なので、マイクも使える。
+
+## モバイル版クライアント
+
+`apps/mobile`。React Native を Expo の開発ビルドで動かし、画面は Expo Router(`src/app` のファイル名でルートを決める)。iOS・Android のビルドがあるので、ホストで動かす。ルームの処理は Web 版と同じ `packages/client-core`、データの取得や誤りの文言などの React の層は `packages/client-react`、部品は `packages/ui-native`。
+
+- 動かし方(シミュレーター):
+  1. devContainer で `mise run api` と `mise run livekit` を動かす(翻訳も見るなら `mise run agent`)。
+  2. ホストで `mise run mobile:ios`。初回は `expo prebuild` と CocoaPods とビルドで時間がかかる(WebRTC の pod が大きい)。2回目からは `mise run mobile` で Metro だけを起動すればよい。
+  3. 「ログイン」で、OS のブラウザに模擬 OIDC のログイン画面が出る。`user1` などを押す。
+- 接続先は `.env` の `DEV_HOST`(模擬 OIDC は `:8090/default`、API は `:3000`)。シミュレーターからも実機からも同じ。AWS の環境に向けるときは `MOBILE_OIDC_ISSUER`・`MOBILE_OIDC_CLIENT_ID`・`MOBILE_OIDC_LOGOUT_URL`・`MOBILE_API_BASE_URL` を渡す(`app.config.ts`)。
+- ログインは標準の OIDC(認可コード + PKCE)。Cognito の `mobile` クライアントで、戻り先は `voiceintercom://callback`。トークンは端末の安全な保管場所(Keychain / Keystore)に置き、期限が近づいたらリフレッシュトークンで更新する(`src/auth.ts`)。
+- 画面は Web 版と同じ(ルームの一覧、プロフィール、ルームを作る、ルーム、メンバーと設定)。違うところ:
+  - ルームの画面のタイムラインは、逆さの一覧(新しいものが下、上へ戻ると古いほうを読み足す)。
+  - 画像と動画は縮小した絵だけを出し、押すと OS のブラウザで開く。
+  - ログアウトはプロフィールの画面から。
+  - 音声中の帯は、ルームの画面のほかで下に出す(ルームの画面には同じ PTT がある)。
+- まだ無いもの:
+  - 画像・動画・ファイルを送る。端末のファイルの読み方と動画の変換が要る。
+  - バックグラウンドでの音声と、通知から話す仕組み。今は、アプリを裏に回すと PTT を離し、戻ったら入り直す。
+    OS とのやり取り(`packages/intercom-os`)を実機で確かめてから入れる(設計メモの「React Native かネイティブか、と Push to Talk の spike」)。
+  - Android での確認。
+  - 書体(IBM Plex Sans JP)。今は OS の書体で出す。
 
 ## ローカルの DynamoDB と S3
 

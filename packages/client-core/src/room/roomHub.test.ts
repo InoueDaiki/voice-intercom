@@ -202,6 +202,32 @@ describe("SharedMicrophone", () => {
     expect(source.track.stop).toHaveBeenCalledTimes(1);
   });
 
+  test("clone できない(React Native)なら、元のトラックを1つ目のルームに渡し、2つ目からはルームごとに取る", async () => {
+    const tracks = [fakeSourceTrack(), fakeSourceTrack(), fakeSourceTrack()];
+    for (const t of tracks) {
+      t.track.mediaStreamTrack.clone = vi.fn(() => {
+        throw new Error("Not implemented.");
+      });
+    }
+    const create = vi.fn();
+    for (const t of tracks) {
+      create.mockResolvedValueOnce(t.asTrack);
+    }
+    const microphone = new SharedMicrophone(create, wrapClone);
+    vi.spyOn(console, "info").mockImplementation(() => {});
+
+    const [a, b] = await Promise.all([microphone.acquire(), microphone.acquire()]);
+    const c = await microphone.acquire();
+
+    expect(a).toBe(tracks[0]?.asTrack);
+    expect(b).toBe(tracks[1]?.asTrack);
+    expect(c).toBe(tracks[2]?.asTrack);
+    expect(create).toHaveBeenCalledTimes(3);
+
+    microphone.release(a);
+    expect(tracks[0]?.track.stop).toHaveBeenCalledTimes(1);
+  });
+
   test("元のマイクが止まっていたら取り直す", async () => {
     const first = fakeSourceTrack();
     const second = fakeSourceTrack();

@@ -13,3 +13,14 @@ export function receivingCaption(session: RoomSession, myIdentity: string): Capt
       !e.original.isFinal,
   );
 }
+
+// 通話の表示灯の状態(ui-web・ui-native の SignalState と同じ)
+export type SignalState = "off" | "tx" | "rx";
+
+// ルームでいま声が流れているか。自分が送っていれば TX、ほかの人が話していれば RX
+export function signalOf(session: RoomSession, myIdentity: string): SignalState {
+  if (session.talking) {
+    return "tx";
+  }
+  return receivingCaption(session, myIdentity) ? "rx" : "off";
+}
