@@ -7,6 +7,7 @@ import { View } from "react-native";
 
 import { useAuth } from "../../auth.ts";
 import { AudioDock } from "../../room/AudioDock.tsx";
+import { AudioSessionKeeper } from "../../room/AudioSessionKeeper.tsx";
 import { mobileAppPresence, mobileRoomPlatform, mobileScreenAwake } from "../../roomPlatform.ts";
 
 export default function AppLayout() {
@@ -71,6 +72,7 @@ export default function AppLayout() {
       presence={mobileAppPresence}
       createAwake={mobileScreenAwake}
     >
+      <AudioSessionKeeper />
       <View className="flex-1 bg-canvas">
         {stack}
         <AudioDock myIdentity={myIdentity} />

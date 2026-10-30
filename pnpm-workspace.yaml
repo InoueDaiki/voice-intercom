@@ -35,3 +35,9 @@ minimumReleaseAgeExclude:
   - expo-modules-core@58.0.28
   - expo-modules-jsi@58.0.21
   - expo@58.0.21
+# node_modules はホスト(macOS)と devContainer(Linux)で共有するので、両方のネイティブのバイナリを入れる
+# (片方で install すると、もう片方の分が消えて動かなくなるため)
+supportedArchitectures:
+  os: [darwin, linux]
+  cpu: [arm64]
+  libc: [glibc]
