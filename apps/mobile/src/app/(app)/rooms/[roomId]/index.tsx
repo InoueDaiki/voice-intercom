@@ -1,7 +1,14 @@
 // ルームの画面。開いている間はデータだけでつなぎ(タイムラインを見て、テキストを送れる)、
 // 「音声をつなぐ」でマイクとスピーカーも使う。音声をつないだら、画面を離れてもつないだまま(RoomHub)。
 // アプリを裏に回したときは RoomKeeper が受け持つ(PTT を離す、戻ったら入り直す、画面を消させない)
-import { type Room, type RoomConnection, RoomSession, type User } from "@voice-intercom/client-core";
+import {
+  apiMediaBackend,
+  MediaUploader,
+  type Room,
+  type RoomConnection,
+  RoomSession,
+  type User,
+} from "@voice-intercom/client-core";
 import {
   errorMessage,
   joinErrorMessage,
@@ -21,7 +28,8 @@ import { type ReactNode, useEffect, useState } from "react";
 import { KeyboardAvoidingView, Pressable, View } from "react-native";
 
 import { useAuth } from "../../../../auth.ts";
-import { Console } from "../../../../room/Console.tsx";
+import { mobileMediaPreparer, xhrSignedPut } from "../../../../mobileMedia.ts";
+import { Console, type Uploader } from "../../../../room/Console.tsx";
 import { Timeline } from "../../../../room/Timeline.tsx";
 import { RoomKindBadge } from "../../../../roomKinds.tsx";
 
@@ -154,20 +162,35 @@ function ArchivedRoom({ room, me, myIdentity }: { room: Room; me: User; myIdenti
 function RoomScreen({ room, me, myIdentity }: { room: Room; me: User; myIdentity: string }) {
   const roomId = room.room_id;
   const roomName = room.name;
+  const api = useApi();
   const hub = useRoomHub();
   const headerHeight = useHeaderHeight();
   const [connection, setConnection] = useState<RoomConnection>();
+  const [uploader, setUploader] = useState<Uploader>();
   const session = connection?.session;
   const keeper = connection?.keeper;
   useObservable(session);
   useObservable(keeper);
+  useObservable(uploader);
   const joinError = keeper?.joinError === undefined ? undefined : joinErrorMessage(keeper.joinError);
 
   useEffect(() => {
-    setConnection(hub.open(roomId, roomName));
-    // 画面を離れたら、音声をつないでいなければ切る
-    return () => hub.close(roomId);
-  }, [hub, roomId, roomName]);
+    const c = hub.open(roomId, roomName);
+    const u: Uploader = new MediaUploader({
+      roomId,
+      backend: apiMediaBackend(api, xhrSignedPut),
+      preparer: mobileMediaPreparer,
+      // 送ったものは、配信を待たずにすぐタイムラインに出す
+      onCompleted: (event) => c.session.addMedia([event]),
+    });
+    setConnection(c);
+    setUploader(u);
+    // 画面を離れたら、アップロードは取りやめる。音声をつないでいなければ切る
+    return () => {
+      u.dispose();
+      hub.close(roomId);
+    };
+  }, [api, hub, roomId, roomName]);
 
   return (
     // キーボードを出したら、操作の台をキーボードの上に上げる
@@ -208,6 +231,7 @@ function RoomScreen({ room, me, myIdentity }: { room: Room; me: User; myIdentity
       {session && (
         <Console
           session={session}
+          uploader={uploader}
           myIdentity={myIdentity}
           myLanguage={me.language}
           onAudio={(enabled) => void hub.setAudio(roomId, roomName, enabled)}

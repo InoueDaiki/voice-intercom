@@ -38,6 +38,17 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     "expo-router",
     "expo-secure-store",
     "expo-web-browser",
+    // 選ぶだけなので、写真の権限は求めない(カメラで撮るのはまだ作っていない)
+    ["expo-image-picker", { photosPermission: false, cameraPermission: false, microphonePermission: false }],
+    [
+      "expo-font",
+      {
+        // 書体は ui-web と同じ IBM Plex Sans JP。太さは 400・500・700 だけを使う
+        fonts: ["400Regular", "500Medium", "700Bold"].map(
+          (w) => `node_modules/@expo-google-fonts/ibm-plex-sans-jp/${w}/IBMPlexSansJP_${w}.ttf`,
+        ),
+      },
+    ],
     "@livekit/react-native-expo-plugin",
     "@config-plugins/react-native-webrtc",
   ],

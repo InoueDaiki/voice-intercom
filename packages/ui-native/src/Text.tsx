@@ -2,6 +2,7 @@ import { Children, createContext, type ReactNode, useContext } from "react";
 import { Text as RNText, type TextProps as RNTextProps } from "react-native";
 
 import { cx } from "./cx.ts";
+import { fontStyle, weightOfClass } from "./fonts.ts";
 import { useForeground } from "./foreground.tsx";
 
 // Text の中の Text は、親の大きさと色を引き継ぐ(既定のクラスを付けない)
@@ -12,12 +13,15 @@ export interface TextProps extends RNTextProps {
 }
 
 // 文字。既定は text-base と、周り(ボタンや札)の色。React Native では、文字は必ずこの中に書く
-export function Text({ className, ...props }: TextProps) {
+export function Text({ className, style, ...props }: TextProps) {
   const nested = useContext(NestedContext);
   const fg = useForeground();
+  const merged = nested ? className : cx("text-base", fg.textClass, className);
+  // 中の Text は、太さを書いたときだけ書体を変える(ほかは親を引き継ぐ)
+  const weight = weightOfClass(merged) ?? (nested ? undefined : 400);
   return (
     <NestedContext value={true}>
-      <RNText className={nested ? className : cx("text-base", fg.textClass, className)} {...props} />
+      <RNText className={merged} style={[weight && fontStyle(weight), style]} {...props} />
     </NestedContext>
   );
 }

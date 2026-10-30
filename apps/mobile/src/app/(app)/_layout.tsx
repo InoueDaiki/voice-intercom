@@ -1,7 +1,7 @@
 // ログインした後のレイアウト。プロフィール(表示名と言語)が未登録なら登録の画面だけを出す(LiveKit のトークンに要る)。
 // ルームの接続(音声中のルームを含む)は、画面を移っても保つ(RoomHub)。音声中の帯は、どの画面でも下に出す
 import { errorMessage, RoomHubProvider, useMe } from "@voice-intercom/client-react";
-import { Button, FullScreenMessage, LoadErrorAlert, useTokenColor } from "@voice-intercom/ui-native";
+import { Button, fontStyle, FullScreenMessage, LoadErrorAlert, useTokenColor } from "@voice-intercom/ui-native";
 import { Stack } from "expo-router";
 import { View } from "react-native";
 
@@ -44,7 +44,8 @@ export default function AppLayout() {
         // 上の帯は Web 版の AppHeader と同じ、消灯したキーの色
         headerStyle: { backgroundColor: key },
         headerTintColor: onKey,
-        headerTitleStyle: { fontWeight: "700" },
+        // ネイティブのヘッダーは太さも見て書体を選ぶ
+        headerTitleStyle: { ...fontStyle(700), fontWeight: "700" },
         headerBackButtonDisplayMode: "minimal",
         contentStyle: { backgroundColor: canvas },
       }}

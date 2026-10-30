@@ -8,6 +8,7 @@ export { CheckboxList, type CheckboxListOption, type CheckboxListProps } from ".
 export { ChoiceGroup, type ChoiceGroupProps, type ChoiceOption } from "./ChoiceGroup.tsx";
 export { ConfirmDialog, type ConfirmDialogProps, type ConfirmDialogTone } from "./ConfirmDialog.tsx";
 export { cx } from "./cx.ts";
+export { fontStyle } from "./fonts.ts";
 export { Field, Input, type InputProps, Select, type SelectOption, type SelectProps, Textarea } from "./Field.tsx";
 export { type Foreground, ForegroundProvider, useForeground, useTokenColor } from "./foreground.tsx";
 export { FullScreenMessage } from "./FullScreenMessage.tsx";

@@ -1,20 +1,26 @@
 // 画面の下の操作の台。上から、いまの通話の表示灯、送信中のもの、テキスト入力、PTT のキー
-import { type Language, outgoingTextLabel, type RoomSession } from "@voice-intercom/client-core";
-import { captionTranslation, receivingCaption, useRoomHub } from "@voice-intercom/client-react";
+import { type Language, type MediaUploader, outgoingTextLabel, type RoomSession } from "@voice-intercom/client-core";
+import { captionTranslation, outgoingMediaLabel, receivingCaption, useRoomHub } from "@voice-intercom/client-react";
 import { Badge, Button, cx, Icon, KeyButton, SignalLamp, type SignalState, Text, Textarea } from "@voice-intercom/ui-native";
-import { Headphones, PhoneOff, SendHorizontal } from "lucide-react-native";
+import { Headphones, Paperclip, PhoneOff, SendHorizontal } from "lucide-react-native";
 import { useState } from "react";
 import { View } from "react-native";
 
+import type { LocalFile, PickedMedia } from "../mobileMedia.ts";
 import { MainPtt } from "./MainPtt.tsx";
+import { askMedia } from "./pickMedia.ts";
+
+export type Uploader = MediaUploader<PickedMedia, LocalFile>;
 
 export function Console({
   session,
+  uploader,
   myIdentity,
   myLanguage,
   onAudio,
 }: {
   session: RoomSession;
+  uploader: Uploader | undefined;
   myIdentity: string;
   myLanguage: Language;
   onAudio: (enabled: boolean) => void;
@@ -27,7 +33,8 @@ export function Console({
       <View className="w-full max-w-3xl gap-3 self-center px-4 pt-3">
         {session.audio && <OnAir session={session} myIdentity={myIdentity} myLanguage={myLanguage} />}
         <OutgoingTexts session={session} />
-        <Controls session={session} />
+        {uploader && <OutgoingMediaList uploader={uploader} />}
+        <Controls session={session} uploader={uploader} />
         <AudioControls session={session} onAudio={onAudio} />
       </View>
     </View>
@@ -57,9 +64,55 @@ function OutgoingTexts({ session }: { session: RoomSession }) {
   );
 }
 
-// テキスト入力。音声をつないでいなくても使える。改行はキーボードの改行で入れ、送信のボタンで送る
-// (画像・動画・ファイルを送るのは、端末のファイルの読み方を作ってから足す)
-function Controls({ session }: { session: RoomSession }) {
+// 送信中の画像・動画・ファイル(送った本人にだけ出す)
+function OutgoingMediaList({ uploader }: { uploader: Uploader }) {
+  const items = uploader.items;
+  if (items.length === 0) {
+    return null;
+  }
+  return (
+    <View className="gap-2">
+      {items.map((item) => (
+        <View key={item.localId} className="gap-1">
+          <View className="flex-row flex-wrap items-center gap-x-2 gap-y-1">
+            <Text className="min-w-0 shrink text-sm" numberOfLines={1}>
+              {item.source.name}
+            </Text>
+            <Badge tone={item.state === "failed" ? "danger" : "neutral"}>{outgoingMediaLabel(item)}</Badge>
+            {item.cancellable && (
+              <Button variant="link" textClassName="text-xs" onPress={() => uploader.cancel(item)}>
+                取りやめる
+              </Button>
+            )}
+            {item.state === "failed" && item.retryable && (
+              <Button variant="link" textClassName="text-xs" onPress={() => uploader.retry(item)}>
+                やり直す
+              </Button>
+            )}
+            {item.state === "failed" && (
+              <Button variant="link" textClassName="text-xs" onPress={() => uploader.dismiss(item)}>
+                取り消す
+              </Button>
+            )}
+          </View>
+          {item.state !== "failed" && item.progress !== undefined && (
+            <View
+              accessibilityRole="progressbar"
+              accessibilityValue={{ min: 0, max: 100, now: Math.floor(item.progress * 100) }}
+              className="h-1 overflow-hidden rounded-full bg-surface-strong"
+            >
+              <View className="h-full bg-fg" style={{ width: `${Math.floor(item.progress * 100)}%` }} />
+            </View>
+          )}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+// テキスト入力と、画像・動画・ファイルの添付。音声をつないでいなくても使える。
+// 改行はキーボードの改行で入れ、送信のボタンで送る
+function Controls({ session, uploader }: { session: RoomSession; uploader: Uploader | undefined }) {
   const [text, setText] = useState("");
   const disabled = !session.connected;
   const submit = () => {
@@ -69,6 +122,20 @@ function Controls({ session }: { session: RoomSession }) {
   };
   return (
     <View className="flex-row items-end gap-2">
+      <Button
+        icon
+        accessibilityLabel="画像・動画・ファイルを送る"
+        disabled={disabled || !uploader}
+        onPress={() =>
+          askMedia((media) => {
+            for (const m of media) {
+              uploader?.submit(m);
+            }
+          })
+        }
+      >
+        <Icon icon={Paperclip} />
+      </Button>
       <Textarea
         className="max-h-40 flex-1"
         value={text}

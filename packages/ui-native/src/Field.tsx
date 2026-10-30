@@ -3,6 +3,7 @@ import { createContext, type ReactNode, use, useState } from "react";
 import { FlatList, Modal, Pressable, TextInput, type TextInputProps, View } from "react-native";
 
 import { cx } from "./cx.ts";
+import { fontStyle } from "./fonts.ts";
 import { useTokenColor } from "./foreground.tsx";
 import { Icon } from "./Icon.tsx";
 import { Text, wrapText } from "./Text.tsx";
@@ -56,6 +57,7 @@ function useControlProps({ invalid, editable, ...props }: InputProps) {
   const placeholder = useTokenColor("fg-muted");
   const cursor = useTokenColor("fg");
   return {
+    style: fontStyle(400),
     placeholderTextColor: placeholder,
     selectionColor: cursor,
     cursorColor: cursor,
@@ -79,7 +81,7 @@ export function Textarea({ className, ...props }: InputProps) {
     <TextInput
       multiline
       textAlignVertical="top"
-      className={cx(controlClass, "min-h-10 py-2 leading-snug", invalidClass, className)}
+      className={cx(controlClass, "min-h-10 pt-2.5 pb-1.5 leading-snug", invalidClass, className)}
       {...rest}
     />
   );
