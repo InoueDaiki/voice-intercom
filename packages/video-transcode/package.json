@@ -1,0 +1,18 @@
+{
+  "name": "@voice-intercom/video-transcode",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Android で動画を測り、H.264 の MP4 に整えるネイティブのモジュール(Media3 Transformer)。iOS は選ぶときにピッカーが変換するので持たない",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "expo": "*"
+  },
+  "devDependencies": {
+    "expo": "58.0.21",
+    "typescript": "^7.0.2"
+  }
+}

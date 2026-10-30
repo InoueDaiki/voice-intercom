@@ -1,4 +1,5 @@
 // モバイル版(React Native)の UI 部品。ui-web と同じ名前と props で作る(違いは README)
+export { ActionSheet, type ActionSheetItem, type ActionSheetProps } from "./ActionSheet.tsx";
 export { Alert, type AlertProps, type AlertTone } from "./Alert.tsx";
 export { Badge, type BadgeProps, type BadgeTone } from "./Badge.tsx";
 export { Button, type ButtonProps, type ButtonSize, type ButtonVariant } from "./Button.tsx";

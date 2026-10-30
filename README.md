@@ -93,6 +93,7 @@ flowchart LR
 | `packages/design-tokens` | デザイントークン(色、角丸、書体)。3つのアプリで共有する。Tailwind のテーマと React Native の値を生成し、生成物もコミットする。[packages/design-tokens/README.md](packages/design-tokens/README.md) | 生成は devContainer |
 | `packages/ui-web` | 管理コンソールと Web 版の UI 部品と、Tailwind の入口の CSS。画面を書くときの決まりもここ。[packages/ui-web/README.md](packages/ui-web/README.md)。部品の見本帳は `packages/ui-web/catalog`(`mise run catalog`) | devContainer |
 | `packages/ui-native` | モバイル版の UI 部品(ui-web と同じ名前と props。Uniwind)。[packages/ui-native/README.md](packages/ui-native/README.md) | ホスト |
+| `packages/video-transcode` | Android で動画を測り、H.264 の MP4 に整えるネイティブのモジュール(Media3 Transformer)。整え方は client-core の `planVideo` が決める | ホスト |
 | `packages/intercom-os` | OS とのやり取り(iOS の Push to Talk の仕組み)を包むネイティブのモジュール。本体は React Native に依らない Swift。[packages/intercom-os/README.md](packages/intercom-os/README.md) | ホスト |
 | `tools/tts-poc` | 端末の TTS(ブラウザの `speechSynthesis`)で翻訳後のテキストを読み上げる案の PoC のページ(配信しない)。[tools/tts-poc/README.md](tools/tts-poc/README.md) | devContainer |
 | `tools/ptt-poc` | iOS の Push to Talk の仕組みと LiveKit(React Native)を合わせて動かす spike のアプリ(配信しない)。[tools/ptt-poc/README.md](tools/ptt-poc/README.md) | ホスト |
@@ -544,12 +545,11 @@ result = notify.send_to_users(
 - ログインは標準の OIDC(認可コード + PKCE)。Cognito の `mobile` クライアントで、戻り先は `voiceintercom://callback`。トークンは端末の安全な保管場所(Keychain / Keystore)に置き、期限が近づいたらリフレッシュトークンで更新する(`src/auth.ts`)。
 - 画面は Web 版と同じ(ルームの一覧、プロフィール、ルームを作る、ルーム、メンバーと設定)。違うところ:
   - ルームの画面のタイムラインは、逆さの一覧(新しいものが下、上へ戻ると古いほうを読み足す)。
+  - 送るものはクリップのボタンから、写真・動画、カメラ、ファイルのどれかで選ぶ。動画は、iOS はピッカーが互換の形式(H.264)に変換し、Android は Web 版と同じ決め方(`planVideo`)で H.264 の MP4 に整えてから送る。
   - 画像と動画は縮小した絵だけを出し、押すとアプリの中のブラウザで開く(Safari に移るとアプリが裏に回るため)。
   - ログアウトはプロフィールの画面から。
   - 音声中の帯は、音声をつないだルームの画面のほかで下に出す(その画面には同じ PTT がある)。
 - まだ無いもの:
-  - 動画の変換。iOS は選ぶときにピッカーが互換の形式(H.264)に変換するが、Android は元のまま送る(H.265 の動画は、再生できない端末がある)。
-  - カメラで撮って送ること。
   - バックグラウンドでの音声と、通知から話す仕組み。今は、アプリを裏に回すと PTT を離し、戻ったら入り直す。
     OS とのやり取り(`packages/intercom-os`)を実機で確かめてから入れる(設計メモの「React Native かネイティブか、と Push to Talk の spike」)。
 

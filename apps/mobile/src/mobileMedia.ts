@@ -3,18 +3,21 @@
 //
 // - 画像(JPEG、PNG、WebP、HEIC): そのまま送る。1MB を超えたらサムネイル(JPEG、長い辺 480px)を作る。
 //   読めない形式は、サムネイルも幅・高さも無しで送る。
-// - 動画: 選ぶときに iOS のピッカーが互換の形式(H.264)に変換する。Android は元のまま送る
-//   (端末での変換はまだ作っていない。設計メモの「モバイル版の画面」)。
+// - 動画: iOS は選ぶときにピッカーが互換の形式(H.264)に変換する。Android は Web 版と同じ決め方(planVideo)で、
+//   H.264 の MP4 に整えてから送る(video-transcode。変換できなければ元のまま送る)。
 //   0.5 秒目のコマからサムネイルを作る。読めなければ無しで送る。
 // - それ以外: ファイルとして送る(ダウンロードだけになる)。
 // 形式はファイルの先頭のバイトで見分ける(拡張子やピッカーの MIME 型は当てにならない)。
 import {
+  estimateTranscodedBytes,
   IMAGE_THUMBNAIL_THRESHOLD,
   MAX_UPLOAD_BYTES,
   type MediaPreparer,
   type MediaSize,
   type PreparedMedia,
+  planVideo,
   PutFailedError,
+  readMp4Layout,
   type SignedPut,
   SNIFF_LENGTH,
   SNIFFED_MIME,
@@ -25,6 +28,7 @@ import {
   validDurationMs,
   validSize,
 } from "@voice-intercom/client-core";
+import { videoTranscode } from "@voice-intercom/video-transcode";
 import { File } from "expo-file-system";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { getThumbnailAsync } from "expo-video-thumbnails";
@@ -44,6 +48,8 @@ export interface PickedMedia {
 // 本体を指すもの
 export interface LocalFile {
   uri: string;
+  // 変換して作った一時ファイルなら true(送り終えたら消す)
+  temporary?: boolean;
 }
 
 const JPEG_QUALITY = 0.8;
@@ -103,8 +109,61 @@ async function videoThumbnail(uri: string): Promise<{ size?: MediaSize; thumbnai
   }
 }
 
+// 動画を整える(Android)。整えなくてよいか、整えられなければ undefined(元のまま送る)
+async function convertVideo(
+  uri: string,
+  sizeBytes: number,
+  onProgress: ((progress: number) => void) | undefined,
+  signal: AbortSignal | undefined,
+): Promise<string | undefined> {
+  if (!videoTranscode) {
+    return undefined;
+  }
+  const native = videoTranscode;
+  let plan: ReturnType<typeof planVideo>;
+  try {
+    const probe = await native.probe(uri);
+    const size = validSize(probe.width, probe.height);
+    if (!size) {
+      return undefined;
+    }
+    const full = { ...probe, ...size };
+    const layout = await readMp4Layout((offset, length) => readRange(uri, offset, length), sizeBytes);
+    plan = planVideo(full, layout);
+    console.info("動画の整え方", plan, full);
+    if (plan.kind === "asIs") {
+      return undefined;
+    }
+    if (plan.kind === "transcode" && (estimateTranscodedBytes(full, plan.videoBitrate) ?? 0) > MAX_UPLOAD_BYTES) {
+      throw new UnsupportedMediaError("変換すると 10GB を超えそうなので送れない");
+    }
+  } catch (e) {
+    if (e instanceof UnsupportedMediaError) {
+      throw e;
+    }
+    console.warn("動画を読めないので、元のまま送る", e);
+    return undefined;
+  }
+  const progress = native.addListener("onProgress", (e) => onProgress?.(e.progress));
+  const onAbort = () => void native.cancel();
+  signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    const path = await native.transcode(uri, plan.kind === "transcode" ? plan.videoBitrate : null);
+    return path.startsWith("file:") ? path : `file://${path}`;
+  } catch (e) {
+    if (signal?.aborted) {
+      throw e;
+    }
+    console.warn("動画を変換できなかったので、元のまま送る", e);
+    return undefined;
+  } finally {
+    progress.remove();
+    signal?.removeEventListener("abort", onAbort);
+  }
+}
+
 export const mobileMediaPreparer: MediaPreparer<PickedMedia, LocalFile> = {
-  async prepare(source) {
+  async prepare(source, onProgress, signal) {
     const sizeBytes = new File(source.uri).size;
     if (sizeBytes === 0) {
       throw new UnsupportedMediaError("空のファイルは送れない");
@@ -120,10 +179,16 @@ export const mobileMediaPreparer: MediaPreparer<PickedMedia, LocalFile> = {
       return { ...base, contentType: SNIFFED_MIME[sniffed], isVideo: false, size: probe?.size, thumbnail: probe?.thumbnail };
     }
     if (sniffed === "video") {
-      const probe = await videoThumbnail(source.uri);
+      const converted = await convertVideo(source.uri, sizeBytes, onProgress, signal);
+      const uri = converted ?? source.uri;
+      const probe = await videoThumbnail(uri);
       return {
         ...base,
-        contentType: source.mimeType?.startsWith("video/") ? source.mimeType : "video/mp4",
+        file: { uri, temporary: converted !== undefined },
+        sizeBytes: converted ? new File(uri).size : sizeBytes,
+        // 変換したら拡張子を .mp4 にする(IMG_0001.MOV → IMG_0001.mp4)
+        fileName: converted && source.name ? source.name.replace(/(\.[^./]*)?$/, ".mp4") : base.fileName,
+        contentType: converted ? "video/mp4" : source.mimeType?.startsWith("video/") ? source.mimeType : "video/mp4",
         isVideo: true,
         size: probe?.size ?? validSize(source.width, source.height),
         durationMs: validDurationMs(source.durationMs),
@@ -136,6 +201,13 @@ export const mobileMediaPreparer: MediaPreparer<PickedMedia, LocalFile> = {
       contentType: source.mimeType && /^[\w!#$&^.+-]+\/[\w!#$&^.+-]+$/.test(source.mimeType) ? source.mimeType : "application/octet-stream",
       isVideo: false,
     } satisfies PreparedMedia<LocalFile>;
+  },
+
+  // 変換して作った一時ファイルを消す
+  async release(media) {
+    if (media.file.temporary) {
+      new File(media.file.uri).delete();
+    }
   },
 };
 

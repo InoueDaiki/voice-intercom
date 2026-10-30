@@ -26,6 +26,7 @@ React Native には DOM が無いので、次のところだけ変えてある�
 
 | 部品 | 使う場面 |
 | --- | --- |
+| `ActionSheet` | 画面の下に出す操作の一覧(送るものを選ぶ、など)。項目の `onPress` は閉じ終えてから呼ぶ(iOS は閉じる途中に端末の画面を開けないため) |
 | `Text`、`wrapText()` | 文字。`wrapText` は、子のうち文字列を `Text` に包む(部品を作るときに使う) |
 | `Icon` | Lucide のアイコン(`lucide-react-native`)。`color` はトークンの名前 |
 | `ForegroundProvider`、`useForeground()` | 中の `Text` と `Icon` の色を決める(Web の `currentColor` の代わり)。部品を作るときに使う |

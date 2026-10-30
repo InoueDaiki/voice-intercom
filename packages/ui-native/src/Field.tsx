@@ -127,12 +127,9 @@ export function Select<T extends string>({ value, options, onChange, disabled, c
         <Icon icon={ChevronDown} color="fg-muted" />
       </Pressable>
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
-        {/* 幕を押すと閉じる(選び直さない) */}
-        <Pressable
-          accessibilityLabel="閉じる"
-          className="flex-1 justify-end bg-overlay p-4"
-          onPress={() => setOpen(false)}
-        >
+        <View className="flex-1 justify-end bg-overlay p-4">
+          {/* 幕を押すと閉じる(選び直さない)。中身を包むと、読み上げで選択肢を選べなくなるので、後ろの別の要素にする */}
+          <Pressable accessibilityLabel="閉じる" className="absolute inset-0" onPress={() => setOpen(false)} />
           <View className="max-h-[70%] w-full overflow-hidden rounded-lg border border-border bg-surface">
             {field?.label && <Text className="border-b border-border px-4 py-3 text-sm font-bold">{field.label}</Text>}
             <FlatList
@@ -160,7 +157,7 @@ export function Select<T extends string>({ value, options, onChange, disabled, c
               }}
             />
           </View>
-        </Pressable>
+        </View>
       </Modal>
     </>
   );

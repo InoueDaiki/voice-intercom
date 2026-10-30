@@ -1,24 +1,31 @@
-// 送る画像・動画・ファイルを選ぶ
+// 送る画像・動画・ファイルを選ぶ。カメラで撮ることもできる
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
-import { Alert } from "react-native";
 
 import type { PickedMedia } from "../mobileMedia.ts";
+import { whileSystemUiOpen } from "../roomPlatform.ts";
 
-async function pickFromLibrary(): Promise<PickedMedia[]> {
-  const result = await ImagePicker.launchImageLibraryAsync({
-    mediaTypes: ["images", "videos"],
-    allowsMultipleSelection: true,
-    // 画像は元のまま。動画は iOS が互換の形式(H.264)に変換して渡す
-    quality: 1,
-    preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
-  });
+// Android のピッカーは元の名前を渡さず、番号や UUID の名前になる。読める名前に置き換える
+function displayName(asset: ImagePicker.ImagePickerAsset): string {
+  const name = asset.fileName ?? asset.uri.split("/").pop() ?? "";
+  const ext = name.includes(".") ? name.slice(name.lastIndexOf(".")) : "";
+  const stem = name.slice(0, name.length - ext.length);
+  if (stem !== "" && !/^(?:\d+|[0-9a-f-]{32,36}|rn_image_picker.*)$/i.test(stem)) {
+    return name;
+  }
+  const t = new Date();
+  const two = (n: number) => String(n).padStart(2, "0");
+  const stamp = `${t.getFullYear()}${two(t.getMonth() + 1)}${two(t.getDate())}_${two(t.getHours())}${two(t.getMinutes())}${two(t.getSeconds())}`;
+  return `${asset.type === "video" ? "VID" : "IMG"}_${stamp}${ext}`;
+}
+
+function toPicked(result: ImagePicker.ImagePickerResult): PickedMedia[] {
   if (result.canceled) {
     return [];
   }
   return result.assets.map((a) => ({
     uri: a.uri,
-    name: a.fileName ?? a.uri.split("/").pop() ?? "media",
+    name: displayName(a),
     mimeType: a.mimeType,
     durationMs: a.duration ?? undefined,
     width: a.width,
@@ -26,27 +33,36 @@ async function pickFromLibrary(): Promise<PickedMedia[]> {
   }));
 }
 
-async function pickDocuments(): Promise<PickedMedia[]> {
-  const result = await DocumentPicker.getDocumentAsync({ multiple: true, copyToCacheDirectory: true });
-  if (result.canceled) {
-    return [];
-  }
-  return result.assets.map((a) => ({ uri: a.uri, name: a.name, mimeType: a.mimeType }));
+export function pickFromLibrary(): Promise<PickedMedia[]> {
+  return whileSystemUiOpen(async () =>
+    toPicked(
+      await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images", "videos"],
+        allowsMultipleSelection: true,
+        // 画像は元のまま。動画は iOS が互換の形式(H.264)に変換して渡す
+        quality: 1,
+        preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
+      }),
+    ),
+  );
 }
 
-// どこから選ぶかを聞く。選んだものを onPicked に渡す
-export function askMedia(onPicked: (media: PickedMedia[]) => void): void {
-  const run = (pick: () => Promise<PickedMedia[]>) => {
-    pick()
-      .then(onPicked)
-      .catch((e: unknown) => {
-        console.warn("選べなかった", e);
-        Alert.alert("選べませんでした", e instanceof Error ? e.message : String(e));
-      });
-  };
-  Alert.alert("送るものを選ぶ", "10GB まで送れます", [
-    { text: "写真・動画", onPress: () => run(pickFromLibrary) },
-    { text: "ファイル", onPress: () => run(pickDocuments) },
-    { text: "やめる", style: "cancel" },
-  ]);
+export function pickFromCamera(): Promise<PickedMedia[]> {
+  return whileSystemUiOpen(async () => {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      throw new Error("カメラの使用が許可されていません。端末の設定から許可してください。");
+    }
+    return toPicked(await ImagePicker.launchCameraAsync({ mediaTypes: ["images", "videos"], quality: 1 }));
+  });
+}
+
+export function pickDocuments(): Promise<PickedMedia[]> {
+  return whileSystemUiOpen(async () => {
+    const result = await DocumentPicker.getDocumentAsync({ multiple: true, copyToCacheDirectory: true });
+    if (result.canceled) {
+      return [];
+    }
+    return result.assets.map((a) => ({ uri: a.uri, name: a.name, mimeType: a.mimeType }));
+  });
 }

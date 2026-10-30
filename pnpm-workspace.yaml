@@ -9,6 +9,7 @@ packages:
   - packages/design-tokens
   - packages/ui-native
   - packages/ui-web
+  - packages/video-transcode
   - packages/ui-web/catalog
   - packages/schema/ts
   # PoC(開発用。配信しない)

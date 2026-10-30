@@ -38,9 +38,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     "expo-router",
     "expo-secure-store",
     "expo-web-browser",
-    // 選ぶだけなので、写真とカメラの権限は求めない(カメラで撮るのはまだ作っていない)。
-    // microphonePermission に false を渡すと、ルームで使うマイクの権限まで消えるので渡さない
-    ["expo-image-picker", { photosPermission: false, cameraPermission: false }],
+    // 写真は選ぶだけなので権限を求めない。microphonePermission に false を渡すと、ルームで使うマイクの権限まで
+    // 消えるので渡さない
+    ["expo-image-picker", { photosPermission: false, cameraPermission: "写真や動画を撮って、ルームに送ります" }],
     [
       "expo-font",
       {

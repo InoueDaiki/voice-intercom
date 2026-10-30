@@ -1,14 +1,14 @@
 // 画面の下の操作の台。上から、いまの通話の表示灯、送信中のもの、テキスト入力、PTT のキー
 import { type Language, type MediaUploader, outgoingTextLabel, type RoomSession } from "@voice-intercom/client-core";
 import { captionTranslation, outgoingMediaLabel, receivingCaption, useRoomHub } from "@voice-intercom/client-react";
-import { Badge, Button, cx, Icon, KeyButton, SignalLamp, type SignalState, Text, Textarea } from "@voice-intercom/ui-native";
+import { ActionSheet, Alert, Badge, Button, cx, Icon, KeyButton, SignalLamp, type SignalState, Text, Textarea } from "@voice-intercom/ui-native";
 import { Headphones, Paperclip, PhoneOff, SendHorizontal } from "lucide-react-native";
 import { useState } from "react";
 import { View } from "react-native";
 
 import type { LocalFile, PickedMedia } from "../mobileMedia.ts";
 import { MainPtt } from "./MainPtt.tsx";
-import { askMedia } from "./pickMedia.ts";
+import { pickDocuments, pickFromCamera, pickFromLibrary } from "./pickMedia.ts";
 
 export type Uploader = MediaUploader<PickedMedia, LocalFile>;
 
@@ -114,25 +114,44 @@ function OutgoingMediaList({ uploader }: { uploader: Uploader }) {
 // 改行はキーボードの改行で入れ、送信のボタンで送る
 function Controls({ session, uploader }: { session: RoomSession; uploader: Uploader | undefined }) {
   const [text, setText] = useState("");
+  const [choosing, setChoosing] = useState(false);
+  const [pickError, setPickError] = useState<string>();
   const disabled = !session.connected;
+  const pick = (from: () => Promise<PickedMedia[]>) => {
+    setPickError(undefined);
+    from()
+      .then((media) => {
+        for (const m of media) {
+          uploader?.submit(m);
+        }
+      })
+      .catch((e: unknown) => setPickError(e instanceof Error ? e.message : String(e)));
+  };
   const submit = () => {
     if (session.textSender.submit(text)) {
       setText("");
     }
   };
   return (
+    <>
+    {pickError && <Alert tone="danger">{pickError}</Alert>}
+    <ActionSheet
+      open={choosing}
+      title="送るものを選ぶ"
+      description="10GB まで送れます"
+      items={[
+        { label: "写真・動画", onPress: () => pick(pickFromLibrary) },
+        { label: "カメラで撮る", onPress: () => pick(pickFromCamera) },
+        { label: "ファイル", onPress: () => pick(pickDocuments) },
+      ]}
+      onCancel={() => setChoosing(false)}
+    />
     <View className="flex-row items-end gap-2">
       <Button
         icon
         accessibilityLabel="画像・動画・ファイルを送る"
         disabled={disabled || !uploader}
-        onPress={() =>
-          askMedia((media) => {
-            for (const m of media) {
-              uploader?.submit(m);
-            }
-          })
-        }
+        onPress={() => setChoosing(true)}
       >
         <Icon icon={Paperclip} />
       </Button>
@@ -148,6 +167,7 @@ function Controls({ session, uploader }: { session: RoomSession; uploader: Uploa
         <Icon icon={SendHorizontal} />
       </Button>
     </View>
+    </>
   );
 }
 

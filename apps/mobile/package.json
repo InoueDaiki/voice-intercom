@@ -21,6 +21,7 @@
     "@voice-intercom/client-react": "workspace:*",
     "@voice-intercom/design-tokens": "workspace:*",
     "@voice-intercom/ui-native": "workspace:*",
+    "@voice-intercom/video-transcode": "workspace:*",
     "expo": "58.0.21",
     "expo-auth-session": "~58.0.16",
     "expo-constants": "~58.0.14",
