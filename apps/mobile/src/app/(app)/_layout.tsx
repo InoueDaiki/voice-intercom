@@ -49,15 +49,16 @@ export default function AppLayout() {
         contentStyle: { backgroundColor: canvas },
       }}
     >
+      {/* 画面の題は本文の PageHeader に書く(上の帯と二重にしない。ルームの一覧とルームの画面は帯に名前を出す) */}
       <Stack.Protected guard={registered}>
         <Stack.Screen name="index" options={{ title: "voice-intercom" }} />
-        <Stack.Screen name="profile" options={{ title: "プロフィール" }} />
-        <Stack.Screen name="rooms/new" options={{ title: "ルームを作る" }} />
+        <Stack.Screen name="profile" options={{ title: "" }} />
+        <Stack.Screen name="rooms/new" options={{ title: "" }} />
         <Stack.Screen name="rooms/[roomId]/index" options={{ title: "" }} />
-        <Stack.Screen name="rooms/[roomId]/settings" options={{ title: "メンバーと設定" }} />
+        <Stack.Screen name="rooms/[roomId]/settings" options={{ title: "" }} />
       </Stack.Protected>
       <Stack.Protected guard={!registered}>
-        <Stack.Screen name="welcome" options={{ title: "プロフィールの登録" }} />
+        <Stack.Screen name="welcome" options={{ title: "" }} />
       </Stack.Protected>
     </Stack>
   );

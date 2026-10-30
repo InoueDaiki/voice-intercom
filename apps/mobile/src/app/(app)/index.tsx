@@ -46,15 +46,17 @@ export default function RoomList() {
       <PageHeader
         title="ルーム"
         description="ルームを開くと、字幕とテキストを見て送れます。声で話すときは、ルームで「音声をつなぐ」を押します。"
+        actions={
+          hasTenant && (
+            <Link href="/rooms/new" asChild>
+              <Button variant="primary">
+                <Icon icon={Plus} />
+                ルームを作る
+              </Button>
+            </Link>
+          )
+        }
       />
-      {hasTenant && (
-        <Link href="/rooms/new" asChild>
-          <Button variant="primary" className="-mt-4 self-start">
-            <Icon icon={Plus} />
-            ルームを作る
-          </Button>
-        </Link>
-      )}
       {!hasTenant && me.data && (
         <Alert tone="warning">テナントに所属していません。運営者に所属を決めてもらうと、ルームを使えます。</Alert>
       )}

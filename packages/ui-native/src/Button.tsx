@@ -80,6 +80,8 @@ export function Button({
       accessibilityRole="button"
       accessibilityState={{ disabled: !!disabled }}
       disabled={disabled}
+      // link は文字の大きさしかないので、指で押せる広さを足す
+      hitSlop={variant === "link" ? 12 : undefined}
       className={cx(
         "flex-row items-center justify-center gap-2",
         v.box,

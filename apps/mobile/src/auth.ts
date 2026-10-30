@@ -10,6 +10,7 @@ import {
   fetchDiscoveryAsync,
   makeRedirectUri,
   refreshAsync,
+  TokenError,
   TokenResponse,
   type TokenResponseConfig,
 } from "expo-auth-session";
@@ -140,9 +141,13 @@ class AuthStore extends Observable {
     }
   }
 
-  async signOut(): Promise<void> {
+  private async clear(): Promise<void> {
     this.token = undefined;
     await Promise.all(Object.values(KEYS).map((k) => SecureStore.deleteItemAsync(k)));
+  }
+
+  async signOut(): Promise<void> {
+    await this.clear();
     this.set({ status: "signedOut" });
     // ブラウザに残ったログイン(Cognito のセッション)も消す。消さないと、次のログインで画面を出さずに同じ人で入る
     try {
@@ -179,9 +184,15 @@ class AuthStore extends Observable {
         await this.save(next);
         return next;
       } catch (e) {
-        // リフレッシュトークンの期限切れ(30日)や取り消し。ログインし直してもらう
-        this.token = undefined;
-        this.set({ status: "signedOut", error: "ログインの期限が切れました。ログインし直してください。" });
+        // サーバーが断ったとき(期限切れ(30日)、取り消し)だけログインし直してもらう。
+        // 電波が切れたなどで届かなかったときは、ログインを保ち、次の呼び出しで更新し直す
+        if (e instanceof TokenError && e.code === "invalid_grant") {
+          console.info("リフレッシュトークンが断られた", e);
+          await this.clear();
+          this.set({ status: "signedOut", error: "ログインの期限が切れました。ログインし直してください。" });
+        } else {
+          console.warn("トークンを更新できなかった", e);
+        }
         throw e;
       } finally {
         this.refreshing = undefined;

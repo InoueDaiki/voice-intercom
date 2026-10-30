@@ -1,5 +1,5 @@
-// 音声中の帯。音声をつないだルームが1つでもあれば、ルームの画面のほかで下に出す
-// (設計メモの「ユーザーの3つの状態の表し方」)。ルームの画面には、同じ PTT が操作の台にある。
+// 音声中の帯。音声をつないだルームが1つでもあれば、下に出す(設計メモの「ユーザーの3つの状態の表し方」)。
+// 音声をつないだルームの画面には、同じ PTT が操作の台にあるので出さない。
 // - たたんだ見出しに、どこかで声が流れているか(TX・RX の灯り)とルームの名前を出す
 // - 開くと、ルームごとに灯りと、そのルームだけに話す操作、切る操作を並べる
 // - 主の PTT(音声をつないだ全部のルームに届く)を下に置く
@@ -18,9 +18,9 @@ export function AudioDock({ myIdentity }: { myIdentity: string }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const rooms = hub.audioRooms;
-  // ルームの画面(設定の画面は除く)には、操作の台に PTT がある
-  const onRoomScreen = /^\/rooms\/[^/]+$/.test(pathname) && pathname !== "/rooms/new";
-  if (rooms.length === 0 || onRoomScreen) {
+  // 音声をつないだルームの画面(設定の画面は除く)には、操作の台に PTT がある
+  const currentRoomId = /^\/rooms\/([^/]+)$/.exec(pathname)?.[1];
+  if (rooms.length === 0 || rooms.some((r) => r.roomId === currentRoomId)) {
     return null;
   }
   const states = rooms.map((r) => signalOf(r.session, myIdentity));
@@ -70,9 +70,17 @@ function AudioRoomRow({
   myIdentity: string;
 }) {
   const { session } = room;
-  let status = <Text className="text-sm text-fg-muted">{session.connected ? "待機中" : "接続中…"}</Text>;
+  let status = (
+    <Text className="text-sm text-fg-muted" numberOfLines={1}>
+      {session.connected ? "待機中" : "接続中…"}
+    </Text>
+  );
   if (signal === "tx") {
-    status = <Text className="text-sm font-bold text-live">送話中</Text>;
+    status = (
+      <Text className="text-sm font-bold text-live" numberOfLines={1}>
+        送話中
+      </Text>
+    );
   } else if (signal === "rx") {
     const receiving = receivingCaption(session, myIdentity);
     status = (
@@ -85,7 +93,7 @@ function AudioRoomRow({
     <View className="h-12 flex-row items-center gap-2">
       <SignalLamp state={signal} />
       <Link href={{ pathname: "/rooms/[roomId]", params: { roomId: room.roomId } }} asChild>
-        <Pressable accessibilityRole="link" className="min-w-0 shrink">
+        <Pressable accessibilityRole="link" className="max-w-[45%] min-w-0">
           <Text className="text-sm font-bold underline" numberOfLines={1}>
             {room.roomName}
           </Text>

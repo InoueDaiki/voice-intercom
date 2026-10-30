@@ -19,8 +19,11 @@ export function Console({
   myLanguage: Language;
   onAudio: (enabled: boolean) => void;
 }) {
+  const hub = useRoomHub();
+  // ほかのルームの音声をつないでいれば、下に音声中の帯が出て、安全な領域は帯が避ける
+  const dockBelow = !session.audio && hub.audioRooms.length > 0;
   return (
-    <View className="border-t border-border bg-surface pb-safe-or-4">
+    <View className={cx("border-t border-border bg-surface", dockBelow ? "pb-4" : "pb-safe-or-4")}>
       <View className="w-full max-w-3xl gap-3 self-center px-4 pt-3">
         {session.audio && <OnAir session={session} myIdentity={myIdentity} myLanguage={myLanguage} />}
         <OutgoingTexts session={session} />

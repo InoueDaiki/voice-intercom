@@ -22,9 +22,10 @@ import {
 } from "@voice-intercom/client-react";
 import { Button, ConfirmDialog, cx, Icon, Text } from "@voice-intercom/ui-native";
 import { Image as ExpoImage } from "expo-image";
+import * as WebBrowser from "expo-web-browser";
 import { FileText, Image, Keyboard, Mic, Play } from "lucide-react-native";
 import { type ReactNode, useState } from "react";
-import { FlatList, Linking, Pressable, View } from "react-native";
+import { FlatList, Pressable, View } from "react-native";
 import { withUniwind } from "uniwind";
 
 const StyledImage = withUniwind(ExpoImage);
@@ -98,6 +99,8 @@ export function Timeline({
       onEndReached={loadOlder}
       onEndReachedThreshold={0.5}
       keyboardShouldPersistTaps="handled"
+      // タイムラインを動かしたらキーボードを閉じる
+      keyboardDismissMode="on-drag"
       renderItem={({ item, index }) => {
         const continued = continuesPrevious(reversed[index + 1], item);
         return item.type === "caption" ? (
@@ -261,14 +264,15 @@ function MediaItem({
 
 const mediaClass = "max-h-72 w-full max-w-80 rounded-md border border-border";
 
-// 画像と動画は縮小した絵だけを出し、押すと OS のブラウザで元のものを開く(動画の再生もブラウザ)
+// 画像と動画は縮小した絵だけを出し、押すとアプリの中のブラウザで元のものを開く(動画の再生もブラウザ)
 function MediaBody({ event }: { event: TimelineEvent }) {
   const [failed, setFailed] = useState(false);
   const media = event.media;
   if (event.deleted || !media) {
     return <Text className={deletedTextClass}>{deletedLabel(event)}</Text>;
   }
-  const open = () => void Linking.openURL(media.url);
+  // アプリの中のブラウザで開く(Safari に移るとアプリが裏に回り、音声が聞こえなくなる)
+  const open = () => void WebBrowser.openBrowserAsync(media.url);
   if (media.media_type === "file" || failed || (media.media_type === "video" && !media.thumbnail_url)) {
     return (
       <Pressable
