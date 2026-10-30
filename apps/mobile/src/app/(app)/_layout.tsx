@@ -3,6 +3,7 @@
 import { errorMessage, RoomHubProvider, useMe } from "@voice-intercom/client-react";
 import { Button, fontStyle, FullScreenMessage, LoadErrorAlert, useTokenColor } from "@voice-intercom/ui-native";
 import { Stack } from "expo-router";
+import { StatusBar } from "expo-status-bar";
 import { View } from "react-native";
 
 import { useAuth } from "../../auth.ts";
@@ -39,6 +40,9 @@ export default function AppLayout() {
 
   const registered = me.data !== null;
   const stack = (
+    <>
+    {/* 上の帯は明暗どちらでも暗いので、時刻などは白くする */}
+    <StatusBar style="light" />
     <Stack
       screenOptions={{
         // 上の帯は Web 版の AppHeader と同じ、消灯したキーの色
@@ -62,6 +66,7 @@ export default function AppLayout() {
         <Stack.Screen name="welcome" options={{ title: "" }} />
       </Stack.Protected>
     </Stack>
+    </>
   );
   if (!me.data) {
     return stack;

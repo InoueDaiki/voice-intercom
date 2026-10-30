@@ -26,6 +26,14 @@ import { TextSender } from "./textSender.ts";
 import { captionTopic, deletionTopic, mediaTopic, textStatusTopic, textTopic } from "./topics.ts";
 
 // 自分のテキストの履歴の行がまだ保存されていない(Agent は訳がそろってから保存する)
+// 誤りの文言。React Native の WebRTC は Error ではない物(message を持つ)で失敗を返すことがある
+function describeError(e: unknown): string {
+  if (typeof e === "object" && e !== null && "message" in e && typeof e.message === "string") {
+    return e.message;
+  }
+  return String(e);
+}
+
 export class NotSavedYetError extends Error {
   constructor() {
     super("まだ履歴に保存されていない");
@@ -358,7 +366,7 @@ export class RoomSession extends Observable {
   // マイクの操作(ミュート、publish、購読)を、つなぎの後ろに足す。終わったら解決する(失敗しても投げない)
   private queueMicOp(op: () => Promise<void>): Promise<void> {
     this.micOps = this.micOps.then(op).catch((e: unknown) => {
-      this.error = `音声を切り替えられなかった: ${e instanceof Error ? e.message : String(e)}`;
+      this.error = `音声を切り替えられなかった: ${describeError(e)}`;
       this.changed();
     });
     return this.micOps;

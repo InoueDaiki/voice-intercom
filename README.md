@@ -127,7 +127,7 @@ GitHub CLI(`gh`。版は `mise.toml`)を使うときは、初回に `gh auth log
 | `mise run web` | Web 版クライアントの開発サーバーを起動する(`http://localhost:5174`) | devContainer |
 | `mise run catalog` | UI 部品とデザイントークンの見本帳(`packages/ui-web/catalog`)を起動する(`http://localhost:5175`) | devContainer |
 | `mise run poc:tts` | 端末の TTS の PoC(`tools/tts-poc`)を起動する(`http://localhost:5176`。スマートフォンからは `http://${DEV_HOST}:5176`) | devContainer |
-| `mise run mobile:ios` | モバイル版(`apps/mobile`)を iOS 向けにビルドしてシミュレーターに入れる(`--device` で実機)。`mise run mobile` は Metro だけ | ホスト |
+| `mise run mobile:ios` | モバイル版(`apps/mobile`)を iOS 向けにビルドしてシミュレーターに入れる(`--device` で実機)。`mise run mobile:android` は Android 向け(Android Studio の SDK を使う)。`mise run mobile` は Metro だけ | ホスト |
 | `mise run poc:ptt:ios` | Push to Talk の spike(`tools/ptt-poc`)を iOS 向けにビルドして入れる(`--device` で実機)。`mise run poc:ptt` は Metro だけ、`mise run poc:ptt:push` は PTT の push を送る | ホスト |
 | `mise run livekit` | ローカルの LiveKit サーバーを起動する(`--dev`。compose が 7880、7881、7882/udp を LAN に公開する) | devContainer |
 | `mise run agent` | LiveKit Agent をローカルで起動する(ローカルの S3 に録音する。`OPENAI_API_KEY` が要る) | devContainer |
@@ -539,6 +539,7 @@ result = notify.send_to_users(
   1. devContainer で `mise run api` と `mise run livekit` を動かす(翻訳も見るなら `mise run agent`)。
   2. ホストで `mise run mobile:ios`。初回は `expo prebuild` と CocoaPods とビルドで時間がかかる(WebRTC の pod が大きい)。2回目からは `mise run mobile` で Metro だけを起動すればよい。
   3. 「ログイン」で、OS のブラウザに模擬 OIDC のログイン画面が出る。`user1` などを押す。
+- Android のエミュレーターは、最初に Android Studio などで起動しておく。開発ビルドは Android 17 でローカルネットワークの許可を聞く(React Native が開発ビルドだけに入れるもので、配信するビルドでは出ない)。Metro へは `adb reverse tcp:8081 tcp:8081` でつなぐ(`mise run mobile:android` がする)。
 - 接続先は `.env` の `DEV_HOST`(模擬 OIDC は `:8090/default`、API は `:3000`)。シミュレーターからも実機からも同じ。AWS の環境に向けるときは `MOBILE_OIDC_ISSUER`・`MOBILE_OIDC_CLIENT_ID`・`MOBILE_OIDC_LOGOUT_URL`・`MOBILE_API_BASE_URL` を渡す(`app.config.ts`)。
 - ログインは標準の OIDC(認可コード + PKCE)。Cognito の `mobile` クライアントで、戻り先は `voiceintercom://callback`。トークンは端末の安全な保管場所(Keychain / Keystore)に置き、期限が近づいたらリフレッシュトークンで更新する(`src/auth.ts`)。
 - 画面は Web 版と同じ(ルームの一覧、プロフィール、ルームを作る、ルーム、メンバーと設定)。違うところ:
@@ -547,7 +548,8 @@ result = notify.send_to_users(
   - ログアウトはプロフィールの画面から。
   - 音声中の帯は、音声をつないだルームの画面のほかで下に出す(その画面には同じ PTT がある)。
 - まだ無いもの:
-  - 動画の変換。iOS は選ぶときにピッカーが互換の形式(H.264)に変換するが、Android は元のまま送る。カメラで撮って送ることも無い。
+  - 動画の変換。iOS は選ぶときにピッカーが互換の形式(H.264)に変換するが、Android は元のまま送る(H.265 の動画は、再生できない端末がある)。
+  - カメラで撮って送ること。
   - バックグラウンドでの音声と、通知から話す仕組み。今は、アプリを裏に回すと PTT を離し、戻ったら入り直す。
     OS とのやり取り(`packages/intercom-os`)を実機で確かめてから入れる(設計メモの「React Native かネイティブか、と Push to Talk の spike」)。
 

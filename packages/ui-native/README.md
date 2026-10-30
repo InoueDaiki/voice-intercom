@@ -14,6 +14,7 @@ React Native には DOM が無いので、次のところだけ変えてある�
 - **イベントは React Native の名前。** `onClick` ではなく `onPress`。押している間だけのもの(PTT)は `onPressIn` と `onPressOut`。入力欄は `onChangeText`。
 - **読み上げは `accessibility*`。** `aria-label` ではなく `accessibilityLabel`、`title` の代わりに `accessibilityHint`。
 - **`cx` はぶつかるクラスを後ろのもので上書きする**(tailwind-merge)。部品が既定のクラスを付け、呼び出し側が `className` で変えられるようにするため。
+- **書体は `Text` と入力欄が当てる**(IBM Plex Sans JP。アプリが expo-font で埋め込む)。太さは 400・500・700 で、`font-medium`・`font-bold` のクラスから決まる。太さごとに別の書体として指すので、`style` で `fontWeight` を決めない。ナビゲーションのヘッダーなど、クラスを書けないところは `fontStyle()` を使う。
 - **`Select` は `options` で選択肢を渡す**(`<option>` が無いため)。押すと一覧を画面に重ねて出す。
 - **無いもの:** `Table`(管理コンソールだけで使う)、`buttonClass`・`backLinkClass`・`BackIcon`(リンクは Expo Router の `<Link asChild>` でボタンを包む。戻る操作はナビゲーションのヘッダーが持つ)、`AppHeader`(上の帯はナビゲーションのヘッダーを同じ色にする)。`PageHeader` の `back` も無い。
 - **灯りの明滅は `Animated`**(OS で動きを減らす設定なら明滅しない)。

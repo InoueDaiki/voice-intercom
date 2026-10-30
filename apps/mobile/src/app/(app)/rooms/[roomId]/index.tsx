@@ -194,7 +194,7 @@ function RoomScreen({ room, me, myIdentity }: { room: Room; me: User; myIdentity
 
   return (
     // キーボードを出したら、操作の台をキーボードの上に上げる
-    <KeyboardAvoidingView behavior={process.env.EXPO_OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={headerHeight} className="flex-1 bg-canvas">
+    <KeyboardAvoidingView behavior="padding" keyboardVerticalOffset={headerHeight} className="flex-1 bg-canvas">
       <StatusRow room={room}>{session && <RoomStatus session={session} rejoining={keeper?.rejoining ?? false} />}</StatusRow>
       {(joinError || session?.error || session?.warning || keeper?.awayNotice) && (
         <View className="w-full max-w-3xl gap-2 self-center px-4 pt-3">
