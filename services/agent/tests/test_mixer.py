@@ -77,3 +77,12 @@ def test_pushing_after_close_continues_the_same_input() -> None:
     m.close("speech")
     assert samples(m.pop()) == [9, 0, 0, 0]
     assert m.pop() is None
+
+
+def test_clear_drops_everything() -> None:
+    m = Mixer(chunk_samples=2)
+    m.push("a", pcm(1, 2, 3))
+    m.close("a")
+    m.push("b", pcm(1, 2))
+    m.clear()
+    assert m.pop() is None
