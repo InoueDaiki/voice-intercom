@@ -32,7 +32,7 @@ class VideoTranscodeModule : Module() {
     get() = appContext.reactContext ?: throw CodedException("ERR_NO_CONTEXT", "Android の Context が無い", null)
 
   private val mainHandler = Handler(Looper.getMainLooper())
-  // 動いている変換(1つずつ。MediaUploader が順に送る)。触るのはメインスレッドだけ
+  // 動いている変換(1つずつ。apps/mobile の mobileMedia.ts がアプリ全体で順番に呼ぶ)。触るのはメインスレッドだけ
   private var running: Job? = null
 
   private class Job(val transformer: Transformer, val output: File, val promise: Promise)
