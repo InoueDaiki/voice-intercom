@@ -1,9 +1,9 @@
 import { Button, FullScreenMessage } from "@voice-intercom/ui-web";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { hasAuthParams, useAuth } from "react-oidc-context";
 import { useLocation } from "react-router";
 
-import { ADMIN_GROUP, groupsOf, OPERATOR_GROUP, signOut, useLoginLost } from "./auth.ts";
+import { ADMIN_GROUP, groupsOf, OPERATOR_GROUP, restoreLogin, signOut, useLoginLost } from "./auth.ts";
 
 // ログインしていなければログイン画面へ送り、admin か operator のグループでなければ画面を見せない。
 // 実際の権限の判定は API がする。ここは表示の出し分けだけ
@@ -11,20 +11,33 @@ export function RequireAdmin({ children }: { children: ReactNode }) {
   const auth = useAuth();
   const location = useLocation();
   const loginLost = useLoginLost(auth);
+  const returnTo = location.pathname + location.search;
   const needsSignIn =
     !auth.isAuthenticated && !auth.isLoading && !auth.activeNavigator && !auth.error && !hasAuthParams();
 
+  // 認可の画面へ送る前に、リフレッシュトークンを試す。試すのは、ログインが要る状態になるごとに1回
+  const signingIn = useRef(false);
   useEffect(() => {
-    if (needsSignIn) {
-      void auth.signinRedirect({ state: location.pathname + location.search });
+    if (!needsSignIn) {
+      signingIn.current = false;
+      return;
     }
-  }, [needsSignIn, auth, location]);
+    if (signingIn.current) {
+      return;
+    }
+    signingIn.current = true;
+    void restoreLogin().then((restored) => {
+      if (!restored) {
+        void auth.signinRedirect({ state: returnTo });
+      }
+    });
+  }, [needsSignIn, auth, returnTo]);
 
   if (loginLost && auth.error) {
     return (
       <FullScreenMessage
         action={
-          <Button variant="primary" onClick={() => void auth.signinRedirect()}>
+          <Button variant="primary" onClick={() => void auth.signinRedirect({ state: returnTo })}>
             ログインし直す
           </Button>
         }

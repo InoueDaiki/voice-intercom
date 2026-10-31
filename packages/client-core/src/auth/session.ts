@@ -12,6 +12,21 @@ export class LoginRequiredError extends Error {
   }
 }
 
+// 認可サーバーがリフレッシュトークンを断ったか(失効、取り消し。やり直しても通らない)。
+// OIDC のライブラリの誤り(ErrorResponse)は error に OAuth のエラーコードを持つ。
+// 通信の失敗や、一時的なエラーのコード(server_error など)は、ログインを保ってやり直す
+export function isInvalidGrant(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "error" in error && error.error === "invalid_grant";
+}
+
+// 期限までに終わらなければ投げる。もとの処理は止めない(結果は捨てる)。応答の無い相手を待ち続けないためのもの
+export function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${ms}ミリ秒待っても終わらなかった`)), ms);
+    work.then(resolve, reject).finally(() => clearTimeout(timer));
+  });
+}
+
 export interface RenewalRetryOptions {
   // トークンの更新を1回試す
   renew: () => Promise<void>;
@@ -34,6 +49,7 @@ export class RenewalRetry extends Observable {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private running = false;
   private disposed = false;
+  private readonly recoveredListeners = new Set<() => void>();
 
   constructor(options: RenewalRetryOptions) {
     super();
@@ -63,7 +79,20 @@ export class RenewalRetry extends Observable {
 
   // 更新できた
   succeeded(): void {
+    const recovered = this.retrying;
     this.stop();
+    if (recovered) {
+      for (const listener of [...this.recoveredListeners]) {
+        listener();
+      }
+    }
+  }
+
+  // やり直しの末に更新できたら呼ぶ(トークンを取れずに止まっていた処理を動かす)。
+  // 更新が戻るたびに1回だけなので、呼ばれた先の失敗では繰り返さない。解除する関数を返す
+  subscribeRecovered(listener: () => void): () => void {
+    this.recoveredListeners.add(listener);
+    return () => this.recoveredListeners.delete(listener);
   }
 
   // すぐ試す(ネットワークが戻った、画面に戻った)。やり直している途中でなければ何もしない
@@ -84,7 +113,7 @@ export class RenewalRetry extends Observable {
     try {
       await this.renew();
       this.running = false;
-      this.stop();
+      this.succeeded();
     } catch (e) {
       this.running = false;
       this.failed(e);

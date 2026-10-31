@@ -27,10 +27,20 @@ export interface RoomHubProviderProps {
   platform: RoomPlatform;
   presence: AppPresence;
   createAwake: () => ScreenAwake;
+  // 止まっていたログインが戻ったら知らせる(解除する関数を返す)。切れたルームに入り直す。モジュールの定数を渡す
+  subscribeLoginRecovered?: (listener: () => void) => () => void;
   children: ReactNode;
 }
 
-export function RoomHubProvider({ me, myIdentity, platform, presence, createAwake, children }: RoomHubProviderProps) {
+export function RoomHubProvider({
+  me,
+  myIdentity,
+  platform,
+  presence,
+  createAwake,
+  subscribeLoginRecovered,
+  children,
+}: RoomHubProviderProps) {
   const api = useApi();
   const [hub, setHub] = useState<RoomHub>();
   // 作り直す前の RoomHub で音声をつないでいたルーム
@@ -72,6 +82,8 @@ export function RoomHubProvider({ me, myIdentity, platform, presence, createAwak
       h.dispose();
     };
   }, [api, myIdentity, me.language, platform, presence, createAwake]);
+
+  useEffect(() => hub && subscribeLoginRecovered?.(() => hub.rejoinAll()), [hub, subscribeLoginRecovered]);
 
   return hub ? <RoomHubContext value={hub}>{children}</RoomHubContext> : null;
 }
