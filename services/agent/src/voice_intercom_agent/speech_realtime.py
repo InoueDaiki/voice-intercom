@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 REALTIME_URL = "wss://api.openai.com/v1/realtime?model={model}"
 SAMPLE_RATE = 24000
-# session.updated を待つ上限
+# 接続と、session.updated を待つ上限(それぞれ)
 READY_TIMEOUT_S = 10.0
 
 INSTRUCTIONS = (
@@ -158,10 +158,11 @@ class _Session:
     async def speak(self, text: str, on_audio: Callable[[bytes], None]) -> SpeechResult:
         async with self._lock:
             for attempt in range(2):
-                ws = await self._ensure()
                 reader = ResponseReader(f"speak-{next(self._ids)}", on_audio)
                 try:
+                    # 接続も上限に含める。止まるとロックごと、この言語の読み上げが全部止まる
                     async with asyncio.timeout(self._timeout_s):
+                        ws = await self._ensure()
                         done = await self._read(ws, reader, text)
                 except TimeoutError:
                     # 応答の途中の状態が残らないよう、セッションを捨てて次は開き直す
@@ -198,9 +199,16 @@ class _Session:
     async def _ensure(self) -> aiohttp.ClientWebSocketResponse:
         if self._ws is not None and not self._ws.closed:
             return self._ws
-        ws = await self._http.ws_connect(
-            REALTIME_URL.format(model=self._model), headers=self._headers
-        )
+        try:
+            async with asyncio.timeout(READY_TIMEOUT_S):
+                ws = await self._http.ws_connect(
+                    REALTIME_URL.format(model=self._model), headers=self._headers
+                )
+        except TimeoutError:
+            # prepare() も通るので、ここで上限を切る。読み上げの上限の超過と区別する
+            raise RuntimeError(
+                f"読み上げのセッションに {READY_TIMEOUT_S:.0f}秒で接続できなかった"
+            ) from None
         try:
             await ws.send_json({"type": "session.update", "session": session_config(self._voice)})
             async with asyncio.timeout(READY_TIMEOUT_S):

@@ -44,7 +44,7 @@ WHISPER_URL = "wss://api.openai.com/v1/realtime?intent=transcription"
 # 末尾の無音を送る単位(100ms)
 TAIL_SILENCE_CHUNK = b"\x00\x00" * (INPUT_SAMPLE_RATE // 10)
 
-# session.updated を待つ上限
+# 接続と、session.updated を待つ上限(それぞれ)
 READY_TIMEOUT_S = 10.0
 
 _END = object()
@@ -75,7 +75,9 @@ class RealtimeSession:
 
     async def run(self) -> None:
         try:
-            async with self._http.ws_connect(self._url(), headers=self._headers) as ws:
+            async with asyncio.timeout(READY_TIMEOUT_S):
+                ws = await self._http.ws_connect(self._url(), headers=self._headers)
+            async with ws:
                 await ws.send_json({"type": "session.update", "session": self._session_config()})
                 async with asyncio.timeout(READY_TIMEOUT_S):
                     await self._wait_updated(ws)
@@ -87,7 +89,14 @@ class RealtimeSession:
         except Exception:
             logger.exception("%s: セッションが異常終了した", self.name)
         finally:
+            self._stop_accepting()
             self._on_done()
+
+    def _stop_accepting(self) -> None:
+        """セッションが終わったら、発話が続いていても音声を受け取らない(キューにためない)。"""
+        self._finished.set()
+        while not self._queue.empty():
+            self._queue.get_nowait()
 
     async def _wait_updated(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         async for msg in ws:
