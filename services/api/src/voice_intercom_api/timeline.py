@@ -142,7 +142,9 @@ def delete_timeline_event(
     description="event_id は `<occurred_at>#<source_id>` で作る。"
     "同じ event_id があれば置き換える。ただし送った本人が消した行(墓石)は置き換えず、"
     "墓石を返す。アーカイブしたルームは 409 で、LiveKit のルームを閉じる"
-    "(発行済みのトークンで作り直されたもの)。",
+    "(発行済みのトークンで作り直されたもの)。"
+    "ただしアーカイブの直後(2分まで)は、occurred_at がアーカイブより前の行を保存する。"
+    "ルームが無いときの 404 には code が付く。",
     operation_id="putTimelineEvent",
     tags=["timeline"],
     security=AUTH,
@@ -160,5 +162,5 @@ def put_timeline_event(
     body: Annotated[PutTimelineEventRequest, Body()],
     _agent: AgentPrincipal,
 ) -> TimelineEvent:
-    agent_writable_room(room_id)
+    agent_writable_room(room_id, occurred_at=body.occurred_at)
     return timeline_store.put_event(room_id, source_id, body)

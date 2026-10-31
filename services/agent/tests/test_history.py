@@ -4,7 +4,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import aiohttp
@@ -20,6 +20,7 @@ from voice_intercom_agent.history import (
     PutResult,
     TimelineClient,
     format_time,
+    room_is_gone,
     to_source_id,
 )
 
@@ -40,6 +41,8 @@ class FakeServer:
     token_requests: list[dict[str, str]] = field(default_factory=list)
     # PUT の応答を遅らせる(秒)
     put_delay_s: float = 0.0
+    # 404 に API の印(code)を付けるか
+    marked_404: bool = True
 
     def app(self) -> web.Application:
         app = web.Application()
@@ -86,7 +89,13 @@ class FakeServer:
         status = self.put_statuses.pop(0) if self.put_statuses else 200
         if status == 200:
             return web.json_response({"event_id": f"{body.get('occurred_at')}#x"})
-        return web.json_response({"message": "error"}, status=status)
+        return web.json_response(
+            {
+                "message": "error",
+                "code": "room_gone" if self.marked_404 and status == 404 else None,
+            },
+            status=status,
+        )
 
 
 Run = Callable[[FakeServer, HistorySettings, aiohttp.ClientSession], Awaitable[None]]
@@ -259,6 +268,36 @@ def test_5xx_gives_up_after_max_attempts() -> None:
 
     fake = run(test, FakeServer(put_statuses=[500, 502, 503, 504]))
     assert len(fake.puts) == 3
+
+
+@pytest.mark.parametrize(
+    "body", ['{"message":"Not Found"}', "<html>Not Found</html>", '["room_gone"]', ""]
+)
+def test_404_without_mark_is_not_room_gone(body: str) -> None:
+    # API Gateway 自身の 404 や API_BASE_URL の誤りでは、ルームを閉じない
+    assert room_is_gone(404, body) is False
+
+
+def test_marked_404_and_409_are_room_gone() -> None:
+    assert room_is_gone(404, '{"message":"x","code":"room_gone"}') is True
+    assert room_is_gone(409, "") is True
+    assert room_is_gone(None, "") is False
+
+
+def test_unmarked_404_is_rejected() -> None:
+    gone: list[bool] = []
+
+    async def test(fake: FakeServer, s: HistorySettings, http: aiohttp.ClientSession) -> None:
+        client = TimelineClient(http, s, ClientCredentials(http, s))
+        assert await client.put("room-1", "seg1", {"text": "x"}) is PutResult.REJECTED
+        recorder = HistoryRecorder(client, lambda: "room-1", on_room_gone=lambda: gone.append(True))
+        original(recorder, "seg2", [])
+        await settle()
+        await recorder.aclose()
+
+    fake = run(test, FakeServer(put_statuses=[404, 404], marked_404=False))
+    assert gone == []
+    assert len(fake.puts) == 2
 
 
 def test_404_is_not_retried() -> None:
@@ -485,7 +524,7 @@ def test_put_does_not_retry_conflict() -> None:
     # アーカイブされたルームなら、再送を続けない
     async def test(fake: FakeServer, s: HistorySettings, http: aiohttp.ClientSession) -> None:
         client = TimelineClient(http, s, ClientCredentials(http, s))
-        assert await client.put("room-1", "seg1", {"text": "x"}) is PutResult.ROOM_GONE
+        assert await client.put("room-1", "seg1", {"text": "x"}) is PutResult.ROOM_ARCHIVED
 
     fake = run(test, FakeServer(put_statuses=[409]))
     assert len(fake.puts) == 1
@@ -510,6 +549,60 @@ def test_room_gone_is_reported_and_stops_sending(status: int) -> None:
 
     fake = run(test, FakeServer(put_statuses=[status, status, status]))
     assert [p[1] for p in fake.puts] == ["seg1"]
+
+
+def test_after_409_older_utterances_are_still_sent() -> None:
+    # 訳を待っていた前の発話を、後の発話の 409 で捨てない(API が時刻で決める)
+    async def test(fake: FakeServer, s: HistorySettings, http: aiohttp.ClientSession) -> None:
+        client = TimelineClient(http, s, ClientCredentials(http, s))
+        recorder = HistoryRecorder(client, lambda: "room-1", max_concurrency=1)
+        recorder.original(
+            "older", "前", sender_id="u", language="ja", occurred_at=T0, targets=["en"]
+        )
+        recorder.original(
+            "newer",
+            "後",
+            sender_id="u",
+            language="ja",
+            occurred_at=T0 + timedelta(seconds=5),
+            targets=[],
+        )
+        await settle()
+        recorder.original(
+            "same-time",
+            "後",
+            sender_id="u",
+            language="ja",
+            occurred_at=T0 + timedelta(seconds=5),
+            targets=[],
+        )
+        await settle()
+        await recorder.aclose()
+
+    fake = run(test, FakeServer(put_statuses=[409]))
+    assert [p[1] for p in fake.puts] == ["newer", "older"]
+
+
+def test_after_marked_404_nothing_more_is_sent() -> None:
+    async def test(fake: FakeServer, s: HistorySettings, http: aiohttp.ClientSession) -> None:
+        client = TimelineClient(http, s, ClientCredentials(http, s))
+        recorder = HistoryRecorder(client, lambda: "room-1", max_concurrency=1)
+        recorder.original(
+            "older", "前", sender_id="u", language="ja", occurred_at=T0, targets=["en"]
+        )
+        recorder.original(
+            "newer",
+            "後",
+            sender_id="u",
+            language="ja",
+            occurred_at=T0 + timedelta(seconds=5),
+            targets=[],
+        )
+        await settle()
+        await recorder.aclose()
+
+    fake = run(test, FakeServer(put_statuses=[404]))
+    assert [p[1] for p in fake.puts] == ["newer"]
 
 
 @pytest.mark.parametrize("statuses", [[403], [400], [503, 503, 503], [429, 429, 429]])

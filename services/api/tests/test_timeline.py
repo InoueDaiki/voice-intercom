@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -12,7 +13,8 @@ from timeline_env import (
     teardown_timeline,
 )
 
-from voice_intercom_api import store, timeline_store
+from voice_intercom_api import routing, store, timeline_store
+from voice_intercom_api.timeline_models import format_timestamp
 
 
 @pytest.fixture(autouse=True)
@@ -197,12 +199,59 @@ def test_moved_member_cannot_read(member: str) -> None:
     assert call("GET", "/rooms/room-a/timeline", member)[0] == 403
 
 
-def test_agent_cannot_save_to_archived_room(agent: str, monkeypatch: pytest.MonkeyPatch) -> None:
+def at(delta: timedelta) -> str:
+    return format_timestamp(datetime.now(UTC) + delta)
+
+
+def test_agent_saves_utterance_from_before_archive(
+    agent: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 訳を待つ間や PUT の途中にアーカイブされた発話は、ジョブの終わりに届く
     lk = FakeLiveKit()
     lk.install(monkeypatch)
     store.update_room("room-a", archived_at=store.now())
 
-    status, _ = put(agent, "seg-archived", utterance())
+    status, _ = put(agent, "seg-before", utterance(occurred_at=at(timedelta(seconds=-5))))
+
+    assert status == 200
+    assert len(timeline_store.list_events("room-a", limit=10, before=None)[0]) == 1
+    assert lk.deleted_rooms == []
+
+
+def test_agent_clock_far_behind_cannot_save_after_grace(
+    agent: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 時計の遅れた Agent が作り直されたルームで話しても、猶予の後は通らず、ルームを閉じる
+    lk = FakeLiveKit()
+    lk.install(monkeypatch)
+    archived_at = at(-routing.ARCHIVE_GRACE - timedelta(seconds=1))
+    store.update_room("room-a", archived_at=archived_at)
+
+    status, _ = put(agent, "seg-late", utterance(occurred_at=at(timedelta(days=-1))))
+
+    assert status == 409
+    assert lk.deleted_rooms == ["room-a"]
+
+
+def test_agent_clock_ahead_cannot_save_to_archived_room(
+    agent: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lk = FakeLiveKit()
+    lk.install(monkeypatch)
+    store.update_room("room-a", archived_at=store.now())
+
+    assert put(agent, "seg-1", utterance(occurred_at=at(timedelta(days=1))))[0] == 409
+    assert timeline_store.list_events("room-a", limit=10, before=None) == ([], None)
+
+
+def test_agent_cannot_save_to_archived_room(agent: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    lk = FakeLiveKit()
+    lk.install(monkeypatch)
+    archived_at = store.now()
+    store.update_room("room-a", archived_at=archived_at)
+
+    # アーカイブと同じ時刻の発話は、前の発話ではない
+    status, _ = put(agent, "seg-archived", utterance(occurred_at=archived_at))
 
     assert status == 409
     assert timeline_store.list_events("room-a", limit=10, before=None) == ([], None)
@@ -213,7 +262,25 @@ def test_agent_cannot_save_to_archived_room(agent: str, monkeypatch: pytest.Monk
 def test_agent_cannot_save_while_deleting(agent: str) -> None:
     store.update_room("room-a", deleting_at=store.now())
 
-    assert put(agent, "seg-1", utterance())[0] == 404
+    status, body = put(agent, "seg-1", utterance())
+
+    assert status == 404
+    assert body == {"statusCode": 404, "message": "ルームがない", "code": "room_gone"}
+
+
+def test_missing_room_404_is_marked_for_agent(agent: str) -> None:
+    status, body = put(agent, "seg-1", utterance(), room_id="room-none")
+
+    assert status == 404
+    assert body["code"] == "room_gone"
+
+
+def test_unknown_route_404_has_no_mark(agent: str) -> None:
+    # Agent はこの印の無い 404 ではルームを閉じない
+    status, body = call("PUT", "/rooms/room-a/nothing/seg-1", agent, utterance())
+
+    assert status == 404
+    assert "code" not in body
 
 
 def test_non_member_cannot_read(member: str, outsider: str) -> None:

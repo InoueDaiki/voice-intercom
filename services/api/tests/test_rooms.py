@@ -763,3 +763,20 @@ def test_migrate_tenants(token: Callable[[str], str]) -> None:
     ]
     # 移した前のルームは、そのテナントの管理者が管理する
     assert store.get_room("room-a").tenant_id == "t1"  # pyright: ignore[reportOptionalMemberAccess]
+
+
+def test_get_room_reads_consistently(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 無い・アーカイブしたという判定が、LiveKit のルームを閉じる判断につながる
+    reads: list[dict[str, Any]] = []
+    table = store._rooms()  # pyright: ignore[reportPrivateUsage]
+
+    class Spy:
+        def get_item(self, **kwargs: Any) -> Any:
+            reads.append(kwargs)
+            return table.get_item(**kwargs)
+
+    monkeypatch.setattr(store, "_rooms", Spy)
+
+    store.get_room("room-none")
+
+    assert reads == [{"Key": {"room_id": "room-none"}, "ConsistentRead": True}]

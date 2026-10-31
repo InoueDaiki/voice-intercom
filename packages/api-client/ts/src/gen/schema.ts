@@ -233,7 +233,7 @@ export interface paths {
         get?: never;
         /**
          * 発話かテキスト入力を履歴に保存する(Agent)。同じ内容なら何度呼んでも同じ結果になる
-         * @description event_id は `<occurred_at>#<source_id>` で作る。同じ event_id があれば置き換える。ただし送った本人が消した行(墓石)は置き換えず、墓石を返す。アーカイブしたルームは 409 で、LiveKit のルームを閉じる(発行済みのトークンで作り直されたもの)。
+         * @description event_id は `<occurred_at>#<source_id>` で作る。同じ event_id があれば置き換える。ただし送った本人が消した行(墓石)は置き換えず、墓石を返す。アーカイブしたルームは 409 で、LiveKit のルームを閉じる(発行済みのトークンで作り直されたもの)。ただしアーカイブの直後(2分まで)は、occurred_at がアーカイブより前の行を保存する。ルームが無いときの 404 には code が付く。
          */
         put: operations["putTimelineEvent"];
         post?: never;
@@ -656,6 +656,11 @@ export interface components {
             statusCode: number;
             /** Message */
             message: string;
+            /**
+             * Code
+             * @description Agent の書き込みで、ルームが無いときの 404 だけ room_gone
+             */
+            code?: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -2351,7 +2356,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description ルームがない */
+            /** @description ルームがない(code が room_gone) */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -2652,7 +2657,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description ルームがない */
+            /** @description ルームがない(code が room_gone) */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -2724,7 +2729,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description ルームがない */
+            /** @description ルームがない(code が room_gone) */
             404: {
                 headers: {
                     [name: string]: unknown;

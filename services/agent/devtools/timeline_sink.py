@@ -18,6 +18,8 @@ import sys
 
 from aiohttp import web
 
+from voice_intercom_agent.history import ROOM_GONE_CODE
+
 
 def token_claims(header: str) -> dict[str, object]:
     """Bearer トークンの claims(署名は確かめない)。"""
@@ -52,6 +54,11 @@ def main() -> None:
             return 503
         return None
 
+    def failure(status: int) -> web.Response:
+        # 404 には API と同じ印を付ける。無いと Agent はルームを閉じない(history.py)
+        code = {"code": ROOM_GONE_CODE} if status == 404 else {}
+        return web.json_response({"message": "わざと失敗", **code}, status=status)
+
     async def put(request: web.Request) -> web.Response:
         room_id = request.match_info["room_id"]
         source_id = request.match_info["source_id"]
@@ -62,7 +69,7 @@ def main() -> None:
         print("  " + json.dumps(body, ensure_ascii=False, indent=2).replace("\n", "\n  "))
         if status := fail_status():
             print(f"  → {status} を返した")
-            return web.json_response({"message": "わざと失敗"}, status=status)
+            return failure(status)
         event_id = f"{body.get('occurred_at')}#{source_id}"
         return web.json_response({"room_id": room_id, "event_id": event_id, **body})
 
@@ -76,7 +83,7 @@ def main() -> None:
         print("  " + json.dumps(body, ensure_ascii=False, indent=2).replace("\n", "\n  "))
         if status := fail_status():
             print(f"  → {status} を返した")
-            return web.json_response({"message": "わざと失敗"}, status=status)
+            return failure(status)
         # 通知は送らない。present_ids に入っていない人がいないものとして答える
         return web.json_response({"sent": 0, "skipped": 0})
 

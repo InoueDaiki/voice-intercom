@@ -3,6 +3,7 @@
 Pydantic のモデルを正にして、ここから OpenAPI を出す(`voice_intercom_api.openapi`)。
 """
 
+import json
 from datetime import timedelta
 from http import HTTPStatus
 from typing import Annotated
@@ -10,6 +11,8 @@ from typing import Annotated
 from aws_lambda_powertools.event_handler import (
     APIGatewayHttpResolver,
     DependencyResolutionError,
+    Response,
+    content_types,
 )
 from aws_lambda_powertools.event_handler.exceptions import (
     NotFoundError,
@@ -37,6 +40,7 @@ from voice_intercom_api.auth import CurrentUser
 from voice_intercom_api.config import get_settings
 from voice_intercom_api.models import PutUserRequest, User, UserList
 from voice_intercom_api.routing import AUTH as _AUTH
+from voice_intercom_api.routing import ROOM_GONE_CODE, RoomGoneError
 from voice_intercom_api.routing import ROOM_WRITE_ERRORS as _ROOM_WRITE_ERRORS
 from voice_intercom_api.routing import responses as _responses
 from voice_intercom_api.routing import tenant_actor as _tenant_actor
@@ -63,6 +67,20 @@ def _unwrap_dependency_error(e: DependencyResolutionError) -> None:
     if isinstance(e.__cause__, ServiceError):
         raise e.__cause__
     raise e
+
+
+@app.exception_handler(RoomGoneError)
+def _room_gone(e: RoomGoneError) -> Response[str]:
+    # ServiceError の本文に項目は足せないので、ここで作る。Agent はこの印でルームを閉じる
+    # (API Gateway や Powertools の 404 と見分ける)
+    return Response(
+        status_code=e.status_code,
+        content_type=content_types.APPLICATION_JSON,
+        body=json.dumps(
+            {"statusCode": e.status_code, "message": e.msg, "code": ROOM_GONE_CODE},
+            ensure_ascii=False,
+        ),
+    )
 
 
 class HealthResponse(BaseModel):

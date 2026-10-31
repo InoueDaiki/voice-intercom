@@ -43,8 +43,9 @@ def save(agent: IntercomAgent) -> None:
 class FakeApi:
     """模擬 OIDC のトークンと、履歴の PUT・通知の POST。どれも status を返す。"""
 
-    def __init__(self, status: int) -> None:
+    def __init__(self, status: int, *, marked: bool = True) -> None:
         self.status = status
+        self.marked = marked
         self.calls = 0
 
     def app(self) -> web.Application:
@@ -59,7 +60,8 @@ class FakeApi:
 
     async def _write(self, _: web.Request) -> web.Response:
         self.calls += 1
-        return web.json_response({"message": "error"}, status=self.status)
+        code = "room_gone" if self.marked and self.status == 404 else None
+        return web.json_response({"message": "error", "code": code}, status=self.status)
 
 
 async def with_agent(
@@ -129,6 +131,21 @@ def test_other_responses_do_not_close_room(
         assert close.count == 0
 
     asyncio.run(with_agent(FakeApi(status), monkeypatch, test, close))
+
+
+@pytest.mark.parametrize("scenario", [speak, text, save])
+def test_unmarked_404_does_not_close_room(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # API Gateway 自身の 404 や API_BASE_URL の誤りでは、使っているルームを閉じない
+    close = CloseSpy()
+
+    async def test(agent: IntercomAgent) -> None:
+        scenario(agent)
+        await settle()
+        assert close.count == 0
+
+    asyncio.run(with_agent(FakeApi(404, marked=False), monkeypatch, test, close))
 
 
 def test_flush_at_job_end_does_not_close_room(monkeypatch: pytest.MonkeyPatch) -> None:

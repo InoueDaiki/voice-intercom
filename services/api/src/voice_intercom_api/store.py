@@ -323,7 +323,12 @@ def list_joinable_rooms(tenant_id: str, user_id: str) -> list[Room]:
 
 
 def get_room(room_id: str) -> Room | None:
-    item = _rooms().get_item(Key={"room_id": room_id}).get("Item")
+    """ルームを強い整合で読む。
+
+    無い・アーカイブしたという判定が LiveKit のルームを閉じる判断につながるので、書いた直後の
+    古い行で判定しない。
+    """
+    item = _rooms().get_item(Key={"room_id": room_id}, ConsistentRead=True).get("Item")
     return None if item is None else _room(item, members_of(room_id))
 
 

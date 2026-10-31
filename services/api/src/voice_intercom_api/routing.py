@@ -5,6 +5,7 @@ app.py に置くと、Router のモジュールが app.py を読むことにな�
 """
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from typing import Annotated
 
@@ -15,7 +16,7 @@ from aws_lambda_powertools.event_handler.exceptions import (
 )
 from aws_lambda_powertools.event_handler.openapi.params import Path
 from aws_lambda_powertools.event_handler.openapi.types import OpenAPIResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from voice_intercom_api import room_cleanup, store
 from voice_intercom_api.auth import Principal
@@ -23,12 +24,28 @@ from voice_intercom_api.models import Room
 
 AUTH = [{"bearerAuth": []}]
 
+# ルームが無いことを API が答えた 404 の印(ErrorResponse の code)。Agent はこれを見てルームを閉じる
+# (services/agent の history.py の ROOM_GONE_CODE と揃える)
+ROOM_GONE_CODE = "room_gone"
+
+# アーカイブの後も、その前の発話を受け付ける長さ。Agent は訳を30秒待ち、PUT の再送に1分ほどかかる。
+# Agent の時計が遅れていても、これを過ぎれば作り直されたルームの発話は通らない
+ARCHIVE_GRACE = timedelta(seconds=120)
+
 
 class ErrorResponse(BaseModel):
     """エラーの本文(Powertools の ServiceError が返す形)。"""
 
     statusCode: int  # noqa: N815
     message: str
+    code: str | None = Field(
+        default=None,
+        description=f"Agent の書き込みで、ルームが無いときの 404 だけ {ROOM_GONE_CODE}",
+    )
+
+
+class RoomGoneError(NotFoundError):
+    """Agent の書き込みで、ルームが無いか消している途中。応答に印を付ける(app.py)。"""
 
 
 def responses(
@@ -107,23 +124,43 @@ def writable_room(room_id: str, user: Principal) -> Room:
     return room
 
 
-def agent_writable_room(room_id: str) -> Room:
-    """Agent が履歴や通知を書けるルームを返す。アーカイブしたルームは 409。
+def _said_before_archive(occurred_at: str, archived_at: str) -> bool:
+    """アーカイブの前の発話が、ジョブの終わりに遅れて届いたものか。
 
-    発行済みのトークンで入り直すと、LiveKit はルームを作り直し、Agent も割り当てる。ここに
-    来るのはそのときなので、LiveKit のルームを閉じて全員を切る(docs/設計メモ.md の
-    「メンバーを外したとき・ルームを消したときの後始末」)。
+    occurred_at は Agent の時計なので、これだけでは信用しない。時計が進んでいれば前の発話でも
+    落ちる(捨てるだけ)。遅れていても、受け付けるのは ARCHIVE_GRACE の間だけにする。
     """
-    room = existing_room(room_id)
-    if room.archived_at is not None:
-        room_cleanup.close_livekit_room(room_id)
-        raise ServiceError(HTTPStatus.CONFLICT, "アーカイブしたルーム")
-    return room
+    archived = datetime.fromisoformat(archived_at)
+    return (
+        datetime.fromisoformat(occurred_at) < archived
+        and datetime.now(UTC) - archived <= ARCHIVE_GRACE
+    )
+
+
+def agent_writable_room(room_id: str, *, occurred_at: str | None = None) -> Room:
+    """Agent が履歴や通知を書けるルームを返す。無ければ印つきの 404、アーカイブしたルームは 409。
+
+    発行済みのトークンで入り直すと、LiveKit はルームを作り直し、Agent も割り当てる。409 に
+    なるのはそのときなので、LiveKit のルームを閉じて全員を切る(docs/設計メモ.md の
+    「メンバーを外したとき・ルームを消したときの後始末」)。
+
+    履歴の PUT は occurred_at を渡す。アーカイブの前の発話は保存し、ルームも閉じない。
+    Agent が訳を待つ間や PUT の途中にアーカイブされると、ジョブの終わりに届くため。
+    """
+    room = store.get_room(room_id)
+    if room is None or room.deleting_at is not None:
+        raise RoomGoneError("ルームがない")
+    if room.archived_at is None:
+        return room
+    if occurred_at is not None and _said_before_archive(occurred_at, room.archived_at):
+        return room
+    room_cleanup.close_livekit_room(room_id)
+    raise ServiceError(HTTPStatus.CONFLICT, "アーカイブしたルーム")
 
 
 ROOM_READ_ERRORS = ROOM_NOT_FOUND | {409: "Connect の申請中"}
 ROOM_WRITE_ERRORS = ROOM_NOT_FOUND | {409: "Connect の申請中か、アーカイブしたルーム"}
-AGENT_WRITE_ERRORS = ROOM_NOT_FOUND | {409: "アーカイブしたルーム"}
+AGENT_WRITE_ERRORS = {404: "ルームがない(code が room_gone)", 409: "アーカイブしたルーム"}
 
 
 @dataclass(frozen=True)

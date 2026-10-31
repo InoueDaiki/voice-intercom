@@ -76,6 +76,8 @@ class FakeServer:
 
     # POST に順に返すステータス。尽きたら 200
     statuses: list[int] = field(default_factory=list)
+    # 404 に API の印(code)を付けるか
+    marked_404: bool = True
     token_count: int = 0
     # (room_id, Authorization, body)
     posts: list[tuple[str, str, dict[str, Any]]] = field(default_factory=list)
@@ -111,7 +113,13 @@ class FakeServer:
         status = self.statuses.pop(0) if self.statuses else 200
         if status == 200:
             return web.json_response({"sent": 2, "skipped": 1})
-        return web.json_response({"message": "error"}, status=status)
+        return web.json_response(
+            {
+                "message": "error",
+                "code": "room_gone" if self.marked_404 and status == 404 else None,
+            },
+            status=status,
+        )
 
 
 Run = Callable[[FakeServer, NotifyClient], Awaitable[None]]
@@ -200,6 +208,13 @@ def test_4xx_is_not_retried(status: int, expected: NotifyResult) -> None:
 
     fake = run(test, FakeServer(statuses=[status]))
     assert len(fake.posts) == 1
+
+
+def test_unmarked_404_is_rejected() -> None:
+    async def test(fake: FakeServer, client: NotifyClient) -> None:
+        assert await client.notify("room-1", "speaking", SPEAKING_BODY) is NotifyResult.REJECTED
+
+    run(test, FakeServer(statuses=[404], marked_404=False))
 
 
 def test_connection_failure_is_retried_once() -> None:

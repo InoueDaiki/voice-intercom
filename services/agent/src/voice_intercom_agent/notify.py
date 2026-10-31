@@ -13,8 +13,9 @@
 - 呼び出しはバックグラウンドのタスクで行い、発話やテキストの処理と字幕を待たせない。
 - 通知は遅れて届いても意味が薄いので、通信の失敗(トークンを取れないことを含む)と 5xx だけ
   1回やり直す。401 はトークンを取り直して1回だけやり直す。それ以外はログに残して捨てる。
-- 404 と 409 は、履歴の保存と同じく、ルームがもう使えないという意味なので on_room_gone で
-  知らせる(history.py)。話し始めの通知は発話の書き起こしを待たないので、履歴より先に分かる。
+- API が印を付けて答えた 404 と 409 は、履歴の保存と同じく、ルームがもう使えないという意味なので
+  on_room_gone で知らせる(history.py の room_is_gone)。印の無い 404 では閉じない。
+  話し始めの通知は発話の書き起こしを待たないので、履歴より先に分かる。
 - ジョブの終わり(aclose)に、送り中のものを flush_timeout_s だけ待って打ち切る。
 
 トークンと HTTP のセッションは履歴の保存(history.py)と共有する。設定が無ければ何もしない。
@@ -32,11 +33,11 @@ from urllib.parse import quote
 import aiohttp
 
 from .history import (
-    ROOM_GONE_STATUSES,
     ApiAccess,
     ClientCredentials,
     HistorySettings,
     TokenError,
+    room_is_gone,
 )
 
 logger = logging.getLogger(__name__)
@@ -91,7 +92,7 @@ def present_ids(participants: Iterable[tuple[str, bool]]) -> list[str]:
 
 class NotifyResult(Enum):
     SENT = "sent"
-    # ルームがもう使えない(404、409)
+    # ルームがもう使えない(印つきの 404、409)
     ROOM_GONE = "room_gone"
     # 400、403 など、やり直しても通らない応答
     REJECTED = "rejected"
@@ -144,9 +145,9 @@ class NotifyClient:
                 reauthorized = True
                 self._credentials.invalidate(token)
                 continue
-            if status in ROOM_GONE_STATUSES:
+            if room_is_gone(status, detail):
                 logger.warning(
-                    "%sを通知しない(ルーム %s はもう使えない。%d): %s",
+                    "%sを通知しない(ルーム %s はもう使えない。%s): %s",
                     label,
                     room_id,
                     status,

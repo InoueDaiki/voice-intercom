@@ -7,9 +7,13 @@
   トークンは期限の少し前まで使い回す。
 - PUT は冪等(source_id ごとに1件)なので、通信の失敗と 5xx は間隔を空けて再送する。
   401 はトークンを取り直して1回だけやり直す。そのほかの 4xx は再送しない(408、429 は再送する)。
-- 404(ルームが無いか、消している途中)と 409(アーカイブした)は、ルームがもう使えないという
-  意味なので、on_room_gone で知らせる。Agent はジョブを終え、LiveKit のルームを閉じる(agent.py)。
-  発行済みのトークンで作り直されたルームで、録音と OpenAI の課金が続かないようにする。
+- API が印(code が room_gone)を付けて答えた 404(ルームが無いか、消している途中)と
+  409(アーカイブした)は、ルームがもう使えないという意味なので、on_room_gone で知らせる。
+  Agent はジョブを終え、LiveKit のルームを閉じる(agent.py)。発行済みのトークンで作り直された
+  ルームで、録音と OpenAI の課金が続かないようにする。印の無い 404(API Gateway のもの、
+  API_BASE_URL の誤り)は、ルームのことか分からないので閉じない。
+- 409 の後も、それより前の時刻の発話は送る。API はアーカイブの前の発話を保存するので、ここで
+  捨てると、訳を待っている間にアーカイブされた発話が履歴から消える。
 - 保存はバックグラウンドのタスクで行い、字幕の配信や発話の処理を待たせない。
   ジョブの終わり(aclose)に、送り残しをできる範囲で送る。
 
@@ -18,6 +22,7 @@
 
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import re
@@ -209,15 +214,33 @@ class ClientCredentials:
         return token_url
 
 
-# ルームがもう使えない(無い、消している途中、アーカイブした)ことを表す状態コード。
-# 履歴の PUT と通知(notify.py)で共通(API の agent_writable_room)
-ROOM_GONE_STATUSES = frozenset({404, 409})
+# API がルームの不在として答えた 404 の印(services/api の routing.py と揃える)
+ROOM_GONE_CODE = "room_gone"
+
+
+def room_is_gone(status: int | None, body: str) -> bool:
+    """API がルームはもう使えない(無い、消している途中、アーカイブした)と答えたか。
+
+    履歴の PUT と通知(notify.py)で共通(API の agent_writable_room)。これを受けるとルームを閉じる
+    ので、API Gateway 自身の 404 や API_BASE_URL の誤りと見分ける。分からない 404 は False。
+    """
+    if status == 409:
+        return True
+    if status != 404:
+        return False
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        return False
+    return isinstance(parsed, dict) and parsed.get("code") == ROOM_GONE_CODE
 
 
 class PutResult(Enum):
     SAVED = "saved"
-    # ルームがもう使えない(404、409)。再送しない
+    # ルームが無いか、消している途中(印つきの 404)。再送しない
     ROOM_GONE = "room_gone"
+    # アーカイブしたルームで、この発話は受け付けられなかった(409)。再送しない
+    ROOM_ARCHIVED = "room_archived"
     # 400、403 など、やり直しても通らない応答。再送しない
     REJECTED = "rejected"
     # 再送しても通信の失敗か 5xx が続いた
@@ -266,15 +289,15 @@ class TimelineClient:
                 self._credentials.invalidate(token)
                 attempt -= 1
                 continue
-            if status in ROOM_GONE_STATUSES:
+            if room_is_gone(status, detail):
                 logger.warning(
-                    "履歴を保存しない(ルーム %s はもう使えない。%d): %s %s",
+                    "履歴を保存しない(ルーム %s はもう使えない。%s): %s %s",
                     room_id,
                     status,
                     source_id,
                     detail,
                 )
-                return PutResult.ROOM_GONE
+                return PutResult.ROOM_ARCHIVED if status == 409 else PutResult.ROOM_GONE
             if status is not None and 400 <= status < 500 and status not in (408, 429):
                 logger.error("履歴の保存が拒まれた(%d): %s %s", status, source_id, detail)
                 return PutResult.REJECTED
@@ -321,7 +344,8 @@ class HistoryRecorder:
     """ルーム(ジョブ)ごとに1つ。原文と訳の確定を受け取り、そろったら保存する。
 
     client が None なら何もしない(設定が無いとき)。呼び出しはすべてイベントループの中から。
-    ルームがもう使えないと分かったら on_room_gone を呼び、残りは送らない。
+    ルームがもう使えないと分かったら on_room_gone を呼ぶ。残りは、ルームが無いなら送らず、
+    アーカイブしたなら断られた発話より前のものだけを送る(API が時刻で決める)。
     """
 
     def __init__(
@@ -347,6 +371,8 @@ class HistoryRecorder:
         self._closed = False
         self._on_room_gone = on_room_gone
         self._room_gone = False
+        # 409 で断られた発話のうち、最も早い occurred_at。これ以降は送っても同じ応答が返る
+        self._refused_from: str | None = None
 
     @property
     def enabled(self) -> bool:
@@ -464,7 +490,7 @@ class HistoryRecorder:
     async def _put(self, source_id: str, body: dict[str, Any]) -> None:
         assert self._client is not None
         async with self._semaphore:
-            if self._room_gone:
+            if self._will_be_refused(body):
                 # 待っている間に分かった。送っても同じ応答が返る
                 return
             try:
@@ -474,10 +500,19 @@ class HistoryRecorder:
                 return
         if result is PutResult.SAVED:
             logger.debug("履歴に保存した: %s", source_id)
-        elif result is PutResult.ROOM_GONE:
-            self._room_gone = True
+        elif result in (PutResult.ROOM_GONE, PutResult.ROOM_ARCHIVED):
+            if result is PutResult.ROOM_GONE:
+                self._room_gone = True
+            else:
+                occurred_at: str = body["occurred_at"]
+                self._refused_from = min(occurred_at, self._refused_from or occurred_at)
             if self._on_room_gone is not None:
                 self._on_room_gone()
+
+    def _will_be_refused(self, body: dict[str, Any]) -> bool:
+        # format_time の文字列は、順が時刻の順になる
+        refused_from = self._refused_from
+        return self._room_gone or (refused_from is not None and body["occurred_at"] >= refused_from)
 
 
 @dataclass(frozen=True)
