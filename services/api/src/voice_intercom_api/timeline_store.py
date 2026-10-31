@@ -40,6 +40,7 @@ push 通知を最後に送った時刻(room_push.py の間引き):
 `notify#<room_id>`)をすべて消す(purge_room。room_cleanup.py)。
 """
 
+import logging
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -57,6 +58,8 @@ from voice_intercom_api.timeline_models import (
     TimelineMedia,
     media_type_of,
 )
+
+logger = logging.getLogger(__name__)
 
 # 仮の行を残す長さ。署名付き URL の期限(1時間)より十分長くする。マルチパートの complete も
 # この間に呼ぶ(未完了のマルチパートは S3 のライフサイクルルールが1日で消す。infra/modules/media)
@@ -302,6 +305,12 @@ class PendingUpload:
             return None
         return -(-self.size_bytes // self.part_size)
 
+    def part_length(self, part_number: int) -> int:
+        """そのパートの大きさ。最後のパートだけ、残りの分になる。"""
+        if self.part_size is None:
+            raise ValueError("マルチパートではない")
+        return min(self.part_size, self.size_bytes - (part_number - 1) * self.part_size)
+
 
 def _pending_key(room_id: str, media_id: str) -> dict[str, str]:
     return {"room_id": _PENDING_PREFIX + room_id, "event_id": media_id}
@@ -345,7 +354,10 @@ def create_pending_upload(
 
 
 def get_pending_upload(room_id: str, media_id: str) -> PendingUpload | None:
-    item = _timeline().get_item(Key=_pending_key(room_id, media_id)).get("Item")
+    # 同時に呼ばれた complete が書いた completed_event_id を見落とさないよう、強い整合で読む
+    item = (
+        _timeline().get_item(Key=_pending_key(room_id, media_id), ConsistentRead=True).get("Item")
+    )
     if item is None:
         return None
     return PendingUpload(
@@ -373,11 +385,28 @@ class AlreadyCompletedError(Exception):
         self.event_id = event_id
 
 
+class UploadGoneError(Exception):
+    """仮の行が無い(TTL で消えた、ルームを消した)。"""
+
+
+class CompleteConflictError(Exception):
+    """同時に呼ばれた別の complete と競合し、どちらが保存したかまだ分からない。"""
+
+
+# トランザクションが取り消された後に仮の行を読み直す間隔(秒)。相手のトランザクションが
+# 確定するのを待つ。合わせても Lambda の timeout(15秒)に響かない長さにする
+_COMPLETE_RECHECK_DELAYS_S = (0.0, 0.05, 0.1, 0.2)
+
+
 def complete_upload(pending: PendingUpload, *, sender_id: str, occurred_at: str) -> TimelineEvent:
     """メディアの履歴を書き、仮の行に completed_event_id を書く。
 
     2つを1つのトランザクションにし、同時に2回 complete されても履歴が2件にならないようにする。
     先を越されたら AlreadyCompletedError(先に書かれた event_id を持つ)。
+
+    取り消されたときは、理由(条件が合わない、同時のトランザクションとの競合)によらず仮の行を
+    読み直して決める。相手がまだ確定していなければ少し待つ。それでも決まらなければ
+    CompleteConflictError、仮の行が無ければ UploadGoneError。
     """
     table_name = get_timeline_settings().timeline_table
     event_id = make_event_id(occurred_at, pending.media_id)
@@ -424,10 +453,14 @@ def complete_upload(pending: PendingUpload, *, sender_id: str, occurred_at: str)
     except ClientError as e:
         if e.response.get("Error", {}).get("Code") != "TransactionCanceledException":
             raise
-        latest = get_pending_upload(pending.room_id, pending.media_id)
-        if latest is None or latest.completed_event_id is None:
-            raise
-        raise AlreadyCompletedError(latest.completed_event_id) from e
+        for delay in _COMPLETE_RECHECK_DELAYS_S:
+            time.sleep(delay)
+            latest = get_pending_upload(pending.room_id, pending.media_id)
+            if latest is None:
+                raise UploadGoneError(pending.media_id) from e
+            if latest.completed_event_id is not None:
+                raise AlreadyCompletedError(latest.completed_event_id) from e
+        raise CompleteConflictError(pending.media_id) from e
     return _to_event(item)
 
 
@@ -445,6 +478,9 @@ def claim_notifications(
 
     更新できた受け手を、渡した順に返す。間隔の内側(か、同時に呼ばれた別のリクエストが先に
     更新した)受け手は返さない。受け手ごとに1回の UpdateItem で、テーブルの口は使い回す。
+
+    途中で失敗したら、それまでに取った時刻を戻してから例外を出す。誰にも送らないのに時刻だけが
+    残ると、その受け手には間隔のあいだ送れなくなるため。
     """
     table = _timeline()
     expires_at = now_epoch + interval_s + int(_NOTIFY_TTL_MARGIN.total_seconds())
@@ -466,17 +502,31 @@ def claim_notifications(
         except ClientError as e:
             if store._is_conditional_check_failed(e):  # pyright: ignore[reportPrivateUsage]
                 continue
+            _release_after_failed_claim(room_id, claimed, now_epoch)
+            raise
+        except Exception:
+            _release_after_failed_claim(room_id, claimed, now_epoch)
             raise
         claimed.append(recipient_id)
     return claimed
+
+
+def _release_after_failed_claim(room_id: str, claimed: list[str], now_epoch: int) -> None:
+    # claim の元の例外を隠さないよう、戻すときの失敗はログに残すだけにする
+    try:
+        release_notifications(room_id, claimed, now_epoch=now_epoch)
+    except Exception:
+        logger.exception("通知の時刻を戻せなかった: room=%s", room_id)
 
 
 def release_notifications(room_id: str, recipient_ids: list[str], *, now_epoch: int) -> None:
     """claim を取り消す(送れなかったとき、次の呼び出しで送れるように)。
 
     別のリクエストが後から書き直していたら、そのままにする。
+    1人で失敗しても残りの人は戻し、最後に最初の例外を出す。
     """
     table = _timeline()
+    first_error: ClientError | None = None
     for recipient_id in recipient_ids:
         try:
             table.delete_item(
@@ -486,7 +536,9 @@ def release_notifications(room_id: str, recipient_ids: list[str], *, now_epoch: 
             )
         except ClientError as e:
             if not store._is_conditional_check_failed(e):  # pyright: ignore[reportPrivateUsage]
-                raise
+                first_error = first_error or e
+    if first_error is not None:
+        raise first_error
 
 
 # ルームを消したときの後始末

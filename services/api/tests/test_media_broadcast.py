@@ -7,17 +7,26 @@ from typing import Any
 
 import boto3
 import pytest
+from botocore.exceptions import ClientError
 from livekit import api as livekit
 from timeline_env import (
     MEDIA_BUCKET,
     FakeLiveKit,
     Token,
+    belong,
     call,
     setup_timeline,
     teardown_timeline,
 )
 
-from voice_intercom_api import config, media_broadcast, notify, store
+from voice_intercom_api import (
+    config,
+    media_broadcast,
+    media_store,
+    notify,
+    store,
+    timeline_store,
+)
 from voice_intercom_api.notify import SendResult
 from voiceintercom.v1.media_pb2 import MediaMessage
 
@@ -55,6 +64,8 @@ def timeline(tables: None, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         "room-m", "現場M", ["member-1", "member-2", "member-3", "member-4"], tenant_id="t1"
     )
     store.put_user("member-1", display_name="太郎", language="ja")
+    for user_id in ("member-3", "member-4"):
+        belong(user_id, "t1")
     yield
     teardown_timeline()
 
@@ -106,14 +117,14 @@ def upload(
     s3 = boto3.client("s3")
     s3.put_object(
         Bucket=MEDIA_BUCKET,
-        Key=f"rooms/{room_id}/{media_id}/upload-original",
+        Key=media_store.staging_media_key(room_id, media_id),
         Body=b"abc",
         ContentType=content_type,
     )
     if has_thumbnail:
         s3.put_object(
             Bucket=MEDIA_BUCKET,
-            Key=f"rooms/{room_id}/{media_id}/upload-thumbnail",
+            Key=media_store.staging_thumbnail_key(room_id, media_id),
             Body=b"t",
             ContentType="image/jpeg",
         )
@@ -435,3 +446,54 @@ def test_slow_push_returns_in_time(
     monkeypatch.setattr(notify, "send_to_users", push.send_to_users)
     upload(member)
     assert [c["user_ids"] for c in push.calls] == [["member-2", "member-3", "member-4"]]
+
+
+def test_failed_claim_releases_earlier_recipients(monkeypatch: pytest.MonkeyPatch) -> None:
+    table = timeline_store._timeline()  # pyright: ignore[reportPrivateUsage]
+    real = table.update_item
+
+    def update_item(**kwargs: Any) -> Any:
+        if kwargs["Key"]["event_id"] == "member-3":
+            raise ClientError(
+                {"Error": {"Code": "ProvisionedThroughputExceededException", "Message": ""}},
+                "UpdateItem",
+            )
+        return real(**kwargs)
+
+    monkeypatch.setattr(table, "update_item", update_item)
+
+    with pytest.raises(ClientError):
+        timeline_store.claim_notifications(
+            "room-m", ["member-2", "member-3", "member-4"], now_epoch=1000, interval_s=300
+        )
+
+    monkeypatch.undo()
+    # 誰にも送っていないので、次の呼び出しで全員を取れる
+    assert timeline_store.claim_notifications(
+        "room-m", ["member-2", "member-3", "member-4"], now_epoch=1001, interval_s=300
+    ) == ["member-2", "member-3", "member-4"]
+
+
+def test_release_continues_after_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert timeline_store.claim_notifications(
+        "room-m", ["member-2", "member-3"], now_epoch=1000, interval_s=300
+    ) == ["member-2", "member-3"]
+    table = timeline_store._timeline()  # pyright: ignore[reportPrivateUsage]
+    real = table.delete_item
+
+    def delete_item(**kwargs: Any) -> Any:
+        if kwargs["Key"]["event_id"] == "member-2":
+            raise ClientError(
+                {"Error": {"Code": "InternalServerError", "Message": ""}}, "DeleteItem"
+            )
+        return real(**kwargs)
+
+    monkeypatch.setattr(table, "delete_item", delete_item)
+
+    with pytest.raises(ClientError):
+        timeline_store.release_notifications("room-m", ["member-2", "member-3"], now_epoch=1000)
+
+    monkeypatch.undo()
+    assert timeline_store.claim_notifications(
+        "room-m", ["member-3"], now_epoch=1001, interval_s=300
+    ) == ["member-3"]

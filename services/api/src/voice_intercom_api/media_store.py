@@ -12,15 +12,19 @@ SeaweedFS(ファイラーがディレクトリを持つ)では、同じ名前の
 作れないので、どちらも1段下げる。
 
 1回の PUT(本体が 16MB 未満、サムネイル)の署名付き URL は、配信するキーではなく仮置きのキー
-(rooms/<room_id>/<media_id>/upload-original、upload-thumbnail)に向ける。complete で大きさを
+(rooms/.staging/<room_id>/<media_id>/original、thumbnail)に向ける。complete で大きさを
 確かめてから、配信するキーへコピーする(media.py)。署名付き URL は期限(1時間)まで何度でも
 PUT できるので、配信するキーに直接向けると、complete の後や削除の後に PUT し直して、
 大きさの確かめを通らない中身に置き換えたり、消したものを戻したりできてしまうため。
 - complete の後に仮置きのキーへ PUT し直しても、配信するキーは変わらない。
 - 仮置きのキーは、CloudFront からは読めない(バケットポリシーで拒む。infra/modules/media)。
-- 置き直された仮置きのキーは残るが、media_id の前置きの下にあるので、削除(deletion.py)と
-  ルームの削除で一緒に消える。ライフサイクルルールは前置きでしか絞れず、仮置きのキーだけを
-  選べないので使わない(残るのは本人が1時間のうちに置き直したものだけ)。
+- complete されなかった仮置きと、complete の後に置き直されたものは、ライフサイクルルールが1日で
+  消す(infra/modules/media)。ルールは前置きでしか絞れないので、仮置きだけを
+  rooms/.staging/ の下に集める。「.」はルームの ID に使えないので、ルームの前置きと混ざらない。
+  rooms/ の下なので、Lambda の削除の権限(rooms/*)はそのまま使える。
+- 本体の大きさは署名で縛る(presign_put、presign_upload_part の Content-Length)。クライアントは
+  uploads に渡した大きさのとおりに PUT する。サムネイルは uploads の時点で大きさが分からないので
+  縛れず、complete で確かめる。
 - マルチパートの本体は、配信するキーのまま。完了した後の UploadPart は失敗する(NoSuchUpload)。
 """
 
@@ -48,14 +52,18 @@ def thumbnail_key(room_id: str, media_id: str) -> str:
     return f"rooms/{room_id}/{media_id}/thumbnail"
 
 
+# 仮置きの前置き。infra/modules/media のライフサイクルルールとバケットポリシーと揃える
+STAGING_PREFIX = "rooms/.staging/"
+
+
 def staging_media_key(room_id: str, media_id: str) -> str:
     """1回の PUT の本体の仮置きのキー(配信しない)。"""
-    return f"rooms/{room_id}/{media_id}/upload-original"
+    return f"{STAGING_PREFIX}{room_id}/{media_id}/original"
 
 
 def staging_thumbnail_key(room_id: str, media_id: str) -> str:
     """サムネイルの仮置きのキー(配信しない)。"""
-    return f"rooms/{room_id}/{media_id}/upload-thumbnail"
+    return f"{STAGING_PREFIX}{room_id}/{media_id}/thumbnail"
 
 
 def media_prefix(room_id: str, media_id: str) -> str:
@@ -66,6 +74,11 @@ def media_prefix(room_id: str, media_id: str) -> str:
 def room_prefix(room_id: str) -> str:
     """ルームのすべてのオブジェクトのキーの前置き(ルームを消したときに使う)。"""
     return f"rooms/{room_id}/"
+
+
+def staging_room_prefix(room_id: str) -> str:
+    """ルームの仮置きのキーの前置き(ルームを消したときに使う)。"""
+    return f"{STAGING_PREFIX}{room_id}/"
 
 
 def public_url(key: str) -> str:
@@ -85,19 +98,28 @@ def _s3() -> Any:
     )
 
 
-def presign_put(key: str, content_type: str, content_disposition: str | None = None) -> str:
+def presign_put(
+    key: str,
+    content_type: str,
+    content_disposition: str | None = None,
+    *,
+    content_length: int | None = None,
+) -> str:
     """PUT の署名付き URL。
 
     Content-Type を署名に含める(X-Amz-SignedHeaders に content-type が入る)。
     content_disposition を渡せば、それも署名に含め、オブジェクトに持たせる(配信の応答に付く)。
+    content_length を渡せば、それも署名に含める。違う大きさの PUT は S3 が 403 にする。
     """
-    params = {
+    params: dict[str, Any] = {
         "Bucket": get_timeline_settings().media_bucket,
         "Key": key,
         "ContentType": content_type,
     }
     if content_disposition is not None:
         params["ContentDisposition"] = content_disposition
+    if content_length is not None:
+        params["ContentLength"] = content_length
     return _s3().generate_presigned_url(
         "put_object",
         Params=params,
@@ -117,8 +139,11 @@ def create_multipart(key: str, content_type: str, content_disposition: str | Non
     return res["UploadId"]
 
 
-def presign_upload_part(key: str, upload_id: str, part_number: int) -> str:
-    """パートの PUT(UploadPart)の署名付き URL。署名に入るヘッダーは host だけ。"""
+def presign_upload_part(key: str, upload_id: str, part_number: int, content_length: int) -> str:
+    """パートの PUT(UploadPart)の署名付き URL。
+
+    署名に入るヘッダーは host と content-length。違う大きさの PUT は S3 が 403 にする。
+    """
     return _s3().generate_presigned_url(
         "upload_part",
         Params={
@@ -126,6 +151,7 @@ def presign_upload_part(key: str, upload_id: str, part_number: int) -> str:
             "Key": key,
             "UploadId": upload_id,
             "PartNumber": part_number,
+            "ContentLength": content_length,
         },
         ExpiresIn=int(UPLOAD_URL_TTL.total_seconds()),
     )

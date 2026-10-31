@@ -34,9 +34,9 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "this" {
   }
 }
 
-# 未完了のマルチパートアップロードを消す。API の仮の行(complete を呼べる期間)も1日なので揃える
-# (services/api の timeline_store.py の PENDING_UPLOAD_TTL)。S3 は始めてからの日数を UTC の
-# 0時に切り上げて数えるので、実際に消えるのは1〜2日後
+# API の仮の行(complete を呼べる期間)の1日に揃える(services/api の timeline_store.py の
+# PENDING_UPLOAD_TTL)。S3 は日数を UTC の0時に切り上げて数えるので、実際に消えるのは1〜2日後で、
+# 仮の行より先に消えることはない
 resource "aws_s3_bucket_lifecycle_configuration" "this" {
   bucket = aws_s3_bucket.this.id
 
@@ -48,6 +48,22 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
 
     abort_incomplete_multipart_upload {
       days_after_initiation = 1
+    }
+  }
+
+  # 1回の PUT の仮置き。complete されなかったものと、complete の後に置き直されたものを消す。
+  # 配信するキー(rooms/<room_id>/...)を消さないよう、仮置きの前置きだけに絞る
+  # (services/api の media_store.py の STAGING_PREFIX)
+  rule {
+    id     = "expire-staged-uploads"
+    status = "Enabled"
+
+    filter {
+      prefix = "rooms/.staging/"
+    }
+
+    expiration {
+      days = 1
     }
   }
 }
@@ -143,14 +159,17 @@ data "aws_iam_policy_document" "bucket" {
     }
   }
 
-  # 1回の PUT の仮置き(rooms/<room_id>/<media_id>/upload-*)は配信しない。complete で大きさを
-  # 確かめてから、配信するキーへコピーする(services/api の media_store.py)。complete の後に
-  # 署名付き URL で置き直されたものを、CloudFront から読ませないため
+  # 1回の PUT の仮置き(rooms/.staging/ の下。前の形は rooms/<room_id>/<media_id>/upload-*)は
+  # 配信しない。complete で大きさを確かめてから、配信するキーへコピーする(services/api の
+  # media_store.py)。complete の後に署名付き URL で置き直されたものを、CloudFront から読ませないため
   statement {
-    sid       = "DenyCloudFrontReadStaging"
-    effect    = "Deny"
-    actions   = ["s3:GetObject"]
-    resources = ["${aws_s3_bucket.this.arn}/rooms/*/*/upload-*"]
+    sid     = "DenyCloudFrontReadStaging"
+    effect  = "Deny"
+    actions = ["s3:GetObject"]
+    resources = [
+      "${aws_s3_bucket.this.arn}/rooms/.staging/*",
+      "${aws_s3_bucket.this.arn}/rooms/*/*/upload-*",
+    ]
 
     principals {
       type        = "Service"

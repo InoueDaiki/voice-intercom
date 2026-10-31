@@ -52,6 +52,17 @@ def setup_timeline(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     store.create_room("room-a", "A", ["member-1", "member-2"], tenant_id="t1")
     store.create_room("room-b", "B", ["member-2"], tenant_id="t1")
+    for user_id in ("member-1", "member-2"):
+        belong(user_id, "t1")
+
+
+def belong(user_id: str, tenant_id: str) -> None:
+    """プロフィールを登録せずに、その人をテナントに入れる(ルームの権限は今の所属も確かめる)。"""
+    store._users().update_item(  # pyright: ignore[reportPrivateUsage]
+        Key={"user_id": user_id},
+        UpdateExpression="SET tenant_id = :t",
+        ExpressionAttributeValues={":t": tenant_id},
+    )
 
 
 def teardown_timeline() -> None:

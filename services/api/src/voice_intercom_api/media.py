@@ -88,7 +88,7 @@ from voice_intercom_api.timeline_models import (
 
 router = Router()
 
-# サムネイルの上限。署名付き URL では大きさを縛れないので、complete で確かめる
+# サムネイルの上限。uploads ではサムネイルの大きさが分からず署名で縛れないので、complete で確かめる
 MAX_THUMBNAIL_BYTES = 10 * 1024 * 1024
 
 _MIB = 1024 * 1024
@@ -196,7 +196,8 @@ def _own_pending(room_id: str, media_id: str, user_sub: str) -> timeline_store.P
     "/rooms/<room_id>/media/uploads",
     summary="画像・動画・ファイルをアップロードする署名付き URL を発行する(メンバー)",
     description="PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と"
-    "同じにする。違うと S3 が 403 を返す。ファイル(画像・動画でないもの)は、応答の "
+    "同じにし、本体は size_bytes の大きさで送る(Content-Length が署名に入る)。"
+    "違うと S3 が 403 を返す。ファイル(画像・動画でないもの)は、応答の "
     "content_disposition を Content-Disposition ヘッダーに付ける。"
     "アップロードしたら complete を呼ぶ。"
     "size_bytes が 16MB 以上なら、upload_url は null で、multipart(パートの大きさと数)を返す。"
@@ -243,7 +244,10 @@ def create_media_upload(
         media_id=media_id,
         # 1回の PUT は仮置きのキーに置かせる(complete で確かめてから配信するキーへコピーする)
         upload_url=media_store.presign_put(
-            media_store.staging_media_key(room_id, media_id), body.content_type, disposition
+            media_store.staging_media_key(room_id, media_id),
+            body.content_type,
+            disposition,
+            content_length=body.size_bytes,
         )
         if part_size is None
         else None,
@@ -260,6 +264,7 @@ def create_media_upload(
     "/rooms/<room_id>/media/<media_id>/parts",
     summary="マルチパートのパートを PUT する署名付き URL を発行する(アップロードした本人)",
     description="1回で 100 個まで。期限は1時間なので、送る少し前に取る。"
+    "パートは part_size の大きさ(最後は残りの分)で送る(Content-Length が署名に入る)。"
     "期限が近づいたら、同じパートの URL を取り直してよい。"
     "thumbnail が true なら、サムネイルの署名付き URL も取り直す。"
     "マルチパートでないアップロードと、保存した後は 409。part_count より大きい番号は 422。",
@@ -293,7 +298,10 @@ def create_upload_part_urls(
     key = media_store.media_key(room_id, media_id)
     return UploadPartUrls(
         parts=[
-            UploadPartUrl(part_number=n, url=media_store.presign_upload_part(key, upload_id, n))
+            UploadPartUrl(
+                part_number=n,
+                url=media_store.presign_upload_part(key, upload_id, n, pending.part_length(n)),
+            )
             for n in body.part_numbers
         ],
         thumbnail_upload_url=_thumbnail_url(room_id, media_id)
@@ -308,7 +316,8 @@ def create_upload_part_urls(
     summary="アップロードした画像・動画・ファイルを履歴に保存する(アップロードした本人)",
     description="本体(とサムネイル)が置かれていなければ 409。"
     "置かれた本体の大きさが uploads の size_bytes と違えば 409(マルチパートでは 410)。"
-    "確かめている間に PUT し直されたときも 409(complete をやり直す)。"
+    "確かめている間に PUT し直されたときと、同時の complete と競合したときも 409"
+    "(complete をやり直す)。"
     "マルチパートなら、本文の parts に全パートの番号と ETag を入れる(完了させてから確かめる)。"
     "完了できない(ETag が合わない、アップロードが取りやめられた・期限で消えた)なら 410 で、"
     "uploads からやり直す。"
@@ -325,7 +334,7 @@ def create_upload_part_urls(
         TimelineEvent,
         errors={
             404: "ルームか、アップロード(media_id)がない",
-            409: "本体かサムネイルがまだ置かれていない、または大きさが違う",
+            409: "本体かサムネイルが置かれていない、大きさが違う、同時の complete と競合した",
             410: "マルチパートを完了できない。uploads からやり直す",
             422: "マルチパートなのに parts がそろっていない",
         },
@@ -366,7 +375,8 @@ def complete_media_upload(
         if single is None:
             raise _conflict("本体がまだ置かれていない")
         original = single.info
-    # 署名付き URL では大きさを縛れないので、申告どおりかを確かめる(上限は uploads で確かめた)
+    # 署名の Content-Length で縛っているが、前に出した URL で置かれたものもあるので、申告どおりかを
+    # ここでも確かめる(上限は uploads で確かめた)
     if original.size_bytes != pending.size_bytes or original.size_bytes > MAX_MEDIA_BYTES:
         if multipart:
             # 完了した後なので、同じアップロードには置き直せない。消して uploads からやり直させる
@@ -389,6 +399,10 @@ def complete_media_upload(
     except timeline_store.AlreadyCompletedError as e:
         # 同時に呼ばれた別の complete が先に保存した。push 通知はそちらが送る
         return _announce_again(room, _completed_event(room_id, e.event_id))
+    except timeline_store.UploadGoneError as e:
+        raise NotFoundError("アップロードがない") from e
+    except timeline_store.CompleteConflictError as e:
+        raise _conflict("同時に呼ばれた complete と競合した。complete をやり直す") from e
     media_broadcast.announce(room, event, profile, first=True)
     return event
 
@@ -434,7 +448,8 @@ def _announce_again(room: Room, event: TimelineEvent) -> TimelineEvent:
 
 
 def _completed_event(room_id: str, event_id: str) -> TimelineEvent:
-    event = timeline_store.get_event(room_id, event_id)
+    # 仮の行と同じトランザクションで書いた行なので、強い整合なら必ず読める
+    event = timeline_store.get_event(room_id, event_id, consistent=True)
     if event is None:
         # 仮の行には completed_event_id があるのに、履歴がない(手で消したなど)
         raise NotFoundError("保存した履歴がない")

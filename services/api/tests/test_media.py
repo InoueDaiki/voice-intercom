@@ -1,13 +1,16 @@
+import re
 from collections.abc import Iterator
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import boto3
 import pytest
+from botocore.exceptions import ClientError
 from timeline_env import (
     AGENT_SCOPE,
     MEDIA_BASE_URL,
     MEDIA_BUCKET,
+    TIMELINE_TABLE,
     FakeLiveKit,
     Token,
     call,
@@ -16,6 +19,8 @@ from timeline_env import (
 )
 
 from voice_intercom_api import media_store, store, timeline_store
+
+ROOM_ID_PATTERN = r"[A-Za-z0-9_-]{1,64}"
 
 
 @pytest.fixture(autouse=True)
@@ -82,22 +87,122 @@ def test_member_creates_upload(member: str) -> None:
     assert body["expires_at"].endswith("Z")
 
     path, query = signed(body["upload_url"])
-    assert path.endswith(f"rooms/room-a/{media_id}/upload-original")
+    assert path.endswith(f"rooms/.staging/room-a/{media_id}/original")
     assert query["X-Amz-Algorithm"] == ["AWS4-HMAC-SHA256"]
     # Content-Type を署名に含める(違う Content-Type の PUT は S3 が 403 にする)
     assert "content-type" in query["X-Amz-SignedHeaders"][0].split(";")
     assert query["X-Amz-Expires"] == ["3600"]
+    # 大きさも署名に含める(違う大きさの PUT は S3 が 403 にする)
+    assert "content-length" in query["X-Amz-SignedHeaders"][0].split(";")
 
     path, query = signed(body["thumbnail_upload_url"])
-    assert path.endswith(f"rooms/room-a/{media_id}/upload-thumbnail")
+    assert path.endswith(f"rooms/.staging/room-a/{media_id}/thumbnail")
     assert "content-type" in query["X-Amz-SignedHeaders"][0].split(";")
+    # サムネイルは uploads の時点で大きさが分からない(complete で確かめる)
+    assert "content-length" not in query["X-Amz-SignedHeaders"][0].split(";")
+
+
+def test_signature_depends_on_size() -> None:
+    key = "rooms/.staging/room-a/x/original"
+
+    small = signed(media_store.presign_put(key, "image/png", content_length=3))[1]
+    large = signed(media_store.presign_put(key, "image/png", content_length=4))[1]
+
+    assert small["X-Amz-Signature"] != large["X-Amz-Signature"]
+
+
+def test_staging_key_is_apart_from_rooms() -> None:
+    # ライフサイクルルールは前置きでしか絞れない。「.」はルームの ID に使えないので、
+    # ルームの本体が rooms/.staging/ の下に入ることはない
+    assert media_store.staging_media_key("r", "m").startswith(media_store.STAGING_PREFIX)
+    assert media_store.staging_thumbnail_key("r", "m").startswith(media_store.STAGING_PREFIX)
+    assert not re.fullmatch(ROOM_ID_PATTERN, ".staging")
+
+
+def transaction_canceled() -> ClientError:
+    return ClientError(
+        {
+            "Error": {"Code": "TransactionCanceledException", "Message": "canceled"},
+            "CancellationReasons": [{"Code": "None"}, {"Code": "TransactionConflict"}],
+        },
+        "TransactWriteItems",
+    )
+
+
+def cancel_transactions(monkeypatch: pytest.MonkeyPatch, before_raise: Any = None) -> None:
+    client = timeline_store._timeline().meta.client  # pyright: ignore[reportPrivateUsage]
+
+    def fail(**_kwargs: Any) -> None:
+        if before_raise is not None:
+            before_raise()
+        raise transaction_canceled()
+
+    monkeypatch.setattr(client, "transact_write_items", fail)
+    monkeypatch.setattr(timeline_store, "_COMPLETE_RECHECK_DELAYS_S", (0.0, 0.0))
+
+
+def test_conflicting_complete_asks_to_retry(member: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    _, upload = create_upload(member)
+    media_id = upload["media_id"]
+    put_object(f"rooms/.staging/room-a/{media_id}/original", "image/png")
+    cancel_transactions(monkeypatch)
+
+    assert complete(member, media_id)[0] == 409
+
+
+def test_complete_returns_event_of_concurrent_complete(member: str) -> None:
+    _, upload = create_upload(member)
+    media_id = upload["media_id"]
+    put_object(f"rooms/.staging/room-a/{media_id}/original", "image/png")
+    pending = timeline_store.get_pending_upload("room-a", media_id)
+    assert pending is not None
+    first = timeline_store.complete_upload(
+        pending, sender_id="member-1", occurred_at="2026-01-01T00:00:00.000Z"
+    )
+
+    # 2回目は仮の行の条件で取り消され、強い整合の読み直しで先の履歴を返す
+    with pytest.raises(timeline_store.AlreadyCompletedError) as e:
+        timeline_store.complete_upload(
+            pending, sender_id="member-1", occurred_at="2026-01-01T00:00:01.000Z"
+        )
+    assert e.value.event_id == first.event_id
+
+
+def test_complete_after_pending_row_is_gone(member: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    _, upload = create_upload(member)
+    media_id = upload["media_id"]
+    put_object(f"rooms/.staging/room-a/{media_id}/original", "image/png")
+    table = boto3.resource("dynamodb").Table(TIMELINE_TABLE)  # pyright: ignore[reportAttributeAccessIssue]
+
+    def expire() -> None:
+        table.delete_item(Key={"room_id": "media-upload#room-a", "event_id": media_id})
+
+    cancel_transactions(monkeypatch, expire)
+
+    assert complete(member, media_id)[0] == 404
+
+
+def test_pending_upload_is_read_consistently(member: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    _, upload = create_upload(member)
+    table = timeline_store._timeline()  # pyright: ignore[reportPrivateUsage]
+    real = table.get_item
+    seen: list[Any] = []
+
+    def get_item(**kwargs: Any) -> Any:
+        seen.append(kwargs.get("ConsistentRead"))
+        return real(**kwargs)
+
+    monkeypatch.setattr(table, "get_item", get_item)
+
+    assert timeline_store.get_pending_upload("room-a", upload["media_id"]) is not None
+    assert seen == [True]
 
 
 def test_signature_depends_on_content_type() -> None:
     # 同じキーでも Content-Type が違えば署名が変わる(= Content-Type が署名に入っている)
 
-    png = signed(media_store.presign_put("rooms/room-a/x/upload-original", "image/png"))[1]
-    jpeg = signed(media_store.presign_put("rooms/room-a/x/upload-original", "image/jpeg"))[1]
+    png = signed(media_store.presign_put("rooms/.staging/room-a/x/original", "image/png"))[1]
+    jpeg = signed(media_store.presign_put("rooms/.staging/room-a/x/original", "image/jpeg"))[1]
 
     assert png["X-Amz-Signature"] != jpeg["X-Amz-Signature"]
 
@@ -182,8 +287,8 @@ def test_complete(member: str, other_member: str) -> None:
     store.put_user("member-1", display_name="Taro", language="ja")
     _, upload = create_upload(member, has_thumbnail=True, size_bytes=4)
     media_id = upload["media_id"]
-    put_object(f"rooms/room-a/{media_id}/upload-original", "image/png", b"abcd")
-    put_object(f"rooms/room-a/{media_id}/upload-thumbnail", "image/jpeg")
+    put_object(f"rooms/.staging/room-a/{media_id}/original", "image/png", b"abcd")
+    put_object(f"rooms/.staging/room-a/{media_id}/thumbnail", "image/jpeg")
 
     status, event = complete(member, media_id)
 
@@ -221,7 +326,7 @@ def test_complete(member: str, other_member: str) -> None:
 def test_complete_without_thumbnail(member: str) -> None:
     _, upload = create_upload(member, content_type="video/mp4")
     media_id = upload["media_id"]
-    put_object(f"rooms/room-a/{media_id}/upload-original", "video/mp4")
+    put_object(f"rooms/.staging/room-a/{media_id}/original", "video/mp4")
 
     status, event = complete(member, media_id)
 
@@ -236,7 +341,7 @@ def test_complete_keeps_dimensions(member: str, other_member: str) -> None:
         member, content_type="video/mp4", width=720, height=1280, duration_ms=15_500
     )
     media_id = upload["media_id"]
-    put_object(f"rooms/room-a/{media_id}/upload-original", "video/mp4")
+    put_object(f"rooms/.staging/room-a/{media_id}/original", "video/mp4")
 
     status, event = complete(member, media_id)
 
@@ -251,7 +356,7 @@ def test_complete_ignores_text(member: str) -> None:
     # 前のクライアントが送る text は受け取っても無視する(422 にしない)
     _, upload = create_upload(member)
     media_id = upload["media_id"]
-    put_object(f"rooms/room-a/{media_id}/upload-original", "image/png")
+    put_object(f"rooms/.staging/room-a/{media_id}/original", "image/png")
 
     status, event = complete(member, media_id, {"text": "現場の写真"})
 
@@ -292,7 +397,7 @@ def test_old_media_row_hides_text_and_has_no_dimensions(member: str) -> None:
 def test_complete_is_idempotent(member: str) -> None:
     _, upload = create_upload(member)
     media_id = upload["media_id"]
-    put_object(f"rooms/room-a/{media_id}/upload-original", "image/png")
+    put_object(f"rooms/.staging/room-a/{media_id}/original", "image/png")
 
     first = complete(member, media_id)
     second = complete(member, media_id)
@@ -306,7 +411,7 @@ def test_complete_is_idempotent(member: str) -> None:
 def test_concurrent_complete_returns_first_event(member: str) -> None:
     _, upload = create_upload(member)
     media_id = upload["media_id"]
-    put_object(f"rooms/room-a/{media_id}/upload-original", "image/png")
+    put_object(f"rooms/.staging/room-a/{media_id}/original", "image/png")
     pending = timeline_store.get_pending_upload("room-a", media_id)
     assert pending is not None
 
@@ -336,11 +441,11 @@ def test_complete_before_upload(member: str) -> None:
 def test_complete_without_uploaded_thumbnail(member: str) -> None:
     _, upload = create_upload(member, has_thumbnail=True)
     media_id = upload["media_id"]
-    put_object(f"rooms/room-a/{media_id}/upload-original", "image/png")
+    put_object(f"rooms/.staging/room-a/{media_id}/original", "image/png")
 
     assert complete(member, media_id)[0] == 409
 
-    put_object(f"rooms/room-a/{media_id}/upload-thumbnail", "image/jpeg")
+    put_object(f"rooms/.staging/room-a/{media_id}/thumbnail", "image/jpeg")
 
     assert complete(member, media_id)[0] == 200
 
@@ -360,16 +465,16 @@ def read(key: str) -> bytes | None:
 def test_complete_moves_staged_upload(member: str) -> None:
     _, upload = create_upload(member, has_thumbnail=True, size_bytes=4)
     media_id = upload["media_id"]
-    put_object(f"rooms/room-a/{media_id}/upload-original", "image/png", b"abcd")
-    put_object(f"rooms/room-a/{media_id}/upload-thumbnail", "image/jpeg", b"jpg")
+    put_object(f"rooms/.staging/room-a/{media_id}/original", "image/png", b"abcd")
+    put_object(f"rooms/.staging/room-a/{media_id}/thumbnail", "image/jpeg", b"jpg")
 
     assert complete(member, media_id)[0] == 200
 
     assert read(f"rooms/room-a/{media_id}/original") == b"abcd"
     assert read(f"rooms/room-a/{media_id}/thumbnail") == b"jpg"
     # 仮置きは消す
-    assert read(f"rooms/room-a/{media_id}/upload-original") is None
-    assert read(f"rooms/room-a/{media_id}/upload-thumbnail") is None
+    assert read(f"rooms/.staging/room-a/{media_id}/original") is None
+    assert read(f"rooms/.staging/room-a/{media_id}/thumbnail") is None
     served = media_store.head(f"rooms/room-a/{media_id}/original")
     assert served is not None and served.content_type == "image/png"
 
@@ -379,12 +484,12 @@ def test_put_again_after_complete_does_not_replace(member: str) -> None:
     # 配信するものは変わらない
     _, upload = create_upload(member, has_thumbnail=True)
     media_id = upload["media_id"]
-    put_object(f"rooms/room-a/{media_id}/upload-original", "image/png")
-    put_object(f"rooms/room-a/{media_id}/upload-thumbnail", "image/jpeg")
+    put_object(f"rooms/.staging/room-a/{media_id}/original", "image/png")
+    put_object(f"rooms/.staging/room-a/{media_id}/thumbnail", "image/jpeg")
     _, event = complete(member, media_id)
 
-    put_object(f"rooms/room-a/{media_id}/upload-original", "image/png", b"x" * 100)
-    put_object(f"rooms/room-a/{media_id}/upload-thumbnail", "image/jpeg", b"y" * 100)
+    put_object(f"rooms/.staging/room-a/{media_id}/original", "image/png", b"x" * 100)
+    put_object(f"rooms/.staging/room-a/{media_id}/thumbnail", "image/jpeg", b"y" * 100)
 
     # 2回目の complete は、最初の履歴を返すだけで、置き直したものを移さない
     assert complete(member, media_id) == (200, event)
@@ -395,13 +500,13 @@ def test_put_again_after_complete_does_not_replace(member: str) -> None:
 def test_complete_with_wrong_size_keeps_staged(member: str) -> None:
     _, upload = create_upload(member, size_bytes=4)
     media_id = upload["media_id"]
-    put_object(f"rooms/room-a/{media_id}/upload-original", "image/png", b"abcde")
+    put_object(f"rooms/.staging/room-a/{media_id}/original", "image/png", b"abcde")
 
     assert complete(member, media_id)[0] == 409
     # 配信するキーには移さない。正しい大きさで置き直せば続けられる
     assert read(f"rooms/room-a/{media_id}/original") is None
 
-    put_object(f"rooms/room-a/{media_id}/upload-original", "image/png", b"abcd")
+    put_object(f"rooms/.staging/room-a/{media_id}/original", "image/png", b"abcd")
 
     assert complete(member, media_id)[0] == 200
 
@@ -423,7 +528,7 @@ def test_complete_when_staged_is_replaced(member: str, monkeypatch: pytest.Monke
     # HeadObject で確かめた後に置き直された(CopySourceIfMatch が合わない)なら 409
     _, upload = create_upload(member)
     media_id = upload["media_id"]
-    put_object(f"rooms/room-a/{media_id}/upload-original", "image/png")
+    put_object(f"rooms/.staging/room-a/{media_id}/original", "image/png")
     etags: list[str] = []
 
     def changed(source: str, dest: str, *, etag: str) -> bool:
@@ -434,7 +539,7 @@ def test_complete_when_staged_is_replaced(member: str, monkeypatch: pytest.Monke
         m.setattr(media_store, "copy", changed)
         assert complete(member, media_id)[0] == 409
     # HeadObject の ETag を渡している
-    staged = media_store.head(f"rooms/room-a/{media_id}/upload-original")
+    staged = media_store.head(f"rooms/.staging/room-a/{media_id}/original")
     assert staged is not None and etags == [staged.etag]
     assert timeline_store.list_events("room-a", limit=10, before=None) == ([], None)
 
@@ -445,14 +550,14 @@ def test_complete_when_staged_is_replaced(member: str, monkeypatch: pytest.Monke
 def test_copy_of_missing_source() -> None:
     # 同時に呼ばれた complete がコピーして仮置きを消した後
     assert not media_store.copy(
-        "rooms/room-a/x/upload-original", "rooms/room-a/x/original", etag=""
+        "rooms/.staging/room-a/x/original", "rooms/room-a/x/original", etag=""
     )
 
 
 def test_only_uploader_completes(member: str, other_member: str, admin: str) -> None:
     _, upload = create_upload(member)
     media_id = upload["media_id"]
-    put_object(f"rooms/room-a/{media_id}/upload-original", "image/png")
+    put_object(f"rooms/.staging/room-a/{media_id}/original", "image/png")
 
     # 同じルームのメンバーでも、管理者でも、本人でなければ 403
     assert complete(other_member, media_id)[0] == 403
@@ -521,7 +626,7 @@ def test_complete_file(member: str, other_member: str) -> None:
         member, content_type="application/zip", size_bytes=3, file_name="logs.zip"
     )
     media_id = upload["media_id"]
-    key = f"rooms/room-a/{media_id}/upload-original"
+    key = f"rooms/.staging/room-a/{media_id}/original"
     boto3.client("s3").put_object(
         Bucket=MEDIA_BUCKET,
         Key=key,
