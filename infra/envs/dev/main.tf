@@ -69,7 +69,6 @@ module "auth" {
   domain_prefix       = local.name_prefix
   deletion_protection = false
 
-  # モバイルアプリ(React Native)の URL スキームは未定。決まったら合わせる
   mobile_callback_urls = ["voiceintercom://callback"]
   mobile_logout_urls   = ["voiceintercom://signout"]
   web_callback_urls    = [for o in local.web_origins : "${o}/callback"]

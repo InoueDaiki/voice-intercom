@@ -12,6 +12,14 @@ resource "aws_cognito_user_pool" "this" {
   username_attributes      = ["email"]
   auto_verified_attributes = ["email"]
 
+  # 認証アプリ(TOTP)の MFA を、登録した人に使う。グループ別の必須化は標準の機能ではできないので OPTIONAL にし、
+  # 運営者と管理者は登録する運用にする(README の「Cognito のログイン画面」)
+  mfa_configuration = "OPTIONAL"
+
+  software_token_mfa_configuration {
+    enabled = true
+  }
+
   username_configuration {
     case_sensitive = false
   }

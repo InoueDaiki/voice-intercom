@@ -225,6 +225,9 @@ Cognito の Agent のクライアントシークレットは、Cognito のクラ
 - 見た目はデザイントークンから作る。`packages/design-tokens` の `mise run gen:tokens` が `generated/cognito-branding.json` を作り、`infra/modules/cognito` がクライアント(`mobile`・`web`・`admin`)ごとに当てる。色を変えたら、gen と apply をする。反映まで数分かかる。
 - ログイン画面を使うクライアントを足すときは、`aws_cognito_managed_login_branding` にも足す(Terraform で作ったクライアントには見た目が付かず、ログイン画面が出ない)。
 - 言語は `/oauth2/authorize` の `lang` で決まる(無いと英語)。Web 版はブラウザの言語から選び、管理コンソールは `ja`。
+- MFA は任意(`mfa_configuration = "OPTIONAL"`)で、認証アプリ(TOTP)だけを使う。グループ別の必須化は標準の機能ではできない。運営者(`operator`)と管理者(`admin`)は登録する運用にする。登録した人には、マネージドログインがログインのときにコードを尋ねる。
+  - **登録の入口がまだ無い。** 任意のとき、マネージドログインは登録を案内しない(案内するのは必須のときだけ)。登録には、本人のアクセストークンで `AssociateSoftwareToken`・`VerifySoftwareToken`・`SetUserMFAPreference` を呼ぶ画面が要る。今のクライアントのトークンにはこれらに要るスコープ(`aws.cognito.signin.user.admin`)が無いので、管理コンソールに登録の画面を作るまでは、運営者と管理者も登録できない。
+  - 端末を失くした人は、`aws cognito-idp admin-set-user-mfa-preference --user-pool-id <id> --username <メール> --software-token-mfa-settings Enabled=false` で外し、登録し直してもらう。
 
 ### LiveKit Agent(ECS Fargate)
 
@@ -621,6 +624,7 @@ AWS に接続せずに API を動かせるように、devContainer と一緒に�
 2. `.env` に `OIDC_ISSUER`、`OIDC_JWKS_URL`、`OIDC_CLIENT_IDS`、`LIVEKIT_API_KEY`、`LIVEKIT_API_SECRET`、`LIVEKIT_CLIENT_URL` があるか確かめる(`.env.example` を参照)。テーブル名と DynamoDB・S3 の接続先は、タスクが `scripts/with-local-aws.sh` で渡す。
 3. `mise run api` で起動する。`services/api/src` の `.py` を変えると、自動で起動し直す(止めるときは `--no-reload` を付ける: `mise run api -- --no-reload`)。
 
+- compose が LAN に公開するのは、実機が使うポートだけ(API の 3000、模擬 OIDC の 8090、LiveKit の 7880・7881・7882/udp、S3 の 8333、TTS の PoC の 5176)。管理コンソール(5173)、Web 版(5174)、見本帳(5175)、DynamoDB(8000)は `127.0.0.1` に絞ってあるので、`http://localhost:<ポート>` で開く。信頼できない LAN では、模擬 OIDC や開発用の鍵が見えることに気をつける。
 - 管理コンソールからは Vite の中継(`/api`)で、Agent からは `http://localhost:3000` で、実機やエミュレーターからは `http://${DEV_HOST}:3000` で届く(compose が 3000 番を LAN に公開するので、サーバーはコンテナの中の `0.0.0.0` で待ち受ける)。
 - `/health` は設定がなくても応答する。設定が足りないときは、起動時に警告を出し、ほかのルートは 500 になる。
 
