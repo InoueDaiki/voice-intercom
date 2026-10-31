@@ -6,6 +6,10 @@ export interface CaptionText {
   isFinal: boolean;
 }
 
+// 確定していない字幕の続きが、これだけ届かなければ、もう流れていないとみなす(ミリ秒)。
+// Agent が落ちるなどで確定が届かなくても、受信中のままにしない
+export const CAPTION_STALE_MS = 15_000;
+
 // 字幕の区切り(segment_id)1つ分。原文と各言語の訳をまとめて持つ。
 export class CaptionSegment {
   readonly segmentId: string;
@@ -17,6 +21,8 @@ export class CaptionSegment {
   readonly messageId: string;
   // 最初の字幕が届いた時刻。表示の並びに使う
   readonly receivedAt: Date;
+  // 最後に字幕が届いた時刻
+  updatedAt: Date;
 
   // 原文の言語。分からなければ空
   originalLanguage = "";
@@ -41,6 +47,7 @@ export class CaptionSegment {
     this.segmentIndex = init.segmentIndex;
     this.messageId = init.messageId;
     this.receivedAt = init.receivedAt;
+    this.updatedAt = init.receivedAt;
   }
 
   get isText(): boolean {
@@ -51,6 +58,11 @@ export class CaptionSegment {
     return (
       !this.deleted && !this.original?.text && [...this.translations.values()].every((t) => t.text === "")
     );
+  }
+
+  // 続きが届いている(途中で途切れていない)か
+  isFresh(now: Date = new Date()): boolean {
+    return now.getTime() - this.updatedAt.getTime() < CAPTION_STALE_MS;
   }
 
   markDeleted(): void {
@@ -69,6 +81,7 @@ export class CaptionBoard {
   // 持っておく区切りの上限。古いものから捨てる(過去の発言は履歴の画面で見る)
   readonly maxSegments: number;
   private readonly now: () => Date;
+  private readonly onEvicted: ((segment: CaptionSegment) => void) | undefined;
   // Map は入れた順を保つ
   private readonly segmentMap = new Map<string, CaptionSegment>();
 
@@ -76,9 +89,11 @@ export class CaptionBoard {
   // 消したものを戻さないために持つ
   private readonly deletedKeys = new Set<string>();
 
-  constructor(options: { maxSegments?: number; now?: () => Date } = {}) {
+  // onEvicted は、上限を超えて区切りを捨てたときに呼ぶ
+  constructor(options: { maxSegments?: number; now?: () => Date; onEvicted?: (segment: CaptionSegment) => void } = {}) {
     this.maxSegments = options.maxSegments ?? 200;
     this.now = options.now ?? (() => new Date());
+    this.onEvicted = options.onEvicted;
   }
 
   // 届いた順の区切り。空になったもの(確定が空)は除く
@@ -147,12 +162,14 @@ export class CaptionBoard {
     } else {
       segment.original = next;
     }
+    segment.updatedAt = this.now();
     while (this.segmentMap.size > this.maxSegments) {
-      const first = this.segmentMap.keys().next().value;
+      const first = this.segmentMap.values().next().value;
       if (first === undefined) {
         break;
       }
-      this.segmentMap.delete(first);
+      this.segmentMap.delete(first.segmentId);
+      this.onEvicted?.(first);
     }
   }
 }

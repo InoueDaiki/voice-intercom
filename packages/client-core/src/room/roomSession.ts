@@ -17,7 +17,7 @@ import {
 
 import type { TimelineEvent, TimelinePage } from "../api.ts";
 import { Observable } from "../observable.ts";
-import { CaptionBoard, type CaptionSegment } from "./captionBoard.ts";
+import { CAPTION_STALE_MS, CaptionBoard, type CaptionSegment } from "./captionBoard.ts";
 import { DeletionReceiver } from "./deletionReceiver.ts";
 import { MediaReceiver } from "./mediaReceiver.ts";
 import { RoomTimeline, type TimelineEntry } from "./roomTimeline.ts";
@@ -48,6 +48,9 @@ const noRejoinReasons: ReadonlySet<DisconnectReason> = new Set([
   DisconnectReason.PARTICIPANT_REMOVED,
   DisconnectReason.ROOM_DELETED,
 ]);
+
+// 捨てた字幕の分の履歴を読み直す、最短の間隔(ミリ秒)。保存されなかった字幕で読み続けないように
+const CAPTION_GAP_SYNC_INTERVAL_MS = 30_000;
 
 // 端末に依るところ。各アプリが差し込む(無ければ何もしない)
 export interface RoomPlatform {
@@ -98,9 +101,10 @@ export type DataSender = Pick<RemoteParticipant, "kind" | "identity">;
 export class RoomSession extends Observable {
   readonly myIdentity: string;
   readonly myLanguage: string;
-  readonly roomName: string;
+  // 入室中に改名されたら RoomHub が変える。次にバックグラウンドの音声を始めるときの通知から使う
+  roomName: string;
   readonly room: Room;
-  readonly captions = new CaptionBoard();
+  readonly captions = new CaptionBoard({ onEvicted: (s) => this.onCaptionEvicted(s) });
   // 履歴の行。字幕と合わせて1本のタイムラインにする(entries)
   readonly timeline: RoomTimeline;
   readonly textSender: TextSender;
@@ -146,6 +150,13 @@ export class RoomSession extends Observable {
   private disposed = false;
   // 一度でも入室できたか
   private joined = false;
+  // 最初の入室に失敗したまま、まだ入れていないか
+  private joinFailed = false;
+  // 捨てた字幕の分の履歴を読み直す予定と、前回読み直した時刻
+  private captionGapTimer: unknown;
+  private lastCaptionGapSyncAt = 0;
+  // 確定しないまま途切れた字幕を、受信中でなくすための描き直しの予定
+  private captionStaleTimer: unknown;
   // Room のイベントを聞き始めたか(入り直しでは同じ Room を使い、聞き直さない)
   private listening = false;
   // ミュートの操作を順に1つずつ行うためのつなぎ
@@ -210,10 +221,10 @@ export class RoomSession extends Observable {
     }
   }
 
-  // 切断された後に入り直せるか。一度入室できていて、追い出されたのではないとき
+  // 入り直せるか。切断された、または最初の入室に失敗した後で、追い出されたのではないとき
   get canRejoin(): boolean {
     return (
-      this.joined &&
+      (this.joined || this.joinFailed) &&
       !this.connected &&
       !this.joining &&
       !this.disposed &&
@@ -221,7 +232,7 @@ export class RoomSession extends Observable {
     );
   }
 
-  // 切断された後に、同じ Room で入り直す(新しいトークンで)。マイクを作り直してミュートのまま publish し、
+  // 切断された後・入室に失敗した後に、同じ Room で入り直す(新しいトークンで)。マイクを作り直してミュートのまま publish し、
   // 履歴を読み直して切れていた間の行を埋める(つなぎ直しと同じ)。PTT は押していない状態で入る
   async rejoin(url: string, token: string): Promise<void> {
     if (!this.canRejoin) {
@@ -301,6 +312,7 @@ export class RoomSession extends Observable {
       }
       this.connected = true;
       this.joined = true;
+      this.joinFailed = false;
       this.canPlaybackAudio = room.canPlaybackAudio;
       this.changed();
       // 入室を待つ間に音声を切り替えていたら、ここで揃える
@@ -313,6 +325,7 @@ export class RoomSession extends Observable {
       if (this.disposed) {
         return;
       }
+      this.joinFailed = true;
       this.error = `入室できなかった: ${e instanceof Error ? e.message : String(e)}`;
       this.changed();
       throw e;
@@ -463,6 +476,32 @@ export class RoomSession extends Observable {
     return sender?.kind === ParticipantKind.AGENT;
   }
 
+  // 確定が届かないまま途切れたときも、受信中の表示が消えるよう描き直す
+  private scheduleCaptionStale(): void {
+    clearTimeout(this.captionStaleTimer);
+    this.captionStaleTimer = setTimeout(() => this.changed(), CAPTION_STALE_MS);
+  }
+
+  // 字幕を上限で捨てた。履歴の行がまだ無ければ、読み足さないと穴が空く(行は入室とつなぎ直しでしか読まない)。
+  // 履歴に残らない字幕もあるので、読み直しの間隔を空ける
+  private onCaptionEvicted(segment: CaptionSegment): void {
+    if (
+      !this.hasHistory ||
+      this.disposed ||
+      segment.isEmpty ||
+      this.timeline.hasRowFor(segment.segmentId) ||
+      this.captionGapTimer !== undefined
+    ) {
+      return;
+    }
+    const wait = Math.max(0, this.lastCaptionGapSyncAt + CAPTION_GAP_SYNC_INTERVAL_MS - Date.now());
+    this.captionGapTimer = setTimeout(() => {
+      this.captionGapTimer = undefined;
+      this.lastCaptionGapSyncAt = Date.now();
+      void this.syncHistory();
+    }, wait);
+  }
+
   // 字幕は Agent だけが送る。参加者は topic を偽れる(canPublishData は topic を限れない)ので、
   // 送信元が Agent の参加者のものだけを読む。受け手が Agent を知る前(Agent が入ってから約3秒)に
   // 届いたものは送信元が無く、これも捨てる(設計メモの「字幕の送信元」)
@@ -478,6 +517,9 @@ export class RoomSession extends Observable {
       return;
     }
     this.captions.apply(caption);
+    if (!caption.isFinal) {
+      this.scheduleCaptionStale();
+    }
     if (caption.messageId !== "" && caption.speakerIdentity === this.myIdentity) {
       this.textSender.acknowledge(caption.messageId);
     }
@@ -518,6 +560,11 @@ export class RoomSession extends Observable {
   // 古いほうの履歴を1ページ読み足す(上へ戻ったとき)
   loadOlder(): Promise<void> {
     return this.hasHistory ? this.timeline.loadOlder() : Promise.resolve();
+  }
+
+  // 失敗した読み足しをやり直す(画面の操作から呼ぶ)
+  retryOlder(): Promise<void> {
+    return this.hasHistory ? this.timeline.retryOlder() : Promise.resolve();
   }
 
   // 最新の履歴を読み、行と墓石を反映する(入室とつなぎ直し)
@@ -665,6 +712,17 @@ export class RoomSession extends Observable {
     this.textSender.dispose();
     this.mediaReceiver?.dispose();
     this.deletionReceiver?.dispose();
+    clearTimeout(this.captionGapTimer);
+    clearTimeout(this.captionStaleTimer);
+    // 下で聞くのをやめるので、切断の TrackUnsubscribed は届かない。鳴らしている音声はここで外す
+    // (Web 版なら <audio> が body に残らないように)
+    for (const p of this.room.remoteParticipants.values()) {
+      for (const pub of p.audioTrackPublications.values()) {
+        if (pub.track) {
+          this.platform.detachAudio?.(pub.track);
+        }
+      }
+    }
     this.room.removeAllListeners();
     void this.room.disconnect();
   }

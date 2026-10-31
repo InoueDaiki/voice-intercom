@@ -1,7 +1,7 @@
 import { DisconnectReason, RoomEvent } from "livekit-client";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import { fakeMic, fakeRoom } from "../testing/fakeRoom.ts";
+import { deferred, fakeMic, fakeRoom } from "../testing/fakeRoom.ts";
 import { flush } from "../testing/fixtures.ts";
 import { fakeAwake, fakePresence } from "../testing/fakePresence.ts";
 import { type PresenceChange, RoomKeeper, type ScreenAwake } from "./roomKeeper.ts";
@@ -213,6 +213,60 @@ describe("戻ったら入り直す", () => {
     expect(getToken).toHaveBeenCalledTimes(3);
     expect(keeper.joinError).toBeUndefined();
     expect(session.connected).toBe(true);
+  });
+
+  test("最初の入室でトークンを取れなくても、入り直せて、戻ったときにも試す", async () => {
+    let fail = true;
+    const { session, keeper, presence, getToken } = setup({
+      getToken: async () => {
+        if (fail) {
+          throw new Error("ネットワーク");
+        }
+        return { url: "wss://example", token: "t" };
+      },
+    });
+    await expect(keeper.start()).rejects.toThrow("ネットワーク");
+    expect(keeper.joinError).toBeInstanceOf(Error);
+    expect(keeper.canRejoin).toBe(true);
+
+    await keeper.rejoin();
+    expect(getToken).toHaveBeenCalledTimes(2);
+    expect(keeper.joinError).toBeInstanceOf(Error);
+
+    fail = false;
+    presence.change("hidden");
+    presence.change("visible");
+    await flush();
+    expect(session.connected).toBe(true);
+    expect(keeper.joinError).toBeUndefined();
+    expect(keeper.canRejoin).toBe(false);
+  });
+
+  test("最初の入室に失敗しても、入り直せる", async () => {
+    const { room, session, keeper } = setup();
+    room.connect.mockRejectedValueOnce(new Error("拒否"));
+    await expect(keeper.start()).rejects.toThrow("拒否");
+    expect(session.error).toContain("入室できなかった");
+    expect(session.canRejoin).toBe(true);
+    expect(keeper.canRejoin).toBe(true);
+
+    await keeper.rejoin();
+    expect(session.connected).toBe(true);
+    expect(session.error).toBeUndefined();
+    expect(keeper.joinError).toBeUndefined();
+  });
+
+  test("入室の途中は、入り直せるとはしない", async () => {
+    const pending = deferred<{ url: string; token: string }>();
+    const { keeper, getToken, presence } = setup({ getToken: () => pending.promise });
+    const started = keeper.start();
+    expect(keeper.canRejoin).toBe(false);
+    presence.change("hidden");
+    presence.change("visible");
+    await flush();
+    expect(getToken).toHaveBeenCalledTimes(1);
+    pending.resolve({ url: "wss://example", token: "t" });
+    await started;
   });
 
   test("戻ったとき、音が止められていれば「音を出す」を出す", async () => {

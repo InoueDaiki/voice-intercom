@@ -20,6 +20,7 @@ import {
   tombstoneOf,
 } from "../testing/fixtures.ts";
 import { type DataSender, NotSavedYetError, RoomSession, type RoomSessionOptions } from "./roomSession.ts";
+import { CAPTION_STALE_MS } from "./captionBoard.ts";
 import { captionTopic, deletionTopic, mediaTopic, textStatusTopic } from "./topics.ts";
 
 // 送信元の参加者(kind と identity だけを持つ)
@@ -57,6 +58,69 @@ afterEach(() => {
 });
 
 describe("字幕とテキスト入力", () => {
+  test("確定しないまま途切れた字幕は、時間がたつと描き直す", () => {
+    vi.useFakeTimers();
+    try {
+      const session = newSession();
+      session.handleData(
+        toBinary(
+          CaptionSchema,
+          create(CaptionSchema, { segmentId: "s1", speakerIdentity: "bob", language: "en", text: "hel" }),
+        ),
+        agent,
+        captionTopic,
+      );
+      const notified = vi.fn();
+      session.subscribe(notified);
+
+      vi.advanceTimersByTime(CAPTION_STALE_MS);
+
+      expect(notified).toHaveBeenCalledTimes(1);
+      expect(session.captions.segments[0]!.isFresh()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("字幕を上限で捨てたら、履歴を読み直して穴を埋める", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchTimelinePage = vi.fn(async () => ({ items: [], next_before: null }));
+      const session = newSession({ fetchTimelinePage });
+      const total = session.captions.maxSegments + 3;
+      for (let i = 0; i < total; i++) {
+        session.handleData(captionData({ segmentId: `s${i}` }), agent, captionTopic);
+      }
+      // 続けて捨てても、読み直しは1回にまとめる
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchTimelinePage).toHaveBeenCalledTimes(1);
+
+      session.handleData(captionData({ segmentId: "next" }), agent, captionTopic);
+      await vi.advanceTimersByTimeAsync(29_000);
+      expect(fetchTimelinePage).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(fetchTimelinePage).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("履歴に行がある字幕を捨てても、読み直さない", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchTimelinePage = vi.fn(async () => ({ items: [], next_before: null }));
+      const session = newSession({ fetchTimelinePage });
+      session.timeline.add(ownText("2026-10-13T00:00:01.000Z", { sourceId: "s0" }));
+      for (let i = 0; i <= session.captions.maxSegments; i++) {
+        session.handleData(captionData({ segmentId: `s${i}` }), agent, captionTopic);
+      }
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchTimelinePage).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("送信元が Agent の参加者の字幕だけを出す", () => {
     const session = newSession();
     let notified = 0;
@@ -298,6 +362,21 @@ describe("入室とマイク", () => {
     await expect(session.connect("wss://example", "token")).rejects.toThrow("失敗");
     expect(mic.track.stop).toHaveBeenCalled();
     expect(session.error).toContain("入室できなかった");
+  });
+
+  test("dispose で、鳴らしている音声を外す", async () => {
+    const { room, asRoom } = fakeRoom();
+    const speaker = fakeSpeaker("bob");
+    const track = {};
+    Object.assign(speaker.pub, { track });
+    room.remoteParticipants.set("bob", speaker.participant);
+    const detachAudio = vi.fn();
+    const session = newSession({ room: asRoom, audio: false, platform: { detachAudio } });
+
+    await session.connect("wss://example", "token");
+    session.dispose();
+
+    expect(detachAudio).toHaveBeenCalledWith(track);
   });
 
   test("dispose でマイクのトラックを止める", async () => {

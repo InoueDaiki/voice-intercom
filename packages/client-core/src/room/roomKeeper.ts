@@ -63,6 +63,8 @@ export class RoomKeeper extends Observable {
   private visible: boolean;
   private hiddenAt: number | undefined;
   private disposed = false;
+  // 最初の入室でトークンを取れなかった(session.connect まで進んでいない)か
+  private tokenFailed = false;
 
   constructor(options: RoomKeeperOptions) {
     super();
@@ -82,11 +84,7 @@ export class RoomKeeper extends Observable {
       this.session.subscribe(() => this.syncAwake()),
     );
     try {
-      const t = await this.getToken();
-      if (this.disposed) {
-        return;
-      }
-      await this.session.connect(t.url, t.token);
+      await this.enter();
     } catch (e) {
       if (!this.disposed) {
         this.joinError = e;
@@ -96,18 +94,42 @@ export class RoomKeeper extends Observable {
     }
   }
 
-  // 切断されていれば入り直す(戻ったとき。画面の「入り直す」からも呼ぶ)
+  // 最初の入室
+  private async enter(): Promise<void> {
+    let t: JoinToken;
+    try {
+      t = await this.getToken();
+    } catch (e) {
+      this.tokenFailed = true;
+      throw e;
+    }
+    this.tokenFailed = false;
+    if (!this.disposed) {
+      await this.session.connect(t.url, t.token);
+    }
+  }
+
+  // 入り直せるか(切断された、または最初の入室に失敗した)
+  get canRejoin(): boolean {
+    return !this.rejoining && !this.disposed && (this.tokenFailed || this.session.canRejoin);
+  }
+
+  // 切断されていれば・入室に失敗していれば入り直す(戻ったとき。画面の「入り直す」からも呼ぶ)
   async rejoin(): Promise<void> {
-    if (this.rejoining || this.disposed || !this.session.canRejoin) {
+    if (!this.canRejoin) {
       return;
     }
     this.rejoining = true;
     this.joinError = undefined;
     this.changed();
     try {
-      const t = await this.getToken();
-      if (!this.disposed) {
-        await this.session.rejoin(t.url, t.token);
+      if (this.tokenFailed) {
+        await this.enter();
+      } else {
+        const t = await this.getToken();
+        if (!this.disposed) {
+          await this.session.rejoin(t.url, t.token);
+        }
       }
     } catch (e) {
       // 入れなかった理由は session.error にも入る(トークンを取れなかったときは入らない)

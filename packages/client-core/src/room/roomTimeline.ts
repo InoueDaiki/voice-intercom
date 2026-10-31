@@ -57,6 +57,8 @@ export class RoomTimeline {
   private syncing: Promise<void> | undefined;
   // 読み込みの失敗(画面に出す)
   error: string | undefined;
+  // 古いほうの読み足しに失敗して、止まっているか
+  olderFailed = false;
 
   constructor(options: RoomTimelineOptions) {
     this.fetchPage = options.fetchPage;
@@ -119,9 +121,11 @@ export class RoomTimeline {
     return changed;
   }
 
-  // 最新のページを読む(入室とつなぎ直し)。つないでいなかった間の行が1ページに収まらなければ、
-  // 知っている行に届くまで古いほうへ読む(maxGapPages まで。それより古い抜けは、上へ戻ったときにも
-  // 埋まらない。続きの位置は最初に読んだときのまま)
+  // 最新のページを読む(入室とつなぎ直し)。2回目からは、持っている行のうちいちばん古いものに届くまで
+  // 古いほうへ読む。つないでいなかった間に足された行に加えて、その間に消された古い行の墓石も受け取るため
+  // (知っている行で止めると、1ページ目より古い行が消されずに残る)。
+  // 読むのは maxGapPages まで。それより古い抜けや墓石は、読み込み直すまで反映されない
+  // (上へ戻ったときにも埋まらない。続きの位置は最初に読んだときのまま)
   syncLatest(): Promise<void> {
     this.syncing ??= this.runSync().finally(() => {
       this.syncing = undefined;
@@ -131,32 +135,37 @@ export class RoomTimeline {
 
   private async runSync(): Promise<void> {
     const first = !this.loaded;
+    // 読み始める前に持っていた、いちばん古い行(event_id は時刻の順に並ぶ)
+    const oldest = this.sortedRows()[0]?.event_id;
     let before: string | undefined;
     try {
       for (let i = 0; i < this.maxGapPages; i++) {
         const page = await this.fetchPage(before);
-        const known = page.items.some((r) => this.rows.has(r.event_id));
         this.addAll(page.items);
         if (first) {
           // 初めて読んだときは、続きの位置を覚えて終わる(古いほうは上へ戻ったときに読む)
           this.olderCursor = page.next_before;
           break;
         }
-        if (known || page.next_before === null) {
+        const reachedOldest = oldest !== undefined && page.items.some((r) => r.event_id <= oldest);
+        if (reachedOldest || page.next_before === null) {
           break;
         }
         before = page.next_before;
       }
       this.error = undefined;
+      this.olderFailed = false;
     } catch (e) {
       this.error = `履歴を読めなかった: ${e instanceof Error ? e.message : String(e)}`;
     }
     this.onChanged();
   }
 
-  // 古いほうを1ページ読み足す。読んでいる途中なら、それを待つ
+  // 古いほうを1ページ読み足す。読んでいる途中なら、それを待つ。
+  // 失敗した後は、やり直す(retryOlder、syncLatest の成功)まで読まない。画面は表示のたび・スクロールの
+  // たびに呼ぶので、止めないと失敗のたびに描き直され、読み続けてしまう
   loadOlder(): Promise<void> {
-    if (this.olderCursor === null) {
+    if (this.olderCursor === null || this.olderFailed) {
       return Promise.resolve();
     }
     if (this.olderCursor === undefined) {
@@ -170,6 +179,12 @@ export class RoomTimeline {
     return this.olderLoading;
   }
 
+  // 失敗した読み足しをやり直す(利用者の操作から呼ぶ)
+  retryOlder(): Promise<void> {
+    this.olderFailed = false;
+    return this.loadOlder();
+  }
+
   private async runOlder(before: string): Promise<void> {
     try {
       const page = await this.fetchPage(before);
@@ -177,6 +192,7 @@ export class RoomTimeline {
       this.olderCursor = page.next_before;
       this.error = undefined;
     } catch (e) {
+      this.olderFailed = true;
       this.error = `履歴を読めなかった: ${e instanceof Error ? e.message : String(e)}`;
     }
   }
