@@ -25,6 +25,9 @@ vi.mock("expo-auth-session", () => {
     shouldRefresh() {
       return this.accessToken.startsWith("old.");
     }
+    static isTokenFresh(token: TokenResponse) {
+      return !token.accessToken.startsWith("expired.");
+    }
     getRequestConfig() {
       return { accessToken: this.accessToken, idToken: this.idToken, refreshToken: this.refreshToken };
     }
@@ -85,6 +88,7 @@ async function signedIn(accessToken = jwt("fresh", "alice")) {
   return { auth, queryClient };
 }
 
+// vi.resetModules で読み込み直すので、instanceof ではなく name で見る
 describe("AuthStore", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -161,9 +165,9 @@ describe("AuthStore", () => {
     await auth.signOut();
     response.resolve(new TokenResponse({ accessToken: jwt("fresh", "alice"), refreshToken: "refresh-next" }));
 
-    await expect(pending).rejects.toThrow("取りやめた");
+    await expect(pending).rejects.toMatchObject({ name: "LoginRequiredError" });
     expect(store.size).toBe(0);
-    await expect(auth.getAccessToken()).rejects.toThrow("ログインしていない");
+    await expect(auth.getAccessToken()).rejects.toMatchObject({ name: "LoginRequiredError" });
   });
 
   it("保管の途中でログアウトしても、書きかけのトークンを残さない", async () => {
@@ -198,7 +202,38 @@ describe("AuthStore", () => {
     await auth.signOut();
     response.reject(new (TokenError as unknown as new (code: string) => Error)("invalid_grant"));
 
-    await expect(pending).rejects.toThrow("invalid_grant");
+    await expect(pending).rejects.toMatchObject({ name: "LoginRequiredError" });
     expect(auth.state).toEqual({ status: "signedOut" });
+  });
+
+  it("リフレッシュトークンを断られたら、ログインを終えて LoginRequiredError を投げる", async () => {
+    const { auth } = await signedIn(jwt("old", "alice"));
+    const { TokenError } = await import("expo-auth-session");
+    mocks.refreshAsync.mockRejectedValue(new (TokenError as unknown as new (code: string) => Error)("invalid_grant"));
+
+    await expect(auth.getAccessToken()).rejects.toMatchObject({ name: "LoginRequiredError" });
+    expect(auth.state).toEqual({ status: "signedOut", error: "ログインの期限が切れました。ログインし直してください。" });
+    expect(store.size).toBe(0);
+  });
+
+  it("通信の失敗はそのまま投げ、ログインを保つ", async () => {
+    const { auth } = await signedIn(jwt("old", "alice"));
+    const failure = new Error("圏外");
+    mocks.refreshAsync.mockRejectedValue(failure);
+
+    await expect(auth.getAccessToken()).rejects.toBe(failure);
+    expect(auth.state.status).toBe("signedIn");
+    expect(store.get("auth.refresh")).toBe("refresh-alice");
+  });
+
+  it("リフレッシュトークンが無いまま期限が切れたら、ログインを終えて LoginRequiredError を投げる", async () => {
+    store.set("auth.meta", "{}");
+    store.set("auth.access", jwt("expired", "alice"));
+    const { auth } = await import("./auth.ts");
+    await auth.load();
+
+    await expect(auth.getAccessToken()).rejects.toMatchObject({ name: "LoginRequiredError" });
+    expect(auth.state.status).toBe("signedOut");
+    expect(store.size).toBe(0);
   });
 });

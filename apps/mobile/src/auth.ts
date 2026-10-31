@@ -1,7 +1,7 @@
 // 標準の OIDC(認可コード + PKCE)でログインする。本番は Cognito の mobile クライアント、ローカルは模擬 OIDC。
 // ログインの画面は OS のブラウザ(iOS は ASWebAuthenticationSession)で開き、voiceintercom://callback で戻る。
 // トークンは端末の安全な保管場所(Keychain / Keystore)に置き、アクセストークンの期限が近づいたらリフレッシュトークンで更新する
-import { loginLanguage, Observable } from "@voice-intercom/client-core";
+import { LoginRequiredError, loginLanguage, Observable } from "@voice-intercom/client-core";
 import { useObservable } from "@voice-intercom/client-react";
 import {
   AuthRequest,
@@ -31,6 +31,8 @@ const KEYS = {
 } as const;
 
 const SCOPES = ["openid", "email", "profile"];
+
+const LOGIN_EXPIRED = "ログインの期限が切れました。ログインし直してください。";
 
 // voiceintercom://callback(app.config.ts の scheme)
 const redirectUri = makeRedirectUri({ scheme: "voiceintercom", path: "callback" });
@@ -198,14 +200,20 @@ class AuthStore extends Observable {
     }
   }
 
-  // API の呼び出しに付けるアクセストークン。期限が近ければ更新する
+  // API の呼び出しに付けるアクセストークン。期限が近ければ更新する。
+  // ログインが切れていれば LoginRequiredError を投げる(通信の失敗はそのまま投げ、ログインを保つ)
   async getAccessToken(): Promise<string> {
     const token = this.token;
     if (!token) {
-      throw new Error("ログインしていない");
+      throw new LoginRequiredError();
     }
     if (token.shouldRefresh() && token.refreshToken) {
       return (await this.refresh(token)).accessToken;
+    }
+    // リフレッシュトークンが無いまま期限が切れた。更新できないので、ログインし直してもらう
+    if (!TokenResponse.isTokenFresh(token, 0)) {
+      await this.endSession({ status: "signedOut", error: LOGIN_EXPIRED });
+      throw new LoginRequiredError();
     }
     return token.accessToken;
   }
@@ -221,22 +229,23 @@ class AuthStore extends Observable {
         // 更新の応答にリフレッシュトークンが無ければ、前のものを使い続ける
         next.refreshToken ??= token.refreshToken;
         if (!(await this.save(next, generation))) {
+          // 更新の通信中にログアウトした。下の catch で LoginRequiredError にする
           throw new Error("ログアウトしたので、トークンの更新を取りやめた");
         }
         return next;
       } catch (e) {
         // ログアウトの後に届いた失敗は、次の人のログインに触らない
         if (generation !== this.generation) {
-          throw e;
+          throw new LoginRequiredError();
         }
         // サーバーが断ったとき(期限切れ(30日)、取り消し)だけログインし直してもらう。
         // 電波が切れたなどで届かなかったときは、ログインを保ち、次の呼び出しで更新し直す
         if (e instanceof TokenError && e.code === "invalid_grant") {
           console.info("リフレッシュトークンが断られた", e);
-          await this.endSession({ status: "signedOut", error: "ログインの期限が切れました。ログインし直してください。" });
-        } else {
-          console.warn("トークンを更新できなかった", e);
+          await this.endSession({ status: "signedOut", error: LOGIN_EXPIRED });
+          throw new LoginRequiredError();
         }
+        console.warn("トークンを更新できなかった", e);
         throw e;
       } finally {
         if (generation === this.generation) {
