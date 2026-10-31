@@ -4,9 +4,16 @@ import json
 from typing import cast
 
 import aiohttp
+import pytest
 
+from voice_intercom_agent import speech_realtime
 from voice_intercom_agent.speech import speech_mismatch
-from voice_intercom_agent.speech_realtime import RealtimeSpeech, ResponseReader, response_create
+from voice_intercom_agent.speech_realtime import (
+    RealtimeSpeech,
+    ResponseReader,
+    _Session,  # pyright: ignore[reportPrivateUsage]
+    response_create,
+)
 
 
 def test_same_text_with_different_punctuation_is_not_a_mismatch() -> None:
@@ -265,3 +272,43 @@ def test_sessions_are_not_closed_before_languages_are_known() -> None:
         await tts.aclose()
 
     asyncio.run(run())
+
+
+class StuckHttp:
+    async def ws_connect(self, *_: object, **__: object) -> None:
+        await asyncio.Event().wait()
+
+
+def test_speak_timeout_covers_connecting_and_releases_the_lock() -> None:
+    async def main() -> None:
+        session = _Session(
+            cast(aiohttp.ClientSession, StuckHttp()),
+            {},
+            model="m",
+            voice="v",
+            language="en",
+            timeout_s=0.01,
+        )
+        for _ in range(2):
+            with pytest.raises(RuntimeError, match="終わらなかった"):
+                await asyncio.wait_for(session.speak("はい。", lambda _: None), timeout=1)
+
+    asyncio.run(main())
+
+
+def test_connect_gives_up_at_ready_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(speech_realtime, "READY_TIMEOUT_S", 0.01)
+
+    async def main() -> None:
+        session = _Session(
+            cast(aiohttp.ClientSession, StuckHttp()),
+            {},
+            model="m",
+            voice="v",
+            language="en",
+            timeout_s=30,
+        )
+        with pytest.raises(RuntimeError, match="接続できなかった"):
+            await asyncio.wait_for(session.connect(), timeout=1)
+
+    asyncio.run(main())

@@ -34,6 +34,11 @@ class Mixer:
         else:
             self._closed.add(key)
 
+    def clear(self) -> None:
+        """たまっている入力をすべて捨てる。"""
+        self._buffers.clear()
+        self._closed.clear()
+
     def pop(self) -> bytes | None:
         """出せる入力を1チャンクずつ混ぜて返す。出せる入力がなければ None。"""
         parts: list[np.ndarray] = []

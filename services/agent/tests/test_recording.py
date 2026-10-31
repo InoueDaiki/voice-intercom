@@ -296,3 +296,51 @@ def test_create_recorder_without_bucket_is_disabled(monkeypatch: pytest.MonkeyPa
     assert not recording.create_recorder(lambda: "r").enabled
     monkeypatch.setenv("RECORDING_BUCKET", "bucket-1")
     assert recording.create_recorder(lambda: "r").enabled
+
+
+def test_encoder_abort_closes_container_and_is_idempotent() -> None:
+    encoder = OggOpusEncoder(io.BytesIO())
+    encoder.write(sine_pcm(0.1))
+    container = encoder._container  # pyright: ignore[reportPrivateUsage]
+    closed: list[bool] = []
+    encoder._container = _CountingContainer(container, closed)  # pyright: ignore[reportPrivateUsage]
+    encoder.abort()
+    encoder.abort()
+    encoder.close()
+    assert closed == [True]
+
+
+class _CountingContainer:
+    def __init__(self, inner: Any, closed: list[bool]) -> None:
+        self._inner = inner
+        self._closed = closed
+
+    def close(self) -> None:
+        self._closed.append(True)
+        self._inner.close()
+
+
+def test_failed_encoding_closes_the_encoder(monkeypatch: pytest.MonkeyPatch) -> None:
+    aborted: list[bool] = []
+
+    class Failing(OggOpusEncoder):
+        def write(self, pcm: bytes) -> None:
+            raise RuntimeError("エンコードできない")
+
+        def abort(self) -> None:
+            aborted.append(True)
+            super().abort()
+
+    monkeypatch.setattr(recording, "OggOpusEncoder", Failing)
+
+    async def main() -> None:
+        recorder = Recorder(FakeUploader(), lambda: "room-1")
+        rec = recorder.start(
+            utterance_id=UTTERANCE_ID, speaker_id="s", language="ja", started_at=T0
+        )
+        rec.push(sine_pcm(1.1))
+        rec.finish()
+        await recorder.aclose()
+
+    asyncio.run(main())
+    assert aborted == [True]

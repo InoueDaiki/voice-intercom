@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 TRACK_SAMPLE_RATE = 48000
 # 100ms ずつ混ぜて流す
 CHUNK_SAMPLES = TRACK_SAMPLE_RATE // 10
+# トラックが止まったときに、やり直すまでの間隔(秒)。1, 2, 4... と延ばす
+RETRY_BASE_S = 1.0
+RETRY_MAX_S = 30.0
 
 # テキスト入力の読み上げを混ぜるときの入力の key。同じ言語の読み上げは同じ key にして、
 # 続けて読み上げた文が重ならずに順に流れるようにする(mixer.py)
@@ -35,7 +38,11 @@ def translation_track_name(language: str) -> str:
 
 
 class TranslationTrack:
-    """1つの言語の翻訳音声のトラック。同時に話している話者の翻訳音声を混ぜて流す。"""
+    """1つの言語の翻訳音声のトラック。同時に話している話者の翻訳音声を混ぜて流す。
+
+    公開や送出に失敗したら、ログに残して間を置いてやり直す。止まっている間に届いた音声は、
+    流せないので捨てる(Mixer にためない)。
+    """
 
     def __init__(self, room: rtc.Room, language: str) -> None:
         self.language = language
@@ -43,10 +50,16 @@ class TranslationTrack:
         self._source = rtc.AudioSource(TRACK_SAMPLE_RATE, 1)
         self._mixer = Mixer(CHUNK_SAMPLES)
         self._wake = asyncio.Event()
+        # 止まっていて、音声を受け取らない間は True
+        self._down = False
+        # 続けて失敗した回数(やり直しの間隔を決める)
+        self._failures = 0
         self._task = asyncio.create_task(self._run())
 
     def push(self, key: object, pcm: bytes) -> None:
         """key は入力(話者の発話)ごとに別のもの。pcm は TRACK_SAMPLE_RATE の PCM16・モノラル。"""
+        if self._down:
+            return
         self._mixer.push(key, pcm)
         self._wake.set()
 
@@ -55,11 +68,32 @@ class TranslationTrack:
         self._wake.set()
 
     async def _run(self) -> None:
+        published = False
+        while True:
+            try:
+                if not published:
+                    await self._publish()
+                    published = True
+                self._down = False
+                await self._pump()
+            except Exception:
+                self._down = True
+                self._mixer.clear()
+                self._failures += 1
+                delay = min(RETRY_BASE_S * 2 ** (self._failures - 1), RETRY_MAX_S)
+                logger.exception(
+                    "翻訳音声のトラック(%s)が止まった。%.0f秒後にやり直す", self.language, delay
+                )
+                await asyncio.sleep(delay)
+
+    async def _publish(self) -> None:
         name = translation_track_name(self.language)
         track = rtc.LocalAudioTrack.create_audio_track(name, self._source)
         options = rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
         await self._room.local_participant.publish_track(track, options)
         logger.info("翻訳音声のトラックを公開した: %s", name)
+
+    async def _pump(self) -> None:
         while True:
             pcm = self._mixer.pop()
             if pcm is None:
@@ -69,6 +103,7 @@ class TranslationTrack:
             # capture_frame は送信のキューが詰まると待つので、届くのが早くても実時間で流れる
             frame = rtc.AudioFrame(pcm, TRACK_SAMPLE_RATE, 1, CHUNK_SAMPLES)
             await self._source.capture_frame(frame)
+            self._failures = 0
 
     async def aclose(self) -> None:
         self._task.cancel()
@@ -155,6 +190,9 @@ class CaptionPublisher:
     async def _run(self) -> None:
         while True:
             data, topic, destinations = await self._queue.get()
+            # ジョブの終わりは、ルームを出てから書き起こしを待つ(agent.py)。もう届かないので送らない
+            if not self._room.isconnected():
+                continue
             try:
                 await self._room.local_participant.publish_data(
                     data, reliable=True, topic=topic, destination_identities=destinations

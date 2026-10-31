@@ -11,7 +11,7 @@
 1,250 をドイツ語でもカンマのまま出し、1.25 と読めてしまった。
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator
 from typing import Any
 
 import openai
@@ -73,6 +73,31 @@ def message_input(text: str, source: str | None, targets: list[str]) -> str:
     return f"{head}\n\nMessage:\n{text}"
 
 
+class TranslationCutOff(RuntimeError):
+    """応答が最後まで届かなかった。ここまでの訳は途中で切れている。"""
+
+
+async def _text_deltas(stream: AsyncIterable[Any]) -> AsyncIterator[str]:
+    """応答の文の断片を順に返す。response.completed で終わらなければ TranslationCutOff を投げる。
+
+    失敗(response.failed)と打ち切り(response.incomplete)は、例外にならずにイベントで届く。
+    """
+    async for ev in stream:
+        match ev.type:
+            case "response.output_text.delta":
+                yield ev.delta
+            case "response.completed":
+                return
+            case "response.failed":
+                raise TranslationCutOff(f"翻訳の応答が失敗した: {ev.response.error}")
+            case "response.incomplete":
+                detail = ev.response.incomplete_details
+                raise TranslationCutOff(f"翻訳の応答が途中で切れた: {detail}")
+            case "error":
+                raise TranslationCutOff(f"翻訳の応答でエラーになった: {ev.code} {ev.message}")
+    raise TranslationCutOff("翻訳の応答が終わりのイベントなしで切れた")
+
+
 class TextTranslator:
     def __init__(self, client: openai.AsyncOpenAI, model: str) -> None:
         self._client = client
@@ -90,9 +115,8 @@ class TextTranslator:
             reasoning={"effort": "none"},
             stream=True,
         )
-        async for ev in stream:
-            if ev.type == "response.output_text.delta":
-                yield ev.delta
+        async for delta in _text_deltas(stream):
+            yield delta
 
     async def translate_all(
         self, text: str, source: str | None, targets: list[str]
@@ -117,7 +141,6 @@ class TextTranslator:
             stream=True,
         )
         parser = FlatJsonStream(targets)
-        async for ev in stream:
-            if ev.type == "response.output_text.delta":
-                for item in parser.feed(ev.delta):
-                    yield item
+        async for delta in _text_deltas(stream):
+            for item in parser.feed(delta):
+                yield item
