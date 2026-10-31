@@ -218,8 +218,22 @@ def test_not_configured_is_not_500(agent: str, monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_broken_service_account_is_not_500(agent: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    # SSM の値が初期値(CHANGE_ME)のまま
-    monkeypatch.setenv("FCM_SERVICE_ACCOUNT", "CHANGE_ME")
+    # 中身がサービスアカウントの JSON でない
+    monkeypatch.setenv("FCM_SERVICE_ACCOUNT", "not json")
+    notify.service_account.cache_clear()
+    try:
+        status, body = speak(agent)
+    finally:
+        notify.service_account.cache_clear()
+
+    assert status == 200
+    assert body == {"sent": 0, "skipped": 0}
+
+
+def test_missing_parameter_is_not_500(agent: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    # SSM にパラメーターをまだ入れていない
+    monkeypatch.delenv("FCM_SERVICE_ACCOUNT", raising=False)
+    monkeypatch.setenv("FCM_SERVICE_ACCOUNT_PARAMETER", "/voice-intercom-test/fcm/missing")
     notify.service_account.cache_clear()
     try:
         status, body = speak(agent)

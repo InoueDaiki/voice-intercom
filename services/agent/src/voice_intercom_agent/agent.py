@@ -5,12 +5,13 @@
 
 import asyncio
 import logging
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any
 
 import aiohttp
 from livekit import rtc
+from livekit.agents import JobContext
 
 from .captions import CaptionTrack, new_segment_id
 from .config import Settings
@@ -27,6 +28,9 @@ from .text_input import TEXT_TOPIC, TextInput, parse_text_message
 from .text_translation import TextTranslator
 
 logger = logging.getLogger(__name__)
+
+# LiveKit のルームを閉じるのを待つ上限(秒)。届かなくてもジョブは終える
+ROOM_CLOSE_TIMEOUT_S = 3.0
 
 
 @dataclass
@@ -310,12 +314,38 @@ def listener_languages(room: rtc.Room, *, audio_only: bool = False) -> list[str 
     ]
 
 
-class IntercomAgent:
-    """ルームのイベントを受けて、話者ごとの Speaker を作って捨てる。"""
+async def close_job_room(ctx: JobContext) -> None:
+    """LiveKit のルームを閉じて全員を切り、ジョブを終える。
 
-    def __init__(self, room: rtc.Room, settings: Settings, translator: TextTranslator) -> None:
+    delete_room は失敗をログに残すだけで例外にしない。閉じられなくてもジョブは終える
+    (録音と OpenAI の課金を止めるのが先)。ジョブの終わりの処理は IntercomAgent.aclose。
+    """
+    try:
+        await asyncio.wait_for(ctx.delete_room(), timeout=ROOM_CLOSE_TIMEOUT_S)
+    except TimeoutError:
+        logger.warning("LiveKit のルームを閉じられなかった: %s", ctx.room.name)
+    finally:
+        ctx.shutdown("ルームがアーカイブされたか削除された")
+
+
+class IntercomAgent:
+    """ルームのイベントを受けて、話者ごとの Speaker を作って捨てる。
+
+    close_room は、API がルームを使えないと答えたときに1回だけ呼ぶ(close_job_room)。
+    """
+
+    def __init__(
+        self,
+        room: rtc.Room,
+        settings: Settings,
+        translator: TextTranslator,
+        *,
+        close_room: Callable[[], Coroutine[Any, Any, None]] | None = None,
+    ) -> None:
         self._room = room
         self._speakers: dict[str, Speaker] = {}
+        self._close_room = close_room
+        self._closing = False
         http = aiohttp.ClientSession()
         # API のトークンは、履歴の保存と push 通知の依頼で共有する
         api = create_api_access(http)
@@ -326,8 +356,10 @@ class IntercomAgent:
             captions=CaptionPublisher(room),
             tracks=TranslationTracks(room),
             # ルーム名(API の room_id)は接続してから決まるので、保存するときに読む
-            history=create_history(http, lambda: room.name, api),
-            notifier=create_room_notifier(http, lambda: room.name, api),
+            history=create_history(http, lambda: room.name, api, on_room_gone=self._room_gone),
+            notifier=create_room_notifier(
+                http, lambda: room.name, api, on_room_gone=self._room_gone
+            ),
             recordings=create_recorder(lambda: room.name),
             background=set(),
         )
@@ -364,6 +396,18 @@ class IntercomAgent:
     def connected(self) -> None:
         """ルームに入った後に呼ぶ。"""
         self._update_speech()
+
+    def _room_gone(self) -> None:
+        """API がルームを使えないと答えた(404、409)。ルームを閉じてジョブを終える。
+
+        ジョブの終わりの送り残し(aclose)で受けたときは、もう終わるので何もしない。
+        """
+        if self._closing:
+            return
+        self._closing = True
+        if self._close_room is not None:
+            logger.warning("ルームがもう使えないので閉じる: %s", self._room.name)
+            self._deps.spawn(self._close_room())
 
     def _update_speech(self, *_: object) -> None:
         """音声を聞いている人の言語を読み上げに知らせる。ある言語のセッションは先に開いておき、
@@ -456,6 +500,7 @@ class IntercomAgent:
             speaker.unmuted()
 
     async def aclose(self) -> None:
+        self._closing = True
         await asyncio.gather(*(s.aclose() for s in self._speakers.values()))
         self._speakers.clear()
         await self._drain_utterances()

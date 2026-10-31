@@ -8,6 +8,10 @@
   FCM_SERVICE_ACCOUNT_PARAMETER にパラメーター名)から、ローカルでは環境変数 FCM_SERVICE_ACCOUNT
   (JSON そのもの)から読む。LiveKit の API シークレットと同じ流儀。どちらもなければ送らない
   (ローカルで FCM なしに API を動かせるように)。
+  パラメーターは Terraform では作らず、手で入れる(README の「秘密情報」)。
+  まだ入れていないと、get_parameter が ParameterNotFound(ClientError)を投げる。呼び出し側は
+  ほかの読めないときと同じくログに残して送らない。例外は cache に残らないので、入れた後の呼び出し
+  から送れる。
 - OAuth2 のアクセストークンは、サービスアカウントの鍵で署名した JWT を Google のトークン
   エンドポイントで交換して作り、期限の少し前まで使い回す(ウォームスタートの間)。google-auth は
   依存(requests、pyasn1 など)が増えて Lambda のパッケージが大きくなるので使わず、
@@ -148,7 +152,8 @@ def service_account() -> ServiceAccount:
             token_uri=info.get("token_uri") or _DEFAULT_TOKEN_URI,
         )
     except (ValueError, KeyError, TypeError) as e:
-        # SSM の値が初期値(CHANGE_ME)のままのときもここに来る
+        # 中身がサービスアカウントの JSON でないとき。パラメーターが無いときはここに来ない
+        # (get_parameter が ParameterNotFound を投げる)
         raise RuntimeError("FCM のサービスアカウントの JSON が読めない") from e
 
 

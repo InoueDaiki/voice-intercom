@@ -6,7 +6,7 @@ import openai
 from livekit.agents import AgentServer, AutoSubscribe, JobContext, cli
 
 from . import scale_to_zero, task_protection
-from .agent import IntercomAgent
+from .agent import IntercomAgent, close_job_room
 from .config import Settings, agent_name
 from .text_translation import TextTranslator
 
@@ -26,7 +26,7 @@ async def entrypoint(ctx: JobContext) -> None:
         openai.AsyncOpenAI(api_key=settings.openai_api_key), settings.text_translate_model
     )
     # 先にイベントを登録してから接続する(入室済みの話者のトラックも取りこぼさない)
-    agent = IntercomAgent(ctx.room, settings, translator)
+    agent = IntercomAgent(ctx.room, settings, translator, close_room=lambda: close_job_room(ctx))
     ctx.add_shutdown_callback(agent.aclose)
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
     agent.connected()

@@ -13,6 +13,8 @@
 - 呼び出しはバックグラウンドのタスクで行い、発話やテキストの処理と字幕を待たせない。
 - 通知は遅れて届いても意味が薄いので、通信の失敗(トークンを取れないことを含む)と 5xx だけ
   1回やり直す。401 はトークンを取り直して1回だけやり直す。それ以外はログに残して捨てる。
+- 404 と 409 は、履歴の保存と同じく、ルームがもう使えないという意味なので on_room_gone で
+  知らせる(history.py)。話し始めの通知は発話の書き起こしを待たないので、履歴より先に分かる。
 - ジョブの終わり(aclose)に、送り中のものを flush_timeout_s だけ待って打ち切る。
 
 トークンと HTTP のセッションは履歴の保存(history.py)と共有する。設定が無ければ何もしない。
@@ -29,7 +31,13 @@ from urllib.parse import quote
 
 import aiohttp
 
-from .history import ApiAccess, ClientCredentials, HistorySettings, TokenError
+from .history import (
+    ROOM_GONE_STATUSES,
+    ApiAccess,
+    ClientCredentials,
+    HistorySettings,
+    TokenError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,8 +91,8 @@ def present_ids(participants: Iterable[tuple[str, bool]]) -> list[str]:
 
 class NotifyResult(Enum):
     SENT = "sent"
-    # API にルームがない
-    NOT_FOUND = "not_found"
+    # ルームがもう使えない(404、409)
+    ROOM_GONE = "room_gone"
     # 400、403 など、やり直しても通らない応答
     REJECTED = "rejected"
     # やり直しても通信の失敗か 5xx だった
@@ -136,9 +144,15 @@ class NotifyClient:
                 reauthorized = True
                 self._credentials.invalidate(token)
                 continue
-            if status == 404:
-                logger.warning("%sを通知しない(API にルーム %s がない)", label, room_id)
-                return NotifyResult.NOT_FOUND
+            if status in ROOM_GONE_STATUSES:
+                logger.warning(
+                    "%sを通知しない(ルーム %s はもう使えない。%d): %s",
+                    label,
+                    room_id,
+                    status,
+                    detail,
+                )
+                return NotifyResult.ROOM_GONE
             if status is not None and status < 500:
                 logger.error("%sの通知が拒まれた(%d): %s %s", label, status, room_id, detail)
                 return NotifyResult.REJECTED
@@ -173,6 +187,7 @@ class RoomNotifier:
         client: NotifyClient | None,
         room_name: Callable[[], str],
         *,
+        on_room_gone: Callable[[], None] | None = None,
         min_interval_s: float = DEFAULT_MIN_INTERVAL_S,
         flush_timeout_s: float = FLUSH_TIMEOUT_S,
         clock: Callable[[], float] = time.monotonic,
@@ -180,6 +195,7 @@ class RoomNotifier:
         self._client = client
         # ルーム名(API の room_id)は接続してから決まるので、呼ぶときに読む
         self._room_name = room_name
+        self._on_room_gone = on_room_gone
         # 話し始めとテキストで共通に数える(API の間引きも種類を分けない)
         self._throttle = Throttle(min_interval_s, clock=clock)
         self._flush_timeout_s = flush_timeout_s
@@ -222,16 +238,25 @@ class RoomNotifier:
     async def _notify(self, room_id: str, kind: str, body: dict[str, Any]) -> None:
         assert self._client is not None
         try:
-            await self._client.notify(room_id, kind, body)
+            result = await self._client.notify(room_id, kind, body)
         except Exception:
             logger.exception("%sの通知で予期しない失敗: %s", _LABELS[kind], room_id)
+            return
+        if result is NotifyResult.ROOM_GONE and self._on_room_gone is not None:
+            self._on_room_gone()
 
 
 def create_room_notifier(
-    http: aiohttp.ClientSession, room_name: Callable[[], str], api: ApiAccess | None
+    http: aiohttp.ClientSession,
+    room_name: Callable[[], str],
+    api: ApiAccess | None,
+    *,
+    on_room_gone: Callable[[], None] | None = None,
 ) -> RoomNotifier:
     """RoomNotifier を作る。api が None(設定が無い)なら何もしないものを返す。"""
     if api is None:
         return RoomNotifier(None, room_name)
     client = NotifyClient(http, api.settings, api.credentials)
-    return RoomNotifier(client, room_name, min_interval_s=min_interval_from_env())
+    return RoomNotifier(
+        client, room_name, on_room_gone=on_room_gone, min_interval_s=min_interval_from_env()
+    )
