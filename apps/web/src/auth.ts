@@ -185,7 +185,14 @@ export async function signOut(): Promise<void> {
     // ログアウトの画面に行けなくても、この端末からはログインを消す
     console.warn("ログアウトの画面に移れなかった", logoutError);
     await manager.removeUser();
+    // ログアウトを始めた印は残るので、読み直してログインの流れに戻す
+    window.location.reload();
   }
+}
+
+// ログアウトの途中か。ログアウトの画面へ移る間にログインが消えても、認可の画面へ送らない
+export function isSigningOut(): boolean {
+  return getUserManager().closing;
 }
 
 // 保存したリフレッシュトークンでログインを戻す(期限切れのまま開き直したとき)。戻せたら true。

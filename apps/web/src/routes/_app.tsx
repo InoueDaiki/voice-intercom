@@ -6,7 +6,14 @@ import { hasAuthParams, useAuth } from "react-oidc-context";
 import { Link, Navigate, Outlet, useLocation, useMatch } from "react-router";
 
 import { AudioDock } from "../AudioDock.tsx";
-import { restoreLogin, signOut, subscribeLoginRecovered, takeSignedOutElsewhere, useLoginLost } from "../auth.ts";
+import {
+  isSigningOut,
+  restoreLogin,
+  signOut,
+  subscribeLoginRecovered,
+  takeSignedOutElsewhere,
+  useLoginLost,
+} from "../auth.ts";
 import { webAppPresence, webRoomPlatform, webScreenAwake } from "../roomPlatform.ts";
 import { SpacePtt } from "../spacePtt.ts";
 
@@ -24,7 +31,8 @@ export default function AppLayout() {
     !auth.activeNavigator &&
     !auth.error &&
     !hasAuthParams() &&
-    !signedOutElsewhere;
+    !signedOutElsewhere &&
+    !isSigningOut();
 
   // 認可の画面へ送る前に、リフレッシュトークンを試す。試すのは、ログインが要る状態になるごとに1回
   const signingIn = useRef(false);

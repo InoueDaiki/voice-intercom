@@ -3,7 +3,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { hasAuthParams, useAuth } from "react-oidc-context";
 import { useLocation } from "react-router";
 
-import { ADMIN_GROUP, groupsOf, OPERATOR_GROUP, restoreLogin, signOut, useLoginLost } from "./auth.ts";
+import { ADMIN_GROUP, groupsOf, OPERATOR_GROUP, isSigningOut, restoreLogin, signOut, useLoginLost } from "./auth.ts";
 
 // ログインしていなければログイン画面へ送り、admin か operator のグループでなければ画面を見せない。
 // 実際の権限の判定は API がする。ここは表示の出し分けだけ
@@ -13,7 +13,12 @@ export function RequireAdmin({ children }: { children: ReactNode }) {
   const loginLost = useLoginLost(auth);
   const returnTo = location.pathname + location.search;
   const needsSignIn =
-    !auth.isAuthenticated && !auth.isLoading && !auth.activeNavigator && !auth.error && !hasAuthParams();
+    !auth.isAuthenticated &&
+    !auth.isLoading &&
+    !auth.activeNavigator &&
+    !auth.error &&
+    !hasAuthParams() &&
+    !isSigningOut();
 
   // 認可の画面へ送る前に、リフレッシュトークンを試す。試すのは、ログインが要る状態になるごとに1回
   const signingIn = useRef(false);
