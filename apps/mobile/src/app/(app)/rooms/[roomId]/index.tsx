@@ -20,11 +20,11 @@ import {
   useRoomHub,
   useRoomMutation,
 } from "@voice-intercom/client-react";
-import { Alert, Badge, Button, Icon, Text } from "@voice-intercom/ui-native";
+import { Alert, Badge, Button, Icon, LoadErrorAlert, Text } from "@voice-intercom/ui-native";
 import { useHeaderHeight } from "expo-router/react-navigation";
 import { Link, Stack, useLocalSearchParams } from "expo-router";
 import { Archive, Headphones, Settings, Users } from "lucide-react-native";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { KeyboardAvoidingView, Pressable, View } from "react-native";
 
 import { useAuth } from "../../../../auth.ts";
@@ -43,10 +43,11 @@ export default function RoomPage() {
   if (room.isPending || me.isPending) {
     return <Message>読み込み中…</Message>;
   }
-  if (room.isError) {
+  // 取り直しに失敗しても、前のデータがあれば画面を保つ(外すと接続とアップロードが切れる)
+  if (!room.data) {
     return (
       <Message>
-        <Alert tone="danger">ルームを開けません: {errorMessage(room.error)}</Alert>
+        <LoadErrorAlert onRetry={() => void room.refetch()}>ルームを開けません: {errorMessage(room.error)}</LoadErrorAlert>
       </Message>
     );
   }
@@ -162,6 +163,9 @@ function ArchivedRoom({ room, me, myIdentity }: { room: Room; me: User; myIdenti
 function RoomScreen({ room, me, myIdentity }: { room: Room; me: User; myIdentity: string }) {
   const roomId = room.room_id;
   const roomName = room.name;
+  // 改名で接続を張り直さないよう、effect の依存に入れずに最新の名前を読む
+  const roomNameRef = useRef(roomName);
+  roomNameRef.current = roomName;
   const api = useApi();
   const hub = useRoomHub();
   const headerHeight = useHeaderHeight();
@@ -175,7 +179,7 @@ function RoomScreen({ room, me, myIdentity }: { room: Room; me: User; myIdentity
   const joinError = keeper?.joinError === undefined ? undefined : joinErrorMessage(keeper.joinError);
 
   useEffect(() => {
-    const c = hub.open(roomId, roomName);
+    const c = hub.open(roomId, roomNameRef.current);
     const u: Uploader = new MediaUploader({
       roomId,
       backend: apiMediaBackend(api, xhrSignedPut),
@@ -190,7 +194,7 @@ function RoomScreen({ room, me, myIdentity }: { room: Room; me: User; myIdentity
       u.dispose();
       hub.close(roomId);
     };
-  }, [api, hub, roomId, roomName]);
+  }, [api, hub, roomId]);
 
   return (
     // キーボードを出したら、操作の台をキーボードの上に上げる
