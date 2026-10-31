@@ -8,6 +8,7 @@
 //   - 最後のオーナーを外す・メンバーに戻す: 409、ない ID を開く: 404
 //   - ルーム `half-deleted`: 削除の途中(deleting_at)。DELETE は1回目が 503、2回目で消える
 //   - ルーム `delete-503`(「削除が止まるルーム」): 1回目の DELETE が 503 で、削除の途中になる
+//   - Carlos García の所属を変える: 1回目の PUT が 503(所属は変わる)、2回目で終わる
 
 import {
   type AdminApi,
@@ -176,6 +177,8 @@ const incompleteDeletes = new Map([
   ["half-deleted", 1],
   ["delete-503", 1],
 ]);
+// 所属の変更が止まるユーザー。1回だけ止まる
+const incompleteTenantChanges = new Set([users[3]!.user_id]);
 
 // ルームを返す。削除の途中のルームも返す(GET /rooms/{id} と DELETE だけが扱う)
 function findIncludingDeleting(roomId: string): MockRoom {
@@ -364,6 +367,9 @@ export const mockAdminApi: AdminApi = {
     }
     user.tenant_id = tenantId;
     user.updated_at = now();
+    if (incompleteTenantChanges.delete(userId)) {
+      throw new ApiError(503, "LiveKit のルームから出しきれなかった。PUT をやり直す");
+    }
     return copy(user);
   },
 };

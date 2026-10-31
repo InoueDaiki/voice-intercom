@@ -1,4 +1,4 @@
-import { Alert, Field, Input, LoadErrorAlert, PageHeader, Select, Table, Td, Th } from "@voice-intercom/ui-web";
+import { Alert, Button, ConfirmDialog, Field, Input, LoadErrorAlert, PageHeader, Select, Table, Td, Th } from "@voice-intercom/ui-web";
 import { useState } from "react";
 import { useAuth } from "react-oidc-context";
 import { Link } from "react-router";
@@ -6,7 +6,7 @@ import { Link } from "react-router";
 import { ApiError, type Room, type Tenant, type User } from "../adminApi.ts";
 import { ADMIN_GROUP, groupsOf, OPERATOR_GROUP } from "../auth.ts";
 import { useRooms, useSetUserTenant, useTenants, useUsers } from "../queries.ts";
-import { errorMessage, formatDateTime, LANGUAGE_LABELS } from "../rooms.ts";
+import { errorMessage, formatDateTime, isIncomplete, LANGUAGE_LABELS } from "../rooms.ts";
 
 // 管理者には自分のテナントの人と所属しているルームを、運営者にはすべての人とテナント(変えられる)を出す
 export default function UserList() {
@@ -21,7 +21,8 @@ export default function UserList() {
 
   // user_id → 所属しているルーム(ルーム一覧の member_ids と突き合わせる)
   const roomsByUser = new Map<string, Room[]>();
-  for (const room of rooms.data ?? []) {
+  // 削除の途中のルームは、メンバーにはもう無いルームなので出さない
+  for (const room of (rooms.data ?? []).filter((r) => !r.deleting_at)) {
     for (const id of room.member_ids) {
       roomsByUser.set(id, [...(roomsByUser.get(id) ?? []), room]);
     }
@@ -38,7 +39,7 @@ export default function UserList() {
         title="ユーザー"
         description={
           isOperator
-            ? "アプリでプロフィール(表示名と言語)を登録したユーザーです。テナントを選ぶと、そのテナントに入れます。"
+            ? "アプリでプロフィール(表示名と言語)を登録したユーザーです。テナントを選ぶと、そのテナントに入れます。所属を変えると、元のテナントのルームから外れます。"
             : "自分のテナントで、アプリでプロフィール(表示名と言語)を登録したユーザーです。"
         }
       />
@@ -135,16 +136,30 @@ export default function UserList() {
   );
 }
 
-// ユーザーの所属(運営者)。選んだらすぐに変える
+// ユーザーの所属(運営者)。所属のある人を変えるときは、ルームから外れるので確かめる
 function TenantSelect({ user, tenants }: { user: User; tenants: Tenant[] | undefined }) {
   const set = useSetUserTenant();
+  // 確かめている間の行き先。null は所属を外す
+  const [target, setTarget] = useState<{ tenantId: string | null } | undefined>();
+  const tenantName = (id: string | null) =>
+    id === null ? "所属なし" : (tenants?.find((t) => t.tenant_id === id)?.name ?? id);
+  const change = (tenantId: string | null) => set.mutate({ userId: user.user_id, tenantId });
+
   return (
-    <span className="grid gap-1">
+    <div className="grid gap-1">
       <Select
         aria-label={`${user.display_name} のテナント`}
         value={user.tenant_id ?? ""}
         disabled={!tenants || set.isPending}
-        onChange={(e) => set.mutate({ userId: user.user_id, tenantId: e.target.value || null })}
+        onChange={(e) => {
+          const tenantId = e.target.value || null;
+          // 所属の無い人にはルームが無いので、確かめずに入れる
+          if (user.tenant_id) {
+            setTarget({ tenantId });
+          } else {
+            change(tenantId);
+          }
+        }}
       >
         <option value="">所属なし</option>
         {tenants?.map((t) => (
@@ -153,7 +168,36 @@ function TenantSelect({ user, tenants }: { user: User; tenants: Tenant[] | undef
           </option>
         ))}
       </Select>
-      {set.isError && <span className="text-xs text-danger-fg">{errorMessage(set.error)}</span>}
-    </span>
+      {isIncomplete(set.error) && set.variables ? (
+        <div className="grid justify-items-start gap-1">
+          <span className="text-xs text-fg-muted">
+            所属は変えましたが、一部のルームから外しきれていません。もう一度押してください。
+          </span>
+          {/* 同じ PUT で続きを行う */}
+          <Button size="sm" disabled={set.isPending} onClick={() => change(set.variables.tenantId)}>
+            {set.isPending ? "外しています…" : "ルームから外す操作を続ける"}
+          </Button>
+        </div>
+      ) : (
+        set.isError && <span className="text-xs text-danger-fg">{errorMessage(set.error)}</span>
+      )}
+      <ConfirmDialog
+        open={target !== undefined}
+        tone="danger"
+        title={`${user.display_name} の所属を変えますか?`}
+        description={
+          target &&
+          `「${tenantName(user.tenant_id ?? null)}」から「${tenantName(target.tenantId)}」に変えます。元のテナントのルームからすべて外れ(Connect のルームも)、通話中なら切られます。元に戻しても、ルームには自動で戻りません。最後のオーナーでも外れるので、オーナーの居ないルームが残ることがあります。そのルームは、テナントの管理者がオーナーを決めるかアーカイブします。`
+        }
+        confirmLabel="所属を変える"
+        onConfirm={() => {
+          if (target) {
+            change(target.tenantId);
+          }
+          setTarget(undefined);
+        }}
+        onCancel={() => setTarget(undefined)}
+      />
+    </div>
   );
 }

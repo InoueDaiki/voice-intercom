@@ -137,6 +137,7 @@ export function useSetUserTenant() {
   return useMutation({
     mutationFn: ({ userId, tenantId }: { userId: string; tenantId: string | null }) =>
       adminApi.setUserTenant(userId, tenantId),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: keys.users }),
+    // 503 でも所属の変更は効いているので、失敗のときも読み直す
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: keys.users }),
   });
 }
