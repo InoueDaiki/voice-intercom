@@ -8,6 +8,7 @@ from typing import Any
 import boto3
 import jwt
 import pytest
+from botocore.exceptions import ClientError
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
@@ -213,8 +214,26 @@ def test_not_configured_sends_nothing(google: FakeGoogle) -> None:
     assert google.messages == []
 
 
-def test_placeholder_parameter_is_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    boto3.client("ssm").put_parameter(Name=PARAMETER, Type="SecureString", Value="CHANGE_ME")
+def test_missing_parameter_is_error_until_it_is_put(
+    monkeypatch: pytest.MonkeyPatch, service_account_json: str, google: FakeGoogle
+) -> None:
+    # パラメーターは Terraform で作らないので、手で入れるまでは無い
+    monkeypatch.setenv("FCM_SERVICE_ACCOUNT_PARAMETER", PARAMETER)
+    device_store.register("user-1", "token-1", "android")
+
+    with pytest.raises(ClientError) as e:
+        notify.send_to_users(["user-1"], title="t", body="b")
+    assert e.value.response["Error"]["Code"] == "ParameterNotFound"
+
+    # 失敗は cache に残らないので、入れれば実行環境を入れ替えなくても送れる
+    boto3.client("ssm").put_parameter(
+        Name=PARAMETER, Type="SecureString", Value=service_account_json
+    )
+    assert notify.send_to_users(["user-1"], title="t", body="b").sent == 1
+
+
+def test_broken_parameter_is_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    boto3.client("ssm").put_parameter(Name=PARAMETER, Type="SecureString", Value="not json")
     monkeypatch.setenv("FCM_SERVICE_ACCOUNT_PARAMETER", PARAMETER)
     device_store.register("user-1", "token-1", "android")
 
