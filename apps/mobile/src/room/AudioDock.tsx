@@ -12,6 +12,7 @@ import { useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 
 import { MainPtt } from "./MainPtt.tsx";
+import { useHoldKey } from "./useHoldKey.ts";
 
 export function AudioDock({ myIdentity }: { myIdentity: string }) {
   const hub = useRoomHub();
@@ -70,6 +71,7 @@ function AudioRoomRow({
   myIdentity: string;
 }) {
   const { session, keeper } = room;
+  const key = useHoldKey((value) => pressOne(session, value));
   const connection = connectionState(room);
   let status = (
     <Text className="text-sm text-fg-muted" numberOfLines={1}>
@@ -118,8 +120,8 @@ function AudioRoomRow({
         disabled={!session.connected}
         accessibilityLabel={`${room.roomName} だけに話す`}
         accessibilityHint="押している間、このルームだけに声が届きます"
-        onPressIn={() => pressOne(session, true)}
-        onPressOut={() => pressOne(session, false)}
+        onPressIn={key.down}
+        onPressOut={key.up}
       >
         <Icon icon={Mic} />
         ここだけ
