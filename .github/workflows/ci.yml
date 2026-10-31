@@ -9,10 +9,12 @@ on:
 permissions:
   contents: read
 
-# 同じブランチ(PR)の古い実行は止める
+# PR は同じブランチの古い実行を止める。main への push は1つも止めない(止めると、そのコミットの範囲の
+# buf breaking を通らずに済んでしまう)。グループが同じだと待っている実行が新しいものに置き換えられて
+# 取り消されるので、main への push はコミットごとに別のグループにする
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # CI では .env がないので、mise.toml だけを信頼する
