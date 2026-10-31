@@ -1,7 +1,8 @@
 // Expo の設定。値は .env から読む(mise が読み込む。README の「モバイル版」)。
 // - DEV_HOST: ローカルの OIDC・API・LiveKit の接続先(Mac の LAN の IP)。AWS の環境では使わない
-// - MOBILE_OIDC_ISSUER・MOBILE_OIDC_CLIENT_ID・MOBILE_OIDC_LOGOUT_URL・MOBILE_API_BASE_URL: AWS の環境の接続先
+// - MOBILE_OIDC_ISSUER・MOBILE_OIDC_CLIENT_ID・MOBILE_API_BASE_URL: AWS の環境の接続先
 //   (無ければローカルの模擬 OIDC と API)
+// - MOBILE_OIDC_LOGOUT_URL: ログアウトの URL。Cognito では無くてもよい(auth.ts が導く)
 // - MOBILE_BUNDLE_ID・APPLE_TEAM_ID: 実機に入れるときの App ID と署名のチーム
 
 import type { ConfigContext, ExpoConfig } from "expo/config";
@@ -59,7 +60,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     oidcIssuer: process.env.MOBILE_OIDC_ISSUER ?? `http://${devHost}:8090/default`,
     // Cognito の mobile クライアント。模擬 OIDC では何でもよいので、Cognito の名前に揃える
     oidcClientId: process.env.MOBILE_OIDC_CLIENT_ID ?? "mobile",
-    // Cognito はログアウトが標準の end_session_endpoint ではないので、<hosted_ui_url>/logout を渡す
+    // Cognito はログアウトが標準の end_session_endpoint ではない。無ければ auth.ts が、発行元の情報の
+    // authorization_endpoint から <hosted_ui_url>/logout を導く。別の URL を使うときだけ渡す
     oidcLogoutUrl: process.env.MOBILE_OIDC_LOGOUT_URL,
     apiBaseUrl: process.env.MOBILE_API_BASE_URL ?? `http://${devHost}:3000`,
   },

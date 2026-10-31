@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // 端末の保管場所の代わり
 const store = new Map<string, string>();
 const mocks = vi.hoisted(() => ({
+  // ログアウトの目印のファイル
+  files: new Set<string>(),
   refreshAsync: vi.fn(),
   revokeAsync: vi.fn(),
   fetchDiscoveryAsync: vi.fn(),
@@ -52,6 +54,24 @@ vi.mock("expo-auth-session", () => {
     revokeAsync: mocks.revokeAsync,
   };
 });
+vi.mock("expo-file-system", () => ({
+  Paths: { document: "/document" },
+  File: class {
+    private path: string;
+    constructor(directory: string, name: string) {
+      this.path = `${directory}/${name}`;
+    }
+    get exists() {
+      return mocks.files.has(this.path);
+    }
+    create() {
+      mocks.files.add(this.path);
+    }
+    delete() {
+      mocks.files.delete(this.path);
+    }
+  },
+}));
 vi.mock("expo-localization", () => ({ getLocales: () => [] }));
 vi.mock("expo-secure-store", () => ({
   getItemAsync: async (k: string) => store.get(k) ?? null,
@@ -94,6 +114,8 @@ describe("AuthStore", () => {
     vi.resetModules();
     vi.resetAllMocks();
     store.clear();
+    mocks.files.clear();
+    mocks.config.oidcIssuer = "https://issuer";
     mocks.config.oidcLogoutUrl = "https://hosted/logout";
     mocks.fetchDiscoveryAsync.mockResolvedValue({ revocationEndpoint: "https://issuer/revoke" });
     mocks.revokeAsync.mockResolvedValue(true);
@@ -131,6 +153,147 @@ describe("AuthStore", () => {
     await second.auth.signOut();
     await vi.waitFor(() => expect(mocks.fetchDiscoveryAsync).toHaveBeenCalled());
     expect(mocks.revokeAsync).not.toHaveBeenCalled();
+  });
+
+  it("保管場所の削除が一度失敗しても、やり直して消し、ログアウトを最後まで進める", async () => {
+    const { auth } = await signedIn();
+    const SecureStore = await import("expo-secure-store");
+    vi.spyOn(SecureStore, "deleteItemAsync").mockRejectedValueOnce(new Error("Keychain"));
+
+    await auth.signOut();
+
+    expect(auth.state).toEqual({ status: "signedOut" });
+    expect(store.size).toBe(0);
+    expect(mocks.files.size).toBe(0);
+    expect(mocks.openAuthSessionAsync).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(mocks.revokeAsync).toHaveBeenCalledOnce());
+  });
+
+  it("保管場所から消せなくても、ログアウトを最後まで進め、残ったトークンを次の起動で使わない", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { auth } = await signedIn();
+    const SecureStore = await import("expo-secure-store");
+    const remove = vi.spyOn(SecureStore, "deleteItemAsync").mockRejectedValue(new Error("Keychain"));
+
+    await auth.signOut();
+
+    expect(auth.state).toEqual({ status: "signedOut" });
+    expect(store.size).toBeGreaterThan(0);
+    expect(mocks.openAuthSessionAsync).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(mocks.revokeAsync).toHaveBeenCalledOnce());
+    expect(warn).toHaveBeenCalled();
+
+    // 次の起動。まだ消せなくても同じ人に戻らず、目印は残す
+    vi.resetModules();
+    const second = await import("./auth.ts");
+    const secondStore = await import("expo-secure-store");
+    vi.spyOn(secondStore, "deleteItemAsync").mockRejectedValue(new Error("Keychain"));
+    await second.auth.load();
+    expect(second.auth.state).toEqual({ status: "signedOut" });
+    expect(mocks.files.size).toBe(1);
+
+    // その次の起動で消せたら、目印も消す
+    remove.mockRestore();
+    vi.resetModules();
+    const third = await import("./auth.ts");
+    await third.auth.load();
+    expect(third.auth.state).toEqual({ status: "signedOut" });
+    expect(store.size).toBe(0);
+    expect(mocks.files.size).toBe(0);
+  });
+
+  it("消し残しがあっても、ログインし直して保管できたら、次の起動で読める", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { auth } = await signedIn();
+    const SecureStore = await import("expo-secure-store");
+    const remove = vi.spyOn(SecureStore, "deleteItemAsync").mockRejectedValue(new Error("Keychain"));
+    await auth.signOut();
+    remove.mockRestore();
+
+    mocks.promptAsync.mockResolvedValue({ type: "success", params: { code: "code" } });
+    const { TokenResponse } = await import("expo-auth-session");
+    mocks.exchangeCodeAsync.mockResolvedValue(new TokenResponse({ accessToken: jwt("fresh", "bob"), refreshToken: "refresh-bob" }));
+    await auth.signIn();
+
+    vi.resetModules();
+    const next = await import("./auth.ts");
+    await next.auth.load();
+    expect(next.auth.state).toMatchObject({ status: "signedIn", user: { sub: "bob" } });
+  });
+
+  it("ログインのトークンを保管できなければ、トークンを持たず、書きかけも残さない", async () => {
+    const { auth } = await import("./auth.ts");
+    await auth.load();
+    const SecureStore = await import("expo-secure-store");
+    const set = SecureStore.setItemAsync;
+    vi.spyOn(SecureStore, "setItemAsync").mockImplementation(async (k, v) => {
+      if (k === "auth.id") {
+        throw new Error("Keychain");
+      }
+      await set(k, v);
+    });
+    mocks.promptAsync.mockResolvedValue({ type: "success", params: { code: "code" } });
+    const { TokenResponse } = await import("expo-auth-session");
+    mocks.exchangeCodeAsync.mockResolvedValue(
+      new TokenResponse({ accessToken: jwt("fresh", "bob"), idToken: jwt("id", "bob"), refreshToken: "refresh-bob" }),
+    );
+
+    await auth.signIn();
+
+    expect(auth.state).toEqual({ status: "signedOut", error: "Keychain" });
+    await expect(auth.getAccessToken()).rejects.toMatchObject({ name: "LoginRequiredError" });
+    expect(store.size).toBe(0);
+    await vi.waitFor(() =>
+      expect(mocks.revokeAsync).toHaveBeenCalledWith(
+        { token: "refresh-bob", clientId: "mobile" },
+        { revocationEndpoint: "https://issuer/revoke" },
+      ),
+    );
+  });
+
+  it("模擬 OIDC でログアウトの URL が無ければ、ブラウザを開かず、警告も出さない", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    mocks.config.oidcLogoutUrl = undefined;
+    const { auth } = await signedIn();
+    await auth.signOut();
+    expect(mocks.openAuthSessionAsync).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("Cognito でログアウトの URL が無ければ、ログインの窓口のドメインから導く", async () => {
+    mocks.config.oidcIssuer = "https://cognito-idp.ap-northeast-1.amazonaws.com/ap-northeast-1_abc";
+    mocks.config.oidcLogoutUrl = undefined;
+    mocks.fetchDiscoveryAsync.mockResolvedValue({
+      authorizationEndpoint: "https://prefix.auth.ap-northeast-1.amazoncognito.com/oauth2/authorize",
+    });
+    const { auth } = await signedIn();
+    await auth.signOut();
+
+    const [url] = mocks.openAuthSessionAsync.mock.calls[0]!;
+    expect(url).toMatch(/^https:\/\/prefix\.auth\.ap-northeast-1\.amazoncognito\.com\/logout\?client_id=mobile&/);
+  });
+
+  it("Cognito でログアウトの URL を導けなければ、警告する", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    mocks.config.oidcIssuer = "https://cognito-idp.ap-northeast-1.amazonaws.com/ap-northeast-1_abc";
+    mocks.config.oidcLogoutUrl = undefined;
+    const { auth } = await signedIn();
+    await auth.signOut();
+
+    expect(mocks.openAuthSessionAsync).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("MOBILE_OIDC_LOGOUT_URL"));
+  });
+
+  it("Cognito で発行元の情報を取れなくても、警告してログアウトを終える", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    mocks.config.oidcIssuer = "https://cognito-idp.ap-northeast-1.amazonaws.com/ap-northeast-1_abc";
+    mocks.config.oidcLogoutUrl = undefined;
+    const { auth } = await signedIn();
+    mocks.fetchDiscoveryAsync.mockRejectedValue(new Error("圏外"));
+    await auth.signOut();
+
+    expect(auth.state).toEqual({ status: "signedOut" });
+    expect(warn).toHaveBeenCalledWith("ログイン画面のセッションを消せなかった", expect.any(Error));
   });
 
   it("ログアウトで QueryClient を空にする", async () => {

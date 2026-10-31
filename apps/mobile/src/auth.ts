@@ -15,6 +15,7 @@ import {
   TokenResponse,
   type TokenResponseConfig,
 } from "expo-auth-session";
+import { File, Paths } from "expo-file-system";
 import { getLocales } from "expo-localization";
 import * as SecureStore from "expo-secure-store";
 import * as WebBrowser from "expo-web-browser";
@@ -29,6 +30,10 @@ const KEYS = {
   id: "auth.id",
   refresh: "auth.refresh",
 } as const;
+
+// 保管場所の削除を試す回数と間隔(ミリ秒)
+const DELETE_ATTEMPTS = 3;
+const DELETE_RETRY_MS = 200;
 
 const SCOPES = ["openid", "email", "profile"];
 
@@ -71,6 +76,55 @@ function userOf(token: TokenResponse): SignedInUser {
   };
 }
 
+// Cognito の発行元か。ログアウトの画面は発行元ではなく、ホストされたログイン画面のドメインにある
+function isCognitoIssuer(issuer: string): boolean {
+  return /^https:\/\/cognito-idp\.[^/]+\.amazonaws\.com(\.cn)?\//.test(issuer);
+}
+
+// Cognito のログアウトの URL。ログインの窓口(<hosted_ui_url>/oauth2/authorize)と同じドメインの /logout
+function cognitoLogoutUrl(authorizationEndpoint: string | undefined): string | undefined {
+  const base = authorizationEndpoint?.match(/^(.+)\/oauth2\/authorize$/)?.[1];
+  return base && `${base}/logout`;
+}
+
+// 「保管したトークンをログアウトで消し切れていない」目印。保管場所が失敗しているときにも残せるよう、
+// 保管場所の外のファイルに置く。目印があれば、起動のときにトークンを使わず、消し直す
+function signOutMark(): File {
+  return new File(Paths.document, "auth-sign-out-pending");
+}
+
+function setSignOutMark(): void {
+  try {
+    signOutMark().create({ overwrite: true });
+  } catch (e) {
+    console.warn("ログアウトの目印を置けなかった", e);
+  }
+}
+
+function clearSignOutMark(): void {
+  try {
+    const mark = signOutMark();
+    if (mark.exists) {
+      mark.delete();
+    }
+  } catch (e) {
+    console.warn("ログアウトの目印を消せなかった", e);
+  }
+}
+
+function hasSignOutMark(): boolean {
+  try {
+    return signOutMark().exists;
+  } catch (e) {
+    console.warn("ログアウトの目印を読めなかった", e);
+    return false;
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 class AuthStore extends Observable {
   state: AuthState = { status: "loading" };
   private token: TokenResponse | undefined;
@@ -101,6 +155,12 @@ class AuthStore extends Observable {
   // 起動のときに、保管したトークンを読む
   async load(): Promise<void> {
     try {
+      // 前のログアウトで消し切れなかった。残りを使わず、消し直す
+      if (hasSignOutMark()) {
+        await this.purge();
+        this.set({ status: "signedOut" });
+        return;
+      }
       const meta = await SecureStore.getItemAsync(KEYS.meta);
       const accessToken = await SecureStore.getItemAsync(KEYS.access);
       if (!meta || !accessToken) {
@@ -150,10 +210,18 @@ class AuthStore extends Observable {
         },
         discovery,
       );
-      await this.save(token);
+      const user = userOf(token);
+      try {
+        await this.save(token);
+      } catch (e) {
+        // 保管できなかった。書きかけを次の起動で使わないよう、ログインを終える
+        await this.endSession({ status: "signedOut", error: e instanceof Error ? e.message : String(e) });
+        void this.revoke(token.refreshToken);
+        return;
+      }
       // ログアウトの後に画面の取り直しが残したものも、次の人に見せない
       queryClient.clear();
-      this.set({ status: "signedIn", user: userOf(token) });
+      this.set({ status: "signedIn", user });
     } catch (e) {
       this.set({ status: "signedOut", error: e instanceof Error ? e.message : String(e) });
     }
@@ -166,7 +234,30 @@ class AuthStore extends Observable {
     this.refreshing = undefined;
     queryClient.clear();
     this.set(state);
-    await this.serial(() => Promise.all(Object.values(KEYS).map((k) => SecureStore.deleteItemAsync(k))));
+    await this.purge();
+  }
+
+  // 保管したトークンを消す。失敗しても投げない(ログアウトの続きを止めない)。
+  // 消し終えるまで目印を置くので、途中でアプリが終わっても、消し切れなくても、残りは次の起動で使われない
+  private purge(): Promise<void> {
+    return this.serial(async () => {
+      setSignOutMark();
+      let remaining: string[] = Object.values(KEYS);
+      for (let attempt = 1; ; attempt += 1) {
+        const keys = remaining;
+        const results = await Promise.allSettled(keys.map((k) => SecureStore.deleteItemAsync(k)));
+        remaining = keys.filter((_, i) => results[i]?.status === "rejected");
+        if (remaining.length === 0) {
+          clearSignOutMark();
+          return;
+        }
+        if (attempt === DELETE_ATTEMPTS) {
+          console.warn("保管したトークンを消せなかった。次の起動で消し直す", remaining, results);
+          return;
+        }
+        await delay(DELETE_RETRY_MS);
+      }
+    });
   }
 
   // リフレッシュトークンを取り消す。届かなくてもログアウトは止めない(トークンは端末から消えている)。
@@ -185,18 +276,32 @@ class AuthStore extends Observable {
     }
   }
 
+  // ブラウザのログインを消す URL。指定が無ければ、Cognito では発行元の情報から導く。
+  // 模擬 OIDC には無い(undefined)。Cognito で導けなければ、次のログインで同じ人に入ってしまうので警告する
+  private async hostedLogoutUrl(): Promise<string | undefined> {
+    if (config.oidcLogoutUrl || !isCognitoIssuer(config.oidcIssuer)) {
+      return config.oidcLogoutUrl;
+    }
+    const url = cognitoLogoutUrl((await this.getDiscovery()).authorizationEndpoint);
+    if (!url) {
+      console.warn("Cognito のログアウトの URL が分からない。MOBILE_OIDC_LOGOUT_URL を渡す");
+    }
+    return url;
+  }
+
   async signOut(): Promise<void> {
     const refreshToken = this.token?.refreshToken;
     await this.endSession({ status: "signedOut" });
     void this.revoke(refreshToken);
     // ブラウザに残ったログイン(Cognito のセッション)も消す。消さないと、次のログインで画面を出さずに同じ人で入る
     try {
-      if (config.oidcLogoutUrl) {
-        const url = `${config.oidcLogoutUrl}?client_id=${encodeURIComponent(config.oidcClientId)}&logout_uri=${encodeURIComponent(logoutRedirectUri)}`;
+      const logoutUrl = await this.hostedLogoutUrl();
+      if (logoutUrl) {
+        const url = `${logoutUrl}?client_id=${encodeURIComponent(config.oidcClientId)}&logout_uri=${encodeURIComponent(logoutRedirectUri)}`;
         await WebBrowser.openAuthSessionAsync(url, logoutRedirectUri);
       }
     } catch (e) {
-      console.info("ログイン画面のセッションを消せなかった", e);
+      console.warn("ログイン画面のセッションを消せなかった", e);
     }
   }
 
@@ -268,6 +373,8 @@ class AuthStore extends Observable {
       await SecureStore.setItemAsync(KEYS.access, accessToken);
       await (idToken ? SecureStore.setItemAsync(KEYS.id, idToken) : SecureStore.deleteItemAsync(KEYS.id));
       await (refreshToken ? SecureStore.setItemAsync(KEYS.refresh, refreshToken) : SecureStore.deleteItemAsync(KEYS.refresh));
+      // 前のログアウトの消し残しは、今のトークンで上書きした
+      clearSignOutMark();
       return true;
     });
   }
