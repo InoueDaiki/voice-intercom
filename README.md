@@ -161,7 +161,7 @@ PR と main への push で動く。ツールは mise で `mise.toml` と同じ�
 1. `.env` に `AWS_PROFILE` と `TF_STATE_BUCKET` を書き、`aws sso login` する。
 2. 初回だけ `terraform -chdir=infra/envs/dev init -backend-config="bucket=$TF_STATE_BUCKET"` を実行する。state 用のバケットがまだなければ、先に `scripts/bootstrap-tfstate.sh` で作る(dev と prod で共用し、キーで分ける)。
 3. `mise run plan:dev` で差分を確かめてから、`terraform -chdir=infra/envs/dev apply` する。
-4. 初回の apply の後に、LiveKit の API シークレットを SSM に入れる(Terraform には値を持たせない)。
+4. LiveKit の API シークレットを SSM に入れる(下の「秘密情報」)。
 
    ```sh
    aws ssm put-parameter --overwrite --type SecureString \
@@ -175,7 +175,7 @@ PR と main への push で動く。ツールは mise で `mise.toml` と同じ�
      --name /voice-intercom-dev/fcm/service-account --value file://service-account.json
    ```
 
-   API の Lambda は実行環境が立ち上がるときに1回だけ読む。値を入れ替えたら、Lambda のコードか設定を更新して実行環境を入れ替える。値が初期値(`CHANGE_ME`)のままだと、通知を送るところでエラーになる。
+   API の Lambda は実行環境が立ち上がるときに1回だけ読む。値を入れ替えたら、Lambda のコードか設定を更新して実行環境を入れ替える。パラメーターが無いと、通知を送るところでエラーになる。
 
 6. 管理コンソールと Web 版を配信の S3 に置く(`mise run deploy:admin dev`、`mise run deploy:web dev`)。URL は `terraform output admin_url`、`web_url`。下の「管理コンソールと Web 版の配信」を参照。
 7. Agent のイメージを push し、タグを渡して apply する(下の「LiveKit Agent(ECS Fargate)」)。
@@ -183,6 +183,27 @@ PR と main への push で動く。ツールは mise で `mise.toml` と同じ�
 LiveKit の URL と API キーは `TF_VAR_livekit_client_url`、`TF_VAR_livekit_api_key` で渡す。
 
 AWS の予算のアラート(アカウント全体で月 1 USD。実績の 50%・100% と、予測の 100% でメールを送る)は dev の Terraform に置く。宛先は `.env` の `TF_VAR_budget_alert_emails=you@example.com` で渡す(必須。複数はカンマ区切り)。OpenAI と LiveKit の料金は AWS の請求に入らないので、それぞれの管理画面で上限を設ける。
+
+### 秘密情報
+
+秘密情報は SSM パラメーター(SecureString)に置き、`aws ssm put-parameter` で入れる。パラメーターそのものも Terraform では作らない。`aws_ssm_parameter` は `ignore_changes` を付けても読み直した実際の値を state に平文で持ち、`value_wo` に替えると切り替えの apply で設定に書いた値が本物を上書きしてしまうため。Terraform は名前と ARN だけを持つ。
+
+| パラメーター | dev | prod | 使うもの |
+| --- | --- | --- | --- |
+| `/voice-intercom-<env>/livekit/api-secret` | 要る | 要る | API(dev)、Agent |
+| `/voice-intercom-<env>/openai/api-key` | 要る | 要る | Agent |
+| `/voice-intercom-<env>/fcm/service-account` | 要る | まだ無い | API |
+| `/voice-intercom-<env>/cognito/agent-client-secret` | 要る | まだ無い | Agent |
+
+パラメーターが無いまま Agent のタスクを起動すると、タスクが起動に失敗する。イメージのタグを渡して apply する前に入れる。
+
+**前の版から移すとき(1回だけ)**: 前の Terraform はパラメーターをリソースとして持っていたので、今ある値は state に平文で入っている。
+
+1. 次の apply で `removed` ブロックがパラメーターを state から外す。AWS のパラメーターと値はそのまま残る(消えない)。plan に `will no longer be managed by Terraform` と出て、`destroy` が無いことを確かめてから apply する。
+2. state のバケットの古い版には、値が残る。バケットのライフサイクルで、外した apply から90日で消える。
+3. 値を入れ替える(ローテーション)かどうかは、state を読めた人で決める。state のバケットを読める権限が、SSM の値を読める権限より広かったとき、state をローカルや CI に写したことがあるときは、LiveKit の API シークレット、OpenAI の API キー、FCM のサービスアカウントの鍵を発行し直し、上の `put-parameter` で入れ、古いものを無効にする。そうでなければ、入れ替えなくてよい。入れ替えたら、下の `update-service` で Agent のタスクを、Lambda の設定の更新で API の実行環境を入れ替える。
+
+Cognito の Agent のクライアントシークレットは、Cognito のクライアントのリソースとして今も state に入る(`generate_secret` で作るので避けられない)。state のバケットの読み取りの権限は絞っておく。
 
 ### 管理コンソールと Web 版の配信(S3 + CloudFront)
 
@@ -212,14 +233,14 @@ Agent は `services/agent/Dockerfile` のイメージ(linux/arm64)を、ECS Farg
 イメージのビルドと push は devContainer でできる。devContainer は docker-outside-of-docker で、ホストの Docker Desktop(Apple Silicon なので arm64 のエンジン)を使うため、エミュレーションなしで linux/arm64 をビルドする。ECR へのログインには devContainer の AWS CLI(`aws sso login` 済みのプロファイル)を使う。
 
 1. 初回の apply では ECR などができるだけで、タスクは起動しない(`agent_image_tag` が空のうちは台数を 0 にする)。
-2. OpenAI の API キーを SSM に入れる(LiveKit の API シークレットと同じく、Terraform には値を持たせない)。prod では LiveKit の API シークレットも同じように入れる。
+2. OpenAI の API キーを SSM に入れる(LiveKit の API シークレットと同じく、上の「秘密情報」)。prod では LiveKit の API シークレットも同じように入れる。
 
    ```sh
    aws ssm put-parameter --overwrite --type SecureString \
      --name /voice-intercom-dev/openai/api-key --value <key>
    ```
 
-   dev では、Agent が履歴を保存する(確定した字幕を API に PUT する)ときに使う、Cognito の Agent のクライアントシークレットも SSM に入れる。値は Cognito が作るので、Terraform の出力(sensitive)から写す。Terraform のタスク定義には SSM のパラメーターの ARN だけを渡す(OpenAI のキーと同じ)。シークレットの値は Cognito のクライアントのリソースとして state に入っているが、SSM のパラメーターの値としては持たせない。prod にはまだ Cognito と API が無いので、履歴は保存しない(`history = null`)。
+   dev では、Agent が履歴を保存する(確定した字幕を API に PUT する)ときに使う、Cognito の Agent のクライアントシークレットも SSM に入れる。値は Cognito が作るので、Terraform の出力(sensitive)から写す。Terraform のタスク定義には SSM のパラメーターの ARN だけを渡す(OpenAI のキーと同じ)。prod にはまだ Cognito と API が無いので、履歴は保存しない(`history = null`)。
 
    ```sh
    aws ssm put-parameter --overwrite --type SecureString \
@@ -413,7 +434,7 @@ result = notify.send_to_users(
 
 - Android は高優先度、iOS は通常の alert 通知で送る。FCM HTTP v1 は1トークンに1リクエストなので、並べて送る(同時に 8 本)。
 - FCM が `UNREGISTERED` か、トークンが原因の `INVALID_ARGUMENT` を返したトークンは users から消す。それ以外の失敗(5xx、429、通信の失敗)はやり直さず、`SendResult` の `failed` に数えてログに出す。
-- サービスアカウントの JSON が読めない(SSM の値が `CHANGE_ME` のままなど)と例外になる。チャットの保存などを通知の失敗で落とさないよう、呼び出し側で例外を捕まえてログに残す。
+- サービスアカウントの JSON が読めない(SSM のパラメーターが無い、中身が JSON でないなど)と例外になる。チャットの保存などを通知の失敗で落とさないよう、呼び出し側で例外を捕まえてログに残す。
 - 送る時間は API の Lambda の timeout(15秒)に含まれる。1回の HTTP は5秒で切る。人数が増えて応答が遅くなったら、SQS などで別の Lambda に分ける。
 - ローカルでは、環境変数 `FCM_SERVICE_ACCOUNT` に JSON そのものを入れると送れる。`FCM_SERVICE_ACCOUNT` も `FCM_SERVICE_ACCOUNT_PARAMETER` もなければ、送らずにログだけ出す。
 
