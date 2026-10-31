@@ -144,6 +144,10 @@ async function convertVideo(
     console.warn("動画を読めないので、元のまま送る", e);
     return undefined;
   }
+  // 測っている間に取りやめたら、変換を始めない(ここより前は abort の listener が付いていない)
+  if (signal?.aborted) {
+    throw signal.reason ?? new Error("取りやめた");
+  }
   const progress = native.addListener("onProgress", (e) => onProgress?.(e.progress));
   const onAbort = () => void native.cancel();
   signal?.addEventListener("abort", onAbort, { once: true });
