@@ -4,7 +4,7 @@
 // - 開くと、ルームごとに灯りと、そのルームだけに話す操作、切る操作を並べる
 // - 主の PTT(音声をつないだ全部のルームに届く)を下に置く
 import type { RoomConnection, RoomHub } from "@voice-intercom/client-core";
-import { pressOne, receivingCaption, signalOf, useRoomHub } from "@voice-intercom/client-react";
+import { connectionState, pressOne, receivingCaption, signalOf, useRoomHub } from "@voice-intercom/client-react";
 import { Button, cx, Icon, SignalLamp, type SignalState, Text } from "@voice-intercom/ui-native";
 import { Link, usePathname } from "expo-router";
 import { ChevronDown, Headphones, Mic, PhoneOff } from "lucide-react-native";
@@ -69,10 +69,17 @@ function AudioRoomRow({
   signal: SignalState;
   myIdentity: string;
 }) {
-  const { session } = room;
+  const { session, keeper } = room;
+  const connection = connectionState(room);
   let status = (
     <Text className="text-sm text-fg-muted" numberOfLines={1}>
-      {session.connected ? "待機中" : "接続中…"}
+      {connection === "connected"
+        ? "待機中"
+        : connection === "connecting"
+          ? "接続中…"
+          : connection === "rejoining"
+            ? "つなぎ直し中…"
+            : "切断"}
     </Text>
   );
   if (signal === "tx") {
@@ -100,6 +107,11 @@ function AudioRoomRow({
         </Pressable>
       </Link>
       <View className="min-w-0 flex-1">{status}</View>
+      {keeper.canRejoin && (
+        <Button variant="link" textClassName="text-xs" onPress={() => void keeper.rejoin()}>
+          入り直す
+        </Button>
+      )}
       {/* このルームだけに話す。押している間だけ */}
       <Button
         size="sm"

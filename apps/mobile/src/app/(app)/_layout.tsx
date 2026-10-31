@@ -22,7 +22,8 @@ export default function AppLayout() {
   if (me.isPending) {
     return <FullScreenMessage>読み込み中…</FullScreenMessage>;
   }
-  // 取り直しに失敗しても、前のデータがあれば画面を保つ(外すと RoomHubProvider ごと消え、全ルームの音声が切れる)
+  // 取り直しの失敗なら、持っているプロフィールで画面を保つ。403 / 404 でも同じ(外すと RoomHubProvider ごと消え、
+  // 全ルームの音声が切れる)。ログインが本当に切れたときは auth の状態が変わり、ログインの画面へ移る
   if (me.data === undefined || !myIdentity) {
     return (
       <FullScreenMessage

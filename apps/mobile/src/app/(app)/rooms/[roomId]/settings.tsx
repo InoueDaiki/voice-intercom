@@ -3,6 +3,7 @@
 import { LANGUAGE_LABELS, type MemberRole, type Room, type RoomMember } from "@voice-intercom/client-core";
 import {
   errorMessage,
+  isPermanentError,
   useApi,
   useMe,
   useRoom,
@@ -51,11 +52,14 @@ export default function RoomSettings() {
       </Page>
     );
   }
-  // 取り直しに失敗しても、前のデータがあれば画面を保つ(外すと入力中の内容が消える)
-  if (!room.data) {
+  const r = room.data;
+  // 取り直しの失敗なら、持っている値で画面を保つ(外すと入力中の内容が消える)。無くなった・権限が無くなったときは続けない
+  if (r === undefined || (room.isError && isPermanentError(room.error))) {
     return (
       <Page>
-        <LoadErrorAlert onRetry={() => void room.refetch()}>ルームを開けません: {errorMessage(room.error)}</LoadErrorAlert>
+        <LoadErrorAlert onRetry={() => void room.refetch()} retryable={!isPermanentError(room.error)}>
+          ルームを開けません: {errorMessage(room.error)}
+        </LoadErrorAlert>
       </Page>
     );
   }
@@ -66,7 +70,6 @@ export default function RoomSettings() {
       </Page>
     );
   }
-  const r = room.data;
   const myTenant = me.data.tenant_id ?? undefined;
   const tenants = [r.tenant_id, r.connect_tenant_id].filter(Boolean);
   const canManage = myTenant !== undefined && tenants.includes(myTenant) && (r.owner_ids.includes(myIdentity) || isAdmin);

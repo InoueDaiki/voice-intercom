@@ -10,7 +10,10 @@ import {
   type User,
 } from "@voice-intercom/client-core";
 import {
+  connectionState,
+  type ConnectionState,
   errorMessage,
+  isPermanentError,
   joinErrorMessage,
   PAGE_LIMIT,
   useApi,
@@ -43,11 +46,14 @@ export default function RoomPage() {
   if (room.isPending || me.isPending) {
     return <Message>読み込み中…</Message>;
   }
-  // 取り直しに失敗しても、前のデータがあれば画面を保つ(外すと接続とアップロードが切れる)
-  if (!room.data) {
+  const current = room.data;
+  // 取り直しの失敗なら、持っている値で画面を保つ(外すと接続とアップロードが切れる)。無くなった・権限が無くなったときは続けない
+  if (current === undefined || (room.isError && isPermanentError(room.error))) {
     return (
       <Message>
-        <LoadErrorAlert onRetry={() => void room.refetch()}>ルームを開けません: {errorMessage(room.error)}</LoadErrorAlert>
+        <LoadErrorAlert onRetry={() => void room.refetch()} retryable={!isPermanentError(room.error)}>
+          ルームを開けません: {errorMessage(room.error)}
+        </LoadErrorAlert>
       </Message>
     );
   }
@@ -58,27 +64,27 @@ export default function RoomPage() {
       </Message>
     );
   }
-  const header = <RoomHeader room={room.data} />;
-  if (!room.data.member_ids.includes(myIdentity)) {
+  const header = <RoomHeader room={current} />;
+  if (!current.member_ids.includes(myIdentity)) {
     return (
       <>
         {header}
-        <JoinRoom room={room.data} />
+        <JoinRoom room={current} />
       </>
     );
   }
-  if (room.data.archived_at) {
+  if (current.archived_at) {
     return (
       <>
         {header}
-        <ArchivedRoom key={roomId} room={room.data} me={me.data} myIdentity={myIdentity} />
+        <ArchivedRoom key={roomId} room={current} me={me.data} myIdentity={myIdentity} />
       </>
     );
   }
   return (
     <>
       {header}
-      <RoomScreen key={roomId} room={room.data} me={me.data} myIdentity={myIdentity} />
+      <RoomScreen key={roomId} room={current} me={me.data} myIdentity={myIdentity} />
     </>
   );
 }
@@ -135,17 +141,19 @@ function ArchivedRoom({ room, me, myIdentity }: { room: Room; me: User; myIdenti
   const api = useApi();
   const [session, setSession] = useState<RoomSession>();
   useObservable(session);
+  // 名前は入室中の通知にしか使わない(つながないので出ない)。改名で読み直さないよう、依存に入れない
+  const initialName = useRef(room.name);
   useEffect(() => {
     const s = new RoomSession({
       myIdentity,
       myLanguage: me.language,
-      roomName: room.name,
+      roomName: initialName.current,
       fetchTimelinePage: (before) => api.listTimeline(room.room_id, { limit: PAGE_LIMIT, before }),
     });
     setSession(s);
     void s.timeline.syncLatest().then(() => s.applyTimeline([]));
     return () => s.dispose();
-  }, [api, room.room_id, room.name, me.language, myIdentity]);
+  }, [api, room.room_id, me.language, myIdentity]);
   return (
     <View className="flex-1 bg-canvas">
       <StatusRow room={room} />
@@ -163,11 +171,10 @@ function ArchivedRoom({ room, me, myIdentity }: { room: Room; me: User; myIdenti
 function RoomScreen({ room, me, myIdentity }: { room: Room; me: User; myIdentity: string }) {
   const roomId = room.room_id;
   const roomName = room.name;
-  // 改名で接続を張り直さないよう、effect の依存に入れずに最新の名前を読む
-  const roomNameRef = useRef(roomName);
-  roomNameRef.current = roomName;
   const api = useApi();
   const hub = useRoomHub();
+  // 改名で切り直さないよう、つなぐときは最初の名前を使い、改名は下の effect で伝える
+  const initialName = useRef(roomName);
   const headerHeight = useHeaderHeight();
   const [connection, setConnection] = useState<RoomConnection>();
   const [uploader, setUploader] = useState<Uploader>();
@@ -177,9 +184,15 @@ function RoomScreen({ room, me, myIdentity }: { room: Room; me: User; myIdentity
   useObservable(keeper);
   useObservable(uploader);
   const joinError = keeper?.joinError === undefined ? undefined : joinErrorMessage(keeper.joinError);
+  // 切断された後は、戻ったときに自動で入り直す。見えたまま切断されたときは、ここから入り直す
+  const rejoinAction = keeper?.canRejoin && (
+    <Button size="sm" onPress={() => void keeper.rejoin()}>
+      入り直す
+    </Button>
+  );
 
   useEffect(() => {
-    const c = hub.open(roomId, roomNameRef.current);
+    const c = hub.open(roomId, initialName.current);
     const u: Uploader = new MediaUploader({
       roomId,
       backend: apiMediaBackend(api, xhrSignedPut),
@@ -196,24 +209,20 @@ function RoomScreen({ room, me, myIdentity }: { room: Room; me: User; myIdentity
     };
   }, [api, hub, roomId]);
 
+  useEffect(() => {
+    hub.setRoomName(roomId, roomName);
+  }, [hub, roomId, roomName]);
+
   return (
     // キーボードを出したら、操作の台をキーボードの上に上げる
     <KeyboardAvoidingView behavior="padding" keyboardVerticalOffset={headerHeight} className="flex-1 bg-canvas">
-      <StatusRow room={room}>{session && <RoomStatus session={session} rejoining={keeper?.rejoining ?? false} />}</StatusRow>
+      <StatusRow room={room}>
+        {session && keeper && <RoomStatus session={session} state={connectionState({ session, keeper })} />}
+      </StatusRow>
       {(joinError || session?.error || session?.warning || keeper?.awayNotice) && (
         <View className="w-full max-w-3xl gap-2 self-center px-4 pt-3">
           {(joinError ?? session?.error) && (
-            <Alert
-              tone="danger"
-              action={
-                keeper &&
-                session?.canRejoin && (
-                  <Button size="sm" onPress={() => void keeper.rejoin()}>
-                    入り直す
-                  </Button>
-                )
-              }
-            >
+            <Alert tone="danger" action={rejoinAction}>
               {joinError ?? session?.error}
             </Alert>
           )}
@@ -257,12 +266,15 @@ function StatusRow({ room, children }: { room: Room; children?: ReactNode }) {
   );
 }
 
-function RoomStatus({ session, rejoining }: { session: RoomSession; rejoining: boolean }) {
-  if (!session.connected) {
-    if (rejoining) {
-      return <Badge tone="neutral">つなぎ直し中…</Badge>;
-    }
-    return <Badge tone={session.error ? "danger" : "neutral"}>{session.error ? "切断" : "接続中…"}</Badge>;
+function RoomStatus({ session, state }: { session: RoomSession; state: ConnectionState }) {
+  if (state === "rejoining") {
+    return <Badge tone="neutral">つなぎ直し中…</Badge>;
+  }
+  if (state === "failed") {
+    return <Badge tone="danger">切断</Badge>;
+  }
+  if (state === "connecting") {
+    return <Badge tone="neutral">接続中…</Badge>;
   }
   return (
     <View className="flex-row flex-wrap items-center gap-x-3 gap-y-1">
