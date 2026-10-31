@@ -1,10 +1,11 @@
 import asyncio
 import functools
 from collections.abc import Callable, Coroutine, Iterable
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
+from voice_intercom_agent import scale_to_zero
 from voice_intercom_agent.scale_to_zero import (
     DISPATCH_PENDING_S,
     IdlePolicy,
@@ -202,3 +203,46 @@ def test_catch_up_runs_by_default_only_with_scale_to_zero(
     if value is not None:
         monkeypatch.setenv("CATCH_UP_DISPATCH", value)
     assert catch_up_enabled(idle_enabled) is expected
+
+
+def test_registering_again_stops_previous_catch_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    # つなぎ直して登録し直したときに、前の catch_up が残ると同じルームを二重に割り当てる
+    for name in ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"):
+        monkeypatch.setenv(name, "x")
+    monkeypatch.setenv("CATCH_UP_DISPATCH", "1")
+    running: list[int] = []
+    cancelled: list[int] = []
+
+    async def fake_catch_up(_rooms: object, _delay_s: float) -> None:
+        run_id = len(running)
+        running.append(run_id)
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.append(run_id)
+            raise
+
+    monkeypatch.setattr(scale_to_zero, "catch_up", fake_catch_up)
+
+    class FakeServer:
+        def __init__(self) -> None:
+            self.handler: Callable[[], None] | None = None
+
+        def on(self, _event: str, handler: Callable[[], None]) -> None:
+            self.handler = handler
+
+    async def main() -> None:
+        server = FakeServer()
+        scale_to_zero.install(cast(Any, server), "voice-intercom")
+        assert server.handler is not None
+        server.handler()
+        await asyncio.sleep(0)
+        server.handler()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert running == [0, 1]
+        assert cancelled == [0]
+        for task in asyncio.all_tasks() - {asyncio.current_task()}:
+            task.cancel()
+
+    asyncio.run(main())

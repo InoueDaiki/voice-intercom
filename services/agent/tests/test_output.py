@@ -10,9 +10,11 @@ from voice_intercom_agent.output import (
     CHUNK_SAMPLES,
     TRACK_SAMPLE_RATE,
     AudioInput,
+    CaptionPublisher,
     TranslationTrack,
 )
 from voice_intercom_agent.realtime import OUTPUT_SAMPLE_RATE
+from voiceintercom.v1.caption_pb2 import Caption
 
 
 class FakeTrack:
@@ -142,5 +144,36 @@ def test_track_survives_capture_failure_without_republishing() -> None:
         assert source.frames == 1
         assert participant.calls == 1
         await track.aclose()
+
+    asyncio.run(main())
+
+
+class FakeRoom:
+    def __init__(self) -> None:
+        self.connected = True
+        self.published: list[str] = []
+        self.local_participant = self
+
+    def isconnected(self) -> bool:
+        return self.connected
+
+    async def publish_data(self, _data: bytes, *, topic: str, **_: object) -> None:
+        self.published.append(topic)
+
+
+def test_caption_publisher_does_not_send_after_leaving_room() -> None:
+    # ジョブの終わりはルームを出てから書き起こしを待つ。もう届かないので、送ろうとしない
+    async def main() -> None:
+        room = FakeRoom()
+        publisher = CaptionPublisher(cast(Any, room))
+        publisher.send(Caption())
+        await asyncio.sleep(0.01)
+        assert len(room.published) == 1
+
+        room.connected = False
+        publisher.send(Caption())
+        await asyncio.sleep(0.01)
+        assert len(room.published) == 1
+        await publisher.aclose()
 
     asyncio.run(main())
