@@ -4,9 +4,15 @@ variable "name" {
 }
 
 variable "image_tag" {
-  description = "ECR のイメージのタグ(scripts/push-agent.sh が付ける、コミットのハッシュ)。空なら台数を 0 にする(初回の apply で ECR だけ作るため)"
+  description = "ECR のイメージのタグ(scripts/push-agent.sh が付ける、コミットのハッシュ)。空なら台数を 0 にする(初回の apply で ECR だけ作るため)。require_image_tag が true なら空にできない"
   type        = string
   default     = ""
+}
+
+variable "require_image_tag" {
+  description = "true なら、image_tag が空のときに plan を止める(prod 向け。動いている Agent を 0 台にしない)。初回は ECR だけを -target で作る"
+  type        = bool
+  default     = false
 }
 
 variable "cpu" {

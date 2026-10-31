@@ -34,6 +34,8 @@ provider "aws" {
 
 data "aws_caller_identity" "current" {}
 
+data "aws_region" "current" {}
+
 # 管理コンソールと Web 版クライアントの配信(S3 + CloudFront)。中身は mise run deploy:admin dev、
 # mise run deploy:web dev で置く(scripts/deploy-spa.sh)
 module "admin_site" {
@@ -42,6 +44,8 @@ module "admin_site" {
   name          = "${local.name_prefix}-admin"
   bucket_name   = "${local.name_prefix}-admin-${data.aws_caller_identity.current.account_id}"
   force_destroy = true
+
+  csp_connect_sources = local.csp_api_sources
 }
 
 module "web_site" {
@@ -50,9 +54,31 @@ module "web_site" {
   name          = "${local.name_prefix}-web"
   bucket_name   = "${local.name_prefix}-web-${data.aws_caller_identity.current.account_id}"
   force_destroy = true
+
+  csp_connect_sources = concat(local.csp_api_sources, [
+    # livekit-client は接続先に加えて、https で地域の一覧も取る。地域のホストは <project>.<地域>.production.livekit.cloud
+    "wss://*.livekit.cloud",
+    "https://*.livekit.cloud",
+    # 署名付き URL での PUT(services/api の media_store.py はバケット名をホストに入れる)
+    "https://${local.media_bucket_name}.s3.${data.aws_region.current.region}.amazonaws.com",
+    "https://${local.media_bucket_name}.s3.amazonaws.com",
+    "https://${module.media.cdn_domain_name}",
+  ])
+  csp_media_sources    = ["https://${module.media.cdn_domain_name}"]
+  csp_video_conversion = true
 }
 
 locals {
+  media_bucket_name = "${local.name_prefix}-media-${data.aws_caller_identity.current.account_id}"
+
+  # CSP の接続先。API はワイルドカードにする。API の CORS が配信のドメインを参照し、配信の CSP が API の
+  # ドメインを参照すると循環するため。Cognito は固定の名前から作れる
+  csp_api_sources = [
+    "https://*.execute-api.${data.aws_region.current.region}.amazonaws.com",
+    "https://cognito-idp.${data.aws_region.current.region}.amazonaws.com",
+    "https://${local.name_prefix}.auth.${data.aws_region.current.region}.amazoncognito.com",
+  ]
+
   # 管理コンソールと Web 版クライアントのオリジン。ローカルの開発サーバーと、CloudFront での配信
   admin_origins = ["http://localhost:5173", module.admin_site.url]
   web_origins   = ["http://localhost:5174", module.web_site.url]
@@ -67,7 +93,6 @@ module "auth" {
   domain_prefix       = local.name_prefix
   deletion_protection = false
 
-  # モバイルアプリ(React Native)の URL スキームは未定。決まったら合わせる
   mobile_callback_urls = ["voiceintercom://callback"]
   mobile_logout_urls   = ["voiceintercom://signout"]
   web_callback_urls    = [for o in local.web_origins : "${o}/callback"]
@@ -164,62 +189,53 @@ module "media" {
   source = "../../modules/media"
 
   # バケット名は全世界で一意なので、アカウント ID を付ける
-  bucket_name          = "${local.name_prefix}-media-${data.aws_caller_identity.current.account_id}"
+  bucket_name          = local.media_bucket_name
   force_destroy        = true
   cors_allowed_origins = local.client_origins
 }
 
-# LiveKit の API シークレット。値は Terraform の外で入れる(state に残さない)
-#   aws ssm put-parameter --overwrite --type SecureString \
-#     --name /voice-intercom-dev/livekit/api-secret --value <secret>
-resource "aws_ssm_parameter" "livekit_api_secret" {
-  name  = "/${local.name_prefix}/livekit/api-secret"
-  type  = "SecureString"
-  value = "CHANGE_ME"
-
-  lifecycle {
-    ignore_changes = [value]
+# 秘密情報の SSM パラメーター。Terraform では作らず、aws ssm put-parameter で入れる(README の「秘密情報」)。
+# aws_ssm_parameter は ignore_changes を付けても、読み直した実際の値を state に平文で持つ。value_wo に替えると、切り替えの apply で
+# 設定に書いた値(仮の値)を本物に上書きしてしまうので、Terraform の管理から外し、名前と ARN だけを持つ
+locals {
+  secret_parameter_names = {
+    livekit_api_secret  = "/${local.name_prefix}/livekit/api-secret"
+    openai_api_key      = "/${local.name_prefix}/openai/api-key"
+    fcm_service_account = "/${local.name_prefix}/fcm/service-account"
+    agent_client_secret = "/${local.name_prefix}/cognito/agent-client-secret"
+  }
+  secret_parameter_arns = {
+    for key, name in local.secret_parameter_names :
+    key => "arn:aws:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:parameter${name}"
   }
 }
 
-# OpenAI の API キー(Agent が使う)。LiveKit の API シークレットと同じく、値は Terraform の外で入れる
-#   aws ssm put-parameter --overwrite --type SecureString \
-#     --name /voice-intercom-dev/openai/api-key --value <key>
-resource "aws_ssm_parameter" "openai_api_key" {
-  name  = "/${local.name_prefix}/openai/api-key"
-  type  = "SecureString"
-  value = "CHANGE_ME"
-
+# 前から state にあるものを、AWS のパラメーターは消さずに state からだけ外す
+removed {
+  from = aws_ssm_parameter.livekit_api_secret
   lifecycle {
-    ignore_changes = [value]
+    destroy = false
   }
 }
 
-# FCM(push 通知)のサービスアカウントの JSON(API の Lambda が使う)。値は Terraform の外で入れる
-#   aws ssm put-parameter --overwrite --type SecureString \
-#     --name /voice-intercom-dev/fcm/service-account --value file://service-account.json
-resource "aws_ssm_parameter" "fcm_service_account" {
-  name  = "/${local.name_prefix}/fcm/service-account"
-  type  = "SecureString"
-  value = "CHANGE_ME"
-
+removed {
+  from = aws_ssm_parameter.openai_api_key
   lifecycle {
-    ignore_changes = [value]
+    destroy = false
   }
 }
 
-# Agent の Cognito のクライアントシークレット(履歴の保存で API を呼ぶときに使う)。
-# 値は Terraform の外で入れる。Cognito が作った値を terraform output から写す(README を参照)
-#   aws ssm put-parameter --overwrite --type SecureString \
-#     --name /voice-intercom-dev/cognito/agent-client-secret \
-#     --value "$(terraform -chdir=infra/envs/dev output -raw agent_client_secret)"
-resource "aws_ssm_parameter" "agent_client_secret" {
-  name  = "/${local.name_prefix}/cognito/agent-client-secret"
-  type  = "SecureString"
-  value = "CHANGE_ME"
-
+removed {
+  from = aws_ssm_parameter.fcm_service_account
   lifecycle {
-    ignore_changes = [value]
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_ssm_parameter.agent_client_secret
+  lifecycle {
+    destroy = false
   }
 }
 
@@ -287,13 +303,13 @@ data "aws_iam_policy_document" "api" {
 
   statement {
     actions   = ["ssm:GetParameter"]
-    resources = [aws_ssm_parameter.livekit_api_secret.arn]
+    resources = [local.secret_parameter_arns.livekit_api_secret]
   }
 
   # push 通知(notify.py)
   statement {
     actions   = ["ssm:GetParameter"]
-    resources = [aws_ssm_parameter.fcm_service_account.arn]
+    resources = [local.secret_parameter_arns.fcm_service_account]
   }
 }
 
@@ -328,8 +344,8 @@ module "api" {
     LIVEKIT_CLIENT_URL = var.livekit_client_url
     LIVEKIT_API_KEY    = var.livekit_api_key
     # シークレットの値ではなく、SSM のパラメーター名を渡す
-    LIVEKIT_API_SECRET_PARAMETER  = aws_ssm_parameter.livekit_api_secret.name
-    FCM_SERVICE_ACCOUNT_PARAMETER = aws_ssm_parameter.fcm_service_account.name
+    LIVEKIT_API_SECRET_PARAMETER  = local.secret_parameter_names.livekit_api_secret
+    FCM_SERVICE_ACCOUNT_PARAMETER = local.secret_parameter_names.fcm_service_account
     }, local.agent_wake ? {
     # 入室のトークンを出すときに、0 台の Agent を 1 台にする(services/api の agent_wake.py)。
     # 名前は module.agent の var.name と同じ(module.agent を参照すると、Agent が API の URL を
@@ -376,15 +392,15 @@ module "agent" {
   # LiveKit Cloud ではアプリと Agent の接続先が同じなので、アプリに返す URL をそのまま使う
   livekit_url                      = var.livekit_client_url
   livekit_api_key                  = var.livekit_api_key
-  livekit_api_secret_parameter_arn = aws_ssm_parameter.livekit_api_secret.arn
-  openai_api_key_parameter_arn     = aws_ssm_parameter.openai_api_key.arn
+  livekit_api_secret_parameter_arn = local.secret_parameter_arns.livekit_api_secret
+  openai_api_key_parameter_arn     = local.secret_parameter_arns.openai_api_key
 
   # 確定した字幕を API で履歴に保存する(client credentials でトークンを取る)
   history = {
     api_base_url                = module.api.api_endpoint
     oidc_token_url              = "${module.auth.hosted_ui_url}/oauth2/token"
     client_id                   = module.auth.agent_client_id
-    client_secret_parameter_arn = aws_ssm_parameter.agent_client_secret.arn
+    client_secret_parameter_arn = local.secret_parameter_arns.agent_client_secret
   }
 
   # 話者ごと・発話ごとの録音を S3 に置く(Egress は使わない。設計メモの「録音の方式」)

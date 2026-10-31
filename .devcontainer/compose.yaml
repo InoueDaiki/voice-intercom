@@ -12,13 +12,14 @@ services:
       - mise-data:/home/vscode/.local/share/mise
       - claude-config:/home/vscode/.claude
       - pnpm-store:/home/vscode/.local/share/pnpm-store
-    # 実機やエミュレーターからも LAN の IP で届くように、VS Code の転送ではなく compose で公開する
+    # 実機やエミュレーターからも LAN の IP で届くように、VS Code の転送ではなく compose で公開する。
+    # 実機が使わないポートは、ホストからだけ届くよう 127.0.0.1 に絞る
     ports:
-      - "3000:3000" # API(ローカル実行)
-      - "5173:5173" # 管理コンソール(Vite)
-      - "5174:5174" # Web 版クライアント
-      - "5175:5175" # UI 部品の見本帳(packages/ui-web/catalog)
-      - "5176:5176" # 端末の TTS の PoC(tools/tts-poc)
+      - "3000:3000" # API(ローカル実行。実機が DEV_HOST で使う)
+      - "127.0.0.1:5173:5173" # 管理コンソール(Vite)
+      - "127.0.0.1:5174:5174" # Web 版クライアント
+      - "127.0.0.1:5175:5175" # UI 部品の見本帳(packages/ui-web/catalog)
+      - "5176:5176" # 端末の TTS の PoC(tools/tts-poc。スマートフォンから DEV_HOST で開く)
       - "7880:7880" # LiveKit(シグナリング)
       - "7881:7881" # LiveKit(メディアの TCP)
       - "7882:7882/udp" # LiveKit(メディアの UDP)
@@ -47,7 +48,7 @@ services:
     volumes:
       - dynamodb-data:/home/dynamodblocal/data
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000" # コンテナからは compose のサービス名で届くので、LAN には出さない
 
   # ローカル用の S3(本番は S3 + CloudFront)。バケットは mise run local:init で作る
   # 実機が署名付き URL でアップロードするので、LAN に公開し、http://${DEV_HOST}:8333 で揃える

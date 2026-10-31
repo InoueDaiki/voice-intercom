@@ -22,8 +22,9 @@ output() {
   terraform -chdir="$tf_dir" output -raw "$1"
 }
 
-if ! bucket="$(output "${app}_site_bucket" 2>/dev/null)"; then
-  echo "terraform output に ${app}_site_bucket がありません。先に $env 環境を apply してください" >&2
+# stderr は捨てない(init していない、認証が切れているなど、apply していないのとは別の原因がある)
+if ! bucket="$(output "${app}_site_bucket")"; then
+  echo "terraform output から ${app}_site_bucket を取れません(上のエラーを参照)。$env 環境に配信があるか、init と apply が済んでいるか、aws sso login が切れていないかを確かめてください" >&2
   exit 1
 fi
 distribution_id="$(output "${app}_site_distribution_id")"

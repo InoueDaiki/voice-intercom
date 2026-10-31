@@ -34,28 +34,30 @@ provider "aws" {
 
 data "aws_caller_identity" "current" {}
 
-# 秘密情報。値は Terraform の外で入れる(state に残さない)
-#   aws ssm put-parameter --overwrite --type SecureString \
-#     --name /voice-intercom-prod/livekit/api-secret --value <secret>
-#   aws ssm put-parameter --overwrite --type SecureString \
-#     --name /voice-intercom-prod/openai/api-key --value <key>
-resource "aws_ssm_parameter" "livekit_api_secret" {
-  name  = "/${local.name_prefix}/livekit/api-secret"
-  type  = "SecureString"
-  value = "CHANGE_ME"
+data "aws_region" "current" {}
 
-  lifecycle {
-    ignore_changes = [value]
+# 秘密情報の SSM パラメーター。Terraform では作らず、aws ssm put-parameter で入れる(README の「秘密情報」)。
+# 理由は envs/dev と同じ(aws_ssm_parameter は実際の値を state に平文で持つ)。名前と ARN だけを持つ
+locals {
+  secret_parameter_arn_prefix = "arn:aws:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:parameter/${local.name_prefix}"
+  secret_parameter_arns = {
+    livekit_api_secret = "${local.secret_parameter_arn_prefix}/livekit/api-secret"
+    openai_api_key     = "${local.secret_parameter_arn_prefix}/openai/api-key"
   }
 }
 
-resource "aws_ssm_parameter" "openai_api_key" {
-  name  = "/${local.name_prefix}/openai/api-key"
-  type  = "SecureString"
-  value = "CHANGE_ME"
-
+# 前から state にあるものを、AWS のパラメーターは消さずに state からだけ外す
+removed {
+  from = aws_ssm_parameter.livekit_api_secret
   lifecycle {
-    ignore_changes = [value]
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_ssm_parameter.openai_api_key
+  lifecycle {
+    destroy = false
   }
 }
 
@@ -76,15 +78,17 @@ module "agent" {
 
   name      = "${local.name_prefix}-agent"
   image_tag = var.agent_image_tag
-  cpu       = 4096
-  memory    = 8192
-  min_count = var.agent_min_count
-  max_count = var.agent_max_count
+  # タグを渡し忘れた apply で Agent を 0 台にしない
+  require_image_tag = true
+  cpu               = 4096
+  memory            = 8192
+  min_count         = var.agent_min_count
+  max_count         = var.agent_max_count
 
   livekit_url                      = var.livekit_client_url
   livekit_api_key                  = var.livekit_api_key
-  livekit_api_secret_parameter_arn = aws_ssm_parameter.livekit_api_secret.arn
-  openai_api_key_parameter_arn     = aws_ssm_parameter.openai_api_key.arn
+  livekit_api_secret_parameter_arn = local.secret_parameter_arns.livekit_api_secret
+  openai_api_key_parameter_arn     = local.secret_parameter_arns.openai_api_key
 
   # prod にはまだ Cognito と API が無いので、履歴は保存しない。入れるときは dev と同じく
   # Agent のクライアントシークレットの SSM パラメーターを作り、history を渡す

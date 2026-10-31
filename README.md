@@ -161,7 +161,7 @@ PR と main への push で動く。ツールは mise で `mise.toml` と同じ�
 1. `.env` に `AWS_PROFILE` と `TF_STATE_BUCKET` を書き、`aws sso login` する。
 2. 初回だけ `terraform -chdir=infra/envs/dev init -backend-config="bucket=$TF_STATE_BUCKET"` を実行する。state 用のバケットがまだなければ、先に `scripts/bootstrap-tfstate.sh` で作る(dev と prod で共用し、キーで分ける)。
 3. `mise run plan:dev` で差分を確かめてから、`terraform -chdir=infra/envs/dev apply` する。
-4. 初回の apply の後に、LiveKit の API シークレットを SSM に入れる(Terraform には値を持たせない)。
+4. LiveKit の API シークレットを SSM に入れる(下の「秘密情報」)。
 
    ```sh
    aws ssm put-parameter --overwrite --type SecureString \
@@ -175,7 +175,7 @@ PR と main への push で動く。ツールは mise で `mise.toml` と同じ�
      --name /voice-intercom-dev/fcm/service-account --value file://service-account.json
    ```
 
-   API の Lambda は実行環境が立ち上がるときに1回だけ読む。値を入れ替えたら、Lambda のコードか設定を更新して実行環境を入れ替える。値が初期値(`CHANGE_ME`)のままだと、通知を送るところでエラーになる。
+   API の Lambda は実行環境が立ち上がるときに1回だけ読む。値を入れ替えたら、Lambda のコードか設定を更新して実行環境を入れ替える。パラメーターが無いと、通知を送るところでエラーになる。
 
 6. 管理コンソールと Web 版を配信の S3 に置く(`mise run deploy:admin dev`、`mise run deploy:web dev`)。URL は `terraform output admin_url`、`web_url`。下の「管理コンソールと Web 版の配信」を参照。
 7. Agent のイメージを push し、タグを渡して apply する(下の「LiveKit Agent(ECS Fargate)」)。
@@ -183,6 +183,27 @@ PR と main への push で動く。ツールは mise で `mise.toml` と同じ�
 LiveKit の URL と API キーは `TF_VAR_livekit_client_url`、`TF_VAR_livekit_api_key` で渡す。
 
 AWS の予算のアラート(アカウント全体で月 1 USD。実績の 50%・100% と、予測の 100% でメールを送る)は dev の Terraform に置く。宛先は `.env` の `TF_VAR_budget_alert_emails=you@example.com` で渡す(必須。複数はカンマ区切り)。OpenAI と LiveKit の料金は AWS の請求に入らないので、それぞれの管理画面で上限を設ける。
+
+### 秘密情報
+
+秘密情報は SSM パラメーター(SecureString)に置き、`aws ssm put-parameter` で入れる。パラメーターそのものも Terraform では作らない。`aws_ssm_parameter` は `ignore_changes` を付けても読み直した実際の値を state に平文で持ち、`value_wo` に替えると切り替えの apply で設定に書いた値が本物を上書きしてしまうため。Terraform は名前と ARN だけを持つ。
+
+| パラメーター | dev | prod | 使うもの |
+| --- | --- | --- | --- |
+| `/voice-intercom-<env>/livekit/api-secret` | 要る | 要る | API(dev)、Agent |
+| `/voice-intercom-<env>/openai/api-key` | 要る | 要る | Agent |
+| `/voice-intercom-<env>/fcm/service-account` | 要る | まだ無い | API |
+| `/voice-intercom-<env>/cognito/agent-client-secret` | 要る | まだ無い | Agent |
+
+パラメーターが無いまま Agent のタスクを起動すると、タスクが起動に失敗する。イメージのタグを渡して apply する前に入れる。
+
+**前の版から移すとき(1回だけ)**: 前の Terraform はパラメーターをリソースとして持っていたので、今ある値は state に平文で入っている。
+
+1. 次の apply で `removed` ブロックがパラメーターを state から外す。AWS のパラメーターと値はそのまま残る(消えない)。plan に `will no longer be managed by Terraform` と出て、`destroy` が無いことを確かめてから apply する。
+2. state のバケットの古い版には、値が残る。バケットのライフサイクルで、外した apply から90日で消える。
+3. 値を入れ替える(ローテーション)かどうかは、state を読めた人で決める。state のバケットを読める権限が、SSM の値を読める権限より広かったとき、state をローカルや CI に写したことがあるときは、LiveKit の API シークレット、OpenAI の API キー、FCM のサービスアカウントの鍵を発行し直し、上の `put-parameter` で入れ、古いものを無効にする。そうでなければ、入れ替えなくてよい。入れ替えたら、下の `update-service` で Agent のタスクを、Lambda の設定の更新で API の実行環境を入れ替える。
+
+Cognito の Agent のクライアントシークレットは、Cognito のクライアントのリソースとして今も state に入る(`generate_secret` で作るので避けられない)。state のバケットの読み取りの権限は絞っておく。
 
 ### 管理コンソールと Web 版の配信(S3 + CloudFront)
 
@@ -194,7 +215,10 @@ AWS の予算のアラート(アカウント全体で月 1 USD。実績の 50%�
   1. `terraform output` から `VITE_OIDC_ISSUER`(`oidc_issuer`)、`VITE_OIDC_CLIENT_ID`(`cognito_client_ids.<app>`)、`VITE_OIDC_LOGOUT_URL`(`<cognito_hosted_ui_url>/logout`)、`VITE_API_BASE_URL`(`api_endpoint`)を作り、`pnpm build` する(`.env` のローカル向けの値より優先する)。
   2. `assets/`(名前にハッシュが付く)を `Cache-Control: public, max-age=31536000, immutable` で置き、次に `index.html` を `no-cache` で置く。最後に、今のビルドに無いファイルを消す。開いたままの古いタブは、画面を移るときに古いファイルを読めず失敗することがあるので、再読み込みする。
   3. CloudFront のキャッシュを `/*` で無効にする(月 1,000 パスまで無料)。
-- 応答には HSTS、`X-Frame-Options: DENY`、`X-Content-Type-Options: nosniff`、`Referrer-Policy` を付ける。CSP はまだ付けていない。
+- 応答には HSTS、`X-Frame-Options: DENY`、`X-Content-Type-Options: nosniff`、`Referrer-Policy` と、CSP を付ける。
+- CSP は今は `Content-Security-Policy-Report-Only` で送り、違反をブラウザのコンソールに出すだけにしている(`csp_report_only`。既定は `true`)。Web 版でログイン、入室、音声、画像と動画の送信(動画の変換を含む)、管理コンソールでログインと一覧を試し、コンソールに違反が出ないことを確かめてから、`false` にして強制する。
+  - 接続先は `infra/envs/dev/main.tf` の `csp_*`。つなぐ先を足したら、ここにも足す。API は `https://*.execute-api.<リージョン>.amazonaws.com` のワイルドカードにしている(API の CORS と配信のドメインが循環するため)。
+  - `script-src` には `'unsafe-inline'` が要る。React Router の SPA の `index.html` がインラインの script で起動し、中身がビルドごとに変わるため。インラインの script の注入は CSP では防げない(外への接続、埋め込み、`base` の差し替えは防ぐ)。防ぐには、デプロイのときに hash を計算してヘッダーに入れる仕組みが要る。
 - 独自のドメインはまだ使わない。使うときは、ACM の証明書(us-east-1)と Route 53 を足し、Cognito の戻り先も替える。
 
 ### Cognito のログイン画面
@@ -204,6 +228,9 @@ AWS の予算のアラート(アカウント全体で月 1 USD。実績の 50%�
 - 見た目はデザイントークンから作る。`packages/design-tokens` の `mise run gen:tokens` が `generated/cognito-branding.json` を作り、`infra/modules/cognito` がクライアント(`mobile`・`web`・`admin`)ごとに当てる。色を変えたら、gen と apply をする。反映まで数分かかる。
 - ログイン画面を使うクライアントを足すときは、`aws_cognito_managed_login_branding` にも足す(Terraform で作ったクライアントには見た目が付かず、ログイン画面が出ない)。
 - 言語は `/oauth2/authorize` の `lang` で決まる(無いと英語)。Web 版はブラウザの言語から選び、管理コンソールは `ja`。
+- MFA は任意(`mfa_configuration = "OPTIONAL"`)で、認証アプリ(TOTP)だけを使う。グループ別の必須化は標準の機能ではできない。運営者(`operator`)と管理者(`admin`)は登録する運用にする。登録した人には、マネージドログインがログインのときにコードを尋ねる。
+  - **登録の入口がまだ無い。** 任意のとき、マネージドログインは登録を案内しない(案内するのは必須のときだけ)。登録には、本人のアクセストークンで `AssociateSoftwareToken`・`VerifySoftwareToken`・`SetUserMFAPreference` を呼ぶ画面が要る。今のクライアントのトークンにはこれらに要るスコープ(`aws.cognito.signin.user.admin`)が無いので、管理コンソールに登録の画面を作るまでは、運営者と管理者も登録できない。
+  - 端末を失くした人は、`aws cognito-idp admin-set-user-mfa-preference --user-pool-id <id> --username <メール> --software-token-mfa-settings Enabled=false` で外し、登録し直してもらう。
 
 ### LiveKit Agent(ECS Fargate)
 
@@ -211,15 +238,24 @@ Agent は `services/agent/Dockerfile` のイメージ(linux/arm64)を、ECS Farg
 
 イメージのビルドと push は devContainer でできる。devContainer は docker-outside-of-docker で、ホストの Docker Desktop(Apple Silicon なので arm64 のエンジン)を使うため、エミュレーションなしで linux/arm64 をビルドする。ECR へのログインには devContainer の AWS CLI(`aws sso login` 済みのプロファイル)を使う。
 
-1. 初回の apply では ECR などができるだけで、タスクは起動しない(`agent_image_tag` が空のうちは台数を 0 にする)。
-2. OpenAI の API キーを SSM に入れる(LiveKit の API シークレットと同じく、Terraform には値を持たせない)。prod では LiveKit の API シークレットも同じように入れる。
+1. dev の初回の apply では ECR などができるだけで、タスクは起動しない(`agent_image_tag` が空のうちは台数を 0 にする)。
+
+   prod はタグが無いと plan が止まる(動いている Agent を、渡し忘れで 0 台にしないため。`require_image_tag`)。初回は ECR だけを先に作る。
+
+   ```sh
+   terraform -chdir=infra/envs/prod apply \
+     -target=module.agent.aws_ecr_repository.this \
+     -target=module.agent.aws_ecr_lifecycle_policy.this
+   ```
+
+2. OpenAI の API キーを SSM に入れる(イメージのタグを渡す apply より先に。LiveKit の API シークレットと同じく、上の「秘密情報」)。prod では LiveKit の API シークレットも同じように入れる。
 
    ```sh
    aws ssm put-parameter --overwrite --type SecureString \
      --name /voice-intercom-dev/openai/api-key --value <key>
    ```
 
-   dev では、Agent が履歴を保存する(確定した字幕を API に PUT する)ときに使う、Cognito の Agent のクライアントシークレットも SSM に入れる。値は Cognito が作るので、Terraform の出力(sensitive)から写す。Terraform のタスク定義には SSM のパラメーターの ARN だけを渡す(OpenAI のキーと同じ)。シークレットの値は Cognito のクライアントのリソースとして state に入っているが、SSM のパラメーターの値としては持たせない。prod にはまだ Cognito と API が無いので、履歴は保存しない(`history = null`)。
+   dev では、Agent が履歴を保存する(確定した字幕を API に PUT する)ときに使う、Cognito の Agent のクライアントシークレットも SSM に入れる。値は Cognito が作るので、Terraform の出力(sensitive)から写す。Terraform のタスク定義には SSM のパラメーターの ARN だけを渡す(OpenAI のキーと同じ)。prod にはまだ Cognito と API が無いので、履歴は保存しない(`history = null`)。
 
    ```sh
    aws ssm put-parameter --overwrite --type SecureString \
@@ -229,7 +265,7 @@ Agent は `services/agent/Dockerfile` のイメージ(linux/arm64)を、ECS Farg
 
    Cognito のクライアントを作り直したとき(シークレットが変わる)も、同じコマンドで入れ直し、下の `update-service` でタスクを入れ替える。
 
-3. コミットしてから、イメージを ECR に push する。最後に apply に渡すタグ(コミットのハッシュ)が表示される。
+3. コミットしてから、イメージを ECR に push する。最後に apply に渡すタグ(コミットのハッシュ)が表示される。prod は `main` ブランチでだけ push できる。
 
    ```sh
    mise run push:agent dev
@@ -239,6 +275,13 @@ Agent は `services/agent/Dockerfile` のイメージ(linux/arm64)を、ECS Farg
 
    ```sh
    TF_VAR_agent_image_tag=<タグ> terraform -chdir=infra/envs/dev apply
+   ```
+
+   prod は Agent に関係のない変更の apply でも、タグを毎回渡す。今のタグは次で分かる。
+
+   ```sh
+   aws ecs describe-task-definition --task-definition voice-intercom-prod-agent \
+     --query 'taskDefinition.containerDefinitions[0].image' --output text
    ```
 
 SSM の値を変えたときは、新しいタスクでないと読み直さない。`aws ecs update-service --force-new-deployment --cluster voice-intercom-dev-agent --service voice-intercom-dev-agent` で入れ替える。dev は scale to zero にしてあり(下の「台数」)、使っていない間は 0 台で Fargate の料金がかからない。入室しても起こさないようにするには `TF_VAR_agent_max_count=0` で apply する。
@@ -257,7 +300,7 @@ SSM の値を変えたときは、新しいタスクでないと読み直さな�
   - **割り当て直す**: LiveKit は、Agent が1台も登録していないときに作られたルームの割り当てを、後から登録した Agent に渡さない(ローカルの livekit-server 1.13.9 で確かめた)。そこで Agent は登録した 5 秒後に、人がいて Agent のいないルームを探し、`CreateDispatch` で割り当て直す(`services/agent` の `scale_to_zero.py`)。ローカルでは、入室の 30 秒後に起動した Agent が、その 9 秒後にルームに入った。
   - **止める**: ジョブの無い状態が 15 分続き、人のいるルームも無ければ、Agent が自分のサービスの台数を 0 にする(タスクロールに自分のサービスへの `ecs:UpdateService` を許す)。止めた直後に入った人のルームには Agent がいないが、入り直せば起こし直す。
   - `agent_image_tag` が空の間と、`agent_max_count` が 0 のときは、API は起こさない。
-- **prod の台数**: CPU 使用率(サービスのタスクの平均)のターゲット追跡でオートスケールする。目標は 50%(`cpu_target_percent`)、スケールアウトの後は 120 秒、スケールインの後は 900 秒待つ。dev は 1 vCPU・2GB(scale to zero で 0〜1 つ)、prod は 4 vCPU・8GB を 1〜4 つ。prod を冗長にするなら `agent_min_count` を 2 に。最小を 0 にすると、CPU の指標が出ないので 0 台から増えない(止めたいときだけ `agent_max_count` を 0 にする)。台数はオートスケールが変えるので、Terraform はサービスの `desired_count` を作るときにしか使わない(`ignore_changes`)。`agent_image_tag` が空の間は最大を 0 にし、0 台にする。Fargate Spot は、2分前の通知で止められるので使わない。
+- **prod の台数**: CPU 使用率(サービスのタスクの平均)のターゲット追跡でオートスケールする。目標は 50%(`cpu_target_percent`)、スケールアウトの後は 120 秒、スケールインの後は 900 秒待つ。dev は 1 vCPU・2GB(scale to zero で 0〜1 つ)、prod は 4 vCPU・8GB を 1〜4 つ。prod を冗長にするなら `agent_min_count` を 2 に。最小を 0 にすると、CPU の指標が出ないので 0 台から増えない(止めたいときだけ `agent_max_count` を 0 にする)。台数はオートスケールが変えるので、Terraform はサービスの `desired_count` を作るときにしか使わない(`ignore_changes`)。`agent_image_tag` が空の apply は plan で止まる(dev では、空の間は最大を 0 にし、0 台にする)。Fargate Spot は、2分前の通知で止められるので使わない。
   - **CPU の目標と LiveKit の負荷の閾値**: LiveKit のワーカーは、自分の CPU 使用率(cgroup で測る、2.5 秒の移動平均)が `load_threshold`(本番の既定 0.7)以上になると「満杯」になり、新しいジョブを断る(LiveKit はほかのワーカーに回す)。ECS の指標は 1 分ごとの全タスクの平均なので、目標を閾値と同じ 70% にすると、平均が届く前に一部のタスクが断り始め、増えるのも遅れる。タスクの起動と LiveKit への登録にも 1〜2 分かかるので、目標は閾値より低い 50% にして早めに増やす(設計メモの「0.5 付近で早めにスケールアウト」)。目標を上げるなら、閾値(70%)より下に収める(変数の検証で 70 未満に制限している)。
 - **録音**: Agent は話者ごと・発話ごとの録音(Ogg/Opus)を、録音用のバケット `voice-intercom-<env>-recordings-<アカウント ID>`(`infra/modules/recordings`)に置く。キーは `rooms/<room_id>/<YYYY>/<MM>/<DD>/<utterance_id>-<speaker_id>.ogg`(詳しくは `services/agent/README.md` の「録音」)。LiveKit の Egress は使わない(固定費を抑えるため。設計メモの「録音の方式」)。
   - 画像・動画のバケット(media)には置かない。media は CloudFront の既定の振る舞いがバケット全体を署名なしで配信するので、キーが分かれば誰でも聞けてしまう。録音のバケットは CloudFront につながず、パブリックアクセスをすべてブロックし、SSE-S3 で暗号化し、HTTPS 以外を拒む。
@@ -413,7 +456,7 @@ result = notify.send_to_users(
 
 - Android は高優先度、iOS は通常の alert 通知で送る。FCM HTTP v1 は1トークンに1リクエストなので、並べて送る(同時に 8 本)。
 - FCM が `UNREGISTERED` か、トークンが原因の `INVALID_ARGUMENT` を返したトークンは users から消す。それ以外の失敗(5xx、429、通信の失敗)はやり直さず、`SendResult` の `failed` に数えてログに出す。
-- サービスアカウントの JSON が読めない(SSM の値が `CHANGE_ME` のままなど)と例外になる。チャットの保存などを通知の失敗で落とさないよう、呼び出し側で例外を捕まえてログに残す。
+- サービスアカウントの JSON が読めない(SSM のパラメーターが無い、中身が JSON でないなど)と例外になる。チャットの保存などを通知の失敗で落とさないよう、呼び出し側で例外を捕まえてログに残す。
 - 送る時間は API の Lambda の timeout(15秒)に含まれる。1回の HTTP は5秒で切る。人数が増えて応答が遅くなったら、SQS などで別の Lambda に分ける。
 - ローカルでは、環境変数 `FCM_SERVICE_ACCOUNT` に JSON そのものを入れると送れる。`FCM_SERVICE_ACCOUNT` も `FCM_SERVICE_ACCOUNT_PARAMETER` もなければ、送らずにログだけ出す。
 
@@ -584,6 +627,7 @@ AWS に接続せずに API を動かせるように、devContainer と一緒に�
 2. `.env` に `OIDC_ISSUER`、`OIDC_JWKS_URL`、`OIDC_CLIENT_IDS`、`LIVEKIT_API_KEY`、`LIVEKIT_API_SECRET`、`LIVEKIT_CLIENT_URL` があるか確かめる(`.env.example` を参照)。テーブル名と DynamoDB・S3 の接続先は、タスクが `scripts/with-local-aws.sh` で渡す。
 3. `mise run api` で起動する。`services/api/src` の `.py` を変えると、自動で起動し直す(止めるときは `--no-reload` を付ける: `mise run api -- --no-reload`)。
 
+- compose が LAN に公開するのは、実機が使うポートだけ(API の 3000、模擬 OIDC の 8090、LiveKit の 7880・7881・7882/udp、S3 の 8333、TTS の PoC の 5176)。管理コンソール(5173)、Web 版(5174)、見本帳(5175)、DynamoDB(8000)は `127.0.0.1` に絞ってあるので、`http://localhost:<ポート>` で開く。信頼できない LAN では、模擬 OIDC や開発用の鍵が見えることに気をつける。
 - 管理コンソールからは Vite の中継(`/api`)で、Agent からは `http://localhost:3000` で、実機やエミュレーターからは `http://${DEV_HOST}:3000` で届く(compose が 3000 番を LAN に公開するので、サーバーはコンテナの中の `0.0.0.0` で待ち受ける)。
 - `/health` は設定がなくても応答する。設定が足りないときは、起動時に警告を出し、ほかのルートは 500 になる。
 
