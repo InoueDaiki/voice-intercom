@@ -5,6 +5,7 @@
 //   読めない形式は、サムネイルも幅・高さも無しで送る。
 // - 動画: iOS は選ぶときにピッカーが互換の形式(H.264)に変換する。Android は Web 版と同じ決め方(planVideo)で、
 //   H.264 の MP4 に整えてから送る(video-transcode。変換できなければ元のまま送る)。
+//   ネイティブの変換は同時に1つだけなので、ルームをまたいで1つずつ順に行う(transcodeInTurn)。
 //   0.5 秒目のコマからサムネイルを作る。読めなければ無しで送る。
 // - それ以外: ファイルとして送る(ダウンロードだけになる)。
 // 形式はファイルの先頭のバイトで見分ける(拡張子やピッカーの MIME 型は当てにならない)。
@@ -109,6 +110,42 @@ async function videoThumbnail(uri: string): Promise<{ size?: MediaSize; thumbnai
   }
 }
 
+function abortReason(signal: AbortSignal): unknown {
+  // React Native の AbortSignal には reason が無い
+  return signal.reason ?? new Error("取りやめた");
+}
+
+// 最後に並んだ変換が終わると解決する。失敗でも解決するので、次の変換は止まらない
+let lastTranscode: Promise<void> = Promise.resolve();
+
+// 変換を1つずつ順に行う。MediaUploader はルームごとにあるので、アプリ全体で1つの列にする。
+// 順番を待っている間に取りやめたら、すぐに列から抜ける(動いている別の変換には触らない)
+function transcodeInTurn<T>(task: () => Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  const previous = lastTranscode;
+  let finished!: () => void;
+  lastTranscode = new Promise((resolve) => {
+    finished = resolve;
+  });
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => signal && reject(abortReason(signal));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    void previous.then(async () => {
+      signal?.removeEventListener("abort", onAbort);
+      try {
+        if (signal?.aborted) {
+          reject(abortReason(signal));
+        } else {
+          resolve(await task());
+        }
+      } catch (e) {
+        reject(e);
+      } finally {
+        finished();
+      }
+    });
+  });
+}
+
 // 動画を整える(Android)。整えなくてよいか、整えられなければ undefined(元のまま送る)
 async function convertVideo(
   uri: string,
@@ -146,23 +183,34 @@ async function convertVideo(
   }
   // 測っている間に取りやめたら、変換を始めない(ここより前は abort の listener が付いていない)
   if (signal?.aborted) {
-    throw signal.reason ?? new Error("取りやめた");
+    throw abortReason(signal);
   }
-  const progress = native.addListener("onProgress", (e) => onProgress?.(e.progress));
-  const onAbort = () => void native.cancel();
-  signal?.addEventListener("abort", onAbort, { once: true });
+  const videoBitrate = plan.kind === "transcode" ? plan.videoBitrate : null;
   try {
-    const path = await native.transcode(uri, plan.kind === "transcode" ? plan.videoBitrate : null);
-    return path.startsWith("file:") ? path : `file://${path}`;
+    return await transcodeInTurn(async () => {
+      // 進み具合と取りやめは、ネイティブに1つしかない変換に向かうので、自分の番の間だけつなぐ
+      const progress = native.addListener("onProgress", (e) => onProgress?.(e.progress));
+      const onAbort = () => void native.cancel();
+      signal?.addEventListener("abort", onAbort, { once: true });
+      try {
+        const path = await native.transcode(uri, videoBitrate);
+        return path.startsWith("file:") ? path : `file://${path}`;
+      } finally {
+        progress.remove();
+        signal?.removeEventListener("abort", onAbort);
+      }
+    }, signal);
   } catch (e) {
     if (signal?.aborted) {
       throw e;
     }
+    // 列の外で変換が動いている(開発中に JS を読み込み直したときなど)。動画の問題ではないので、元のまま送らず、
+    // 失敗として見せてやり直してもらう
+    if ((e as { code?: unknown }).code === "ERR_TRANSCODE_BUSY") {
+      throw new Error("別の動画を変換している", { cause: e });
+    }
     console.warn("動画を変換できなかったので、元のまま送る", e);
     return undefined;
-  } finally {
-    progress.remove();
-    signal?.removeEventListener("abort", onAbort);
   }
 }
 

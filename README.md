@@ -594,8 +594,8 @@ result = notify.send_to_users(
   2. ホストで `mise run mobile:ios`。初回は `expo prebuild` と CocoaPods とビルドで時間がかかる(WebRTC の pod が大きい)。2回目からは `mise run mobile` で Metro だけを起動すればよい。
   3. 「ログイン」で、OS のブラウザに模擬 OIDC のログイン画面が出る。`user1` などを押す。
 - Android のエミュレーターは、最初に Android Studio などで起動しておく。開発ビルドは Android 17 でローカルネットワークの許可を聞く(React Native が開発ビルドだけに入れるもので、配信するビルドでは出ない)。Metro へは `adb reverse tcp:8081 tcp:8081` でつなぐ(`mise run mobile:android` がする)。
-- 接続先は `.env` の `DEV_HOST`(模擬 OIDC は `:8090/default`、API は `:3000`)。シミュレーターからも実機からも同じ。AWS の環境に向けるときは `MOBILE_OIDC_ISSUER`・`MOBILE_OIDC_CLIENT_ID`・`MOBILE_OIDC_LOGOUT_URL`・`MOBILE_API_BASE_URL` を渡す(`app.config.ts`)。
-- ログインは標準の OIDC(認可コード + PKCE)。Cognito の `mobile` クライアントで、戻り先は `voiceintercom://callback`。トークンは端末の安全な保管場所(Keychain / Keystore)に置き、期限が近づいたらリフレッシュトークンで更新する(`src/auth.ts`)。
+- 接続先は `.env` の `DEV_HOST`(模擬 OIDC は `:8090/default`、API は `:3000`)。シミュレーターからも実機からも同じ。AWS の環境に向けるときは `MOBILE_OIDC_ISSUER`・`MOBILE_OIDC_CLIENT_ID`・`MOBILE_API_BASE_URL` を渡す(`app.config.ts`)。ログアウトの URL(`MOBILE_OIDC_LOGOUT_URL`)は、無ければ Cognito の発行元の情報から導く。
+- ログインは標準の OIDC(認可コード + PKCE)。Cognito の `mobile` クライアントで、ログインの戻り先は `voiceintercom://callback`、ログアウトの戻り先は `voiceintercom://signout`。トークンは端末の安全な保管場所(Keychain / Keystore)に置き、期限が近づいたらリフレッシュトークンで更新する(`src/auth.ts`)。保管場所から消せなくてもログアウトは最後まで進め、残ったトークンは次の起動で使わずに消し直す。
 - 画面は Web 版と同じ(ルームの一覧、プロフィール、ルームを作る、ルーム、メンバーと設定)。違うところ:
   - ルームの画面のタイムラインは、逆さの一覧(新しいものが下、上へ戻ると古いほうを読み足す)。
   - 送るものはクリップのボタンから、写真・動画、カメラ、ファイルのどれかで選ぶ。動画は、iOS はピッカーが互換の形式(H.264)に変換し、Android は Web 版と同じ決め方(`planVideo`)で H.264 の MP4 に整えてから送る。
