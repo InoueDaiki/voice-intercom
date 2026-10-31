@@ -94,7 +94,7 @@
           "rooms"
         ],
         "summary": "ルームを消す(ルームを作ったテナントの管理者)",
-        "description": "LiveKit のルームにいる全員を切り、履歴とメディアも消す。",
+        "description": "LiveKit のルームにいる全員を切り、履歴とメディアも消す。後始末を時間内に終えられなければ 503 で、ルームは消している途中(deleting_at)のまま残る。同じ DELETE をやり直すと続きを消し、終わると 204 を返す。やり直す間も、メンバーにはルームが無いものとして見える。",
         "operationId": "deleteRoom",
         "parameters": [
           {
@@ -147,6 +147,16 @@
           },
           "404": {
             "description": "ルームがない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "後始末が途中で止まった。同じ DELETE をやり直す",
             "content": {
               "application/json": {
                 "schema": {
@@ -1076,7 +1086,7 @@
           "tenants"
         ],
         "summary": "ユーザーの所属を変える(運営者)。null なら外す",
-        "description": "入っているルームのメンバーからは外さない。",
+        "description": "元のテナントのルームのメンバーから外し、LiveKit のルームからも出す(最後のオーナーでも外す。Connect のルームは、その人の側のテナントで決める)。所属の変更は先に効く。LiveKit から出せなかったルームが残れば 503 で、同じ PUT をやり直すと続きを行う。",
         "operationId": "setUserTenant",
         "parameters": [
           {
@@ -1146,6 +1156,16 @@
           },
           "404": {
             "description": "テナントか、プロフィールを登録したユーザーがない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "LiveKit のルームから出しきれなかった。同じ PUT をやり直す",
             "content": {
               "application/json": {
                 "schema": {
@@ -1478,7 +1498,7 @@
           "timeline"
         ],
         "summary": "発話かテキスト入力を履歴に保存する(Agent)。同じ内容なら何度呼んでも同じ結果になる",
-        "description": "event_id は `<occurred_at>#<source_id>` で作る。同じ event_id があれば置き換える。ただし送った本人が消した行(墓石)は置き換えず、墓石を返す。",
+        "description": "event_id は `<occurred_at>#<source_id>` で作る。同じ event_id があれば置き換える。ただし送った本人が消した行(墓石)は置き換えず、墓石を返す。アーカイブしたルームは 409 で、LiveKit のルームを閉じる(発行済みのトークンで作り直されたもの)。",
         "operationId": "putTimelineEvent",
         "parameters": [
           {
@@ -1566,6 +1586,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "アーカイブしたルーム",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1581,7 +1611,7 @@
           "media"
         ],
         "summary": "画像・動画・ファイルをアップロードする署名付き URL を発行する(メンバー)",
-        "description": "PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにする。違うと S3 が 403 を返す。ファイル(画像・動画でないもの)は、応答の content_disposition を Content-Disposition ヘッダーに付ける。アップロードしたら complete を呼ぶ。size_bytes が 16MB 以上なら、upload_url は null で、multipart(パートの大きさと数)を返す。パートの署名付き URL は parts で取る。width・height・duration_ms は、送信者が測った値をそのまま履歴に入れる(API は確かめない)。",
+        "description": "PUT するときは Content-Type ヘッダーを content_type(サムネイルは image/jpeg)と同じにし、本体は size_bytes の大きさで送る(Content-Length が署名に入る)。違うと S3 が 403 を返す。ファイル(画像・動画でないもの)は、応答の content_disposition を Content-Disposition ヘッダーに付ける。アップロードしたら complete を呼ぶ。size_bytes が 16MB 以上なら、upload_url は null で、multipart(パートの大きさと数)を返す。パートの署名付き URL は parts で取る。width・height・duration_ms は、送信者が測った値をそのまま履歴に入れる(API は確かめない)。",
         "operationId": "createMediaUpload",
         "parameters": [
           {
@@ -1682,7 +1712,7 @@
           "media"
         ],
         "summary": "マルチパートのパートを PUT する署名付き URL を発行する(アップロードした本人)",
-        "description": "1回で 100 個まで。期限は1時間なので、送る少し前に取る。期限が近づいたら、同じパートの URL を取り直してよい。thumbnail が true なら、サムネイルの署名付き URL も取り直す。マルチパートでないアップロードと、保存した後は 409。part_count より大きい番号は 422。",
+        "description": "1回で 100 個まで。期限は1時間なので、送る少し前に取る。パートは part_size の大きさ(最後は残りの分)で送る(Content-Length が署名に入る)。期限が近づいたら、同じパートの URL を取り直してよい。thumbnail が true なら、サムネイルの署名付き URL も取り直す。マルチパートでないアップロードと、保存した後は 409。part_count より大きい番号は 422。",
         "operationId": "createUploadPartUrls",
         "parameters": [
           {
@@ -1795,7 +1825,7 @@
           "media"
         ],
         "summary": "アップロードした画像・動画・ファイルを履歴に保存する(アップロードした本人)",
-        "description": "本体(とサムネイル)が置かれていなければ 409。置かれた本体の大きさが uploads の size_bytes と違えば 409(マルチパートでは 410)。確かめている間に PUT し直されたときも 409(complete をやり直す)。マルチパートなら、本文の parts に全パートの番号と ETag を入れる(完了させてから確かめる)。完了できない(ETag が合わない、アップロードが取りやめられた・期限で消えた)なら 410 で、uploads からやり直す。2回目からは、最初に保存した履歴を返す。保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。1回の PUT なら本文は要らない(画像・動画には文を添えられない)。前のクライアントが送る本文(text など)は無視する。",
+        "description": "本体(とサムネイル)が置かれていなければ 409。置かれた本体の大きさが uploads の size_bytes と違えば 409(マルチパートでは 410)。確かめている間に PUT し直されたときと、同時の complete と競合したときも 409(complete をやり直す)。マルチパートなら、本文の parts に全パートの番号と ETag を入れる(完了させてから確かめる)。完了できない(ETag が合わない、アップロードが取りやめられた・期限で消えた)なら 410 で、uploads からやり直す。2回目からは、最初に保存した履歴を返す。保存した後に、今ルームにいる人へデータチャネル(topic media、MediaMessage)で配信し、最初の complete のときだけ、ルームにいないメンバーへ push 通知を送る。配信や通知に失敗しても、履歴を 200 で返す。2回目でも配信はやり直す。1回の PUT なら本文は要らない(画像・動画には文を添えられない)。前のクライアントが送る本文(text など)は無視する。",
         "operationId": "completeMediaUpload",
         "parameters": [
           {
@@ -1892,7 +1922,7 @@
             }
           },
           "409": {
-            "description": "本体かサムネイルがまだ置かれていない、または大きさが違う",
+            "description": "本体かサムネイルが置かれていない、大きさが違う、同時の complete と競合した",
             "content": {
               "application/json": {
                 "schema": {
@@ -2001,6 +2031,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "アーカイブしたルーム",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -2085,6 +2125,16 @@
           },
           "404": {
             "description": "ルームがない",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "アーカイブしたルーム",
             "content": {
               "application/json": {
                 "schema": {
@@ -3705,6 +3755,19 @@
             ],
             "title": "Archived At",
             "description": "アーカイブした時刻"
+          },
+          "deleting_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "ISO 8601(UTC)"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleting At",
+            "description": "削除を始めた時刻。後始末が終わるまでの間だけあり、管理者にだけ見える(DELETE をやり直す)"
           },
           "created_at": {
             "type": "string",

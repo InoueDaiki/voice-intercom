@@ -1,5 +1,6 @@
 """メンバーを外したとき・アーカイブしたとき・ルームを消したときの後始末(room_cleanup.py)。"""
 
+import asyncio
 from collections.abc import Iterator
 from typing import Any
 
@@ -200,27 +201,37 @@ def test_delete_pages_through_rows(
     assert rows("room-a") == []
 
 
-def test_delete_livekit_error_is_not_500(
+def test_delete_livekit_error_can_be_retried(
     admin: str, lk: FakeLiveKit, invalidations: list[list[str]]
 ) -> None:
     lk.delete_error = livekit.ServerError("unavailable", "no response", status=503)
     put_rows("room-a")
 
-    assert call("DELETE", "/rooms/room-a", admin)[0] == 204
+    assert call("DELETE", "/rooms/room-a", admin)[0] == 503
     # LiveKit に届かなくても、履歴は消す
     assert rows("room-a") == []
+    assert store.get_room("room-a") is not None
+
+    lk.delete_error = None
+    assert call("DELETE", "/rooms/room-a", admin)[0] == 204
+    assert store.get_room("room-a") is None
 
 
-def test_delete_purge_error_is_not_500(
+def test_delete_purge_error_can_be_retried(
     admin: str, lk: FakeLiveKit, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def fail(_room_id: str, *, deadline: float) -> bool:
         raise RuntimeError("DynamoDB に届かない")
 
-    monkeypatch.setattr(timeline_store, "purge_room", fail)
+    with monkeypatch.context() as m:
+        m.setattr(timeline_store, "purge_room", fail)
+        assert call("DELETE", "/rooms/room-a", admin)[0] == 503
+    room = store.get_room("room-a")
+    assert room is not None and room.deleting_at is not None
 
     assert call("DELETE", "/rooms/room-a", admin)[0] == 204
     assert store.get_room("room-a") is None
+    assert store.members_of("room-a") == []
 
 
 def test_purge_over_budget_is_finished_on_delete_again(
@@ -231,27 +242,76 @@ def test_purge_over_budget_is_finished_on_delete_again(
     # 時間切れ(残り時間が無い)で、何も消さずにやめる
     monkeypatch.setattr(room_cleanup, "PURGE_BUDGET_S", -1.0)
 
-    assert call("DELETE", "/rooms/room-a", admin)[0] == 204
+    # 消しきれなかったことが呼び出し側に分かる
+    assert call("DELETE", "/rooms/room-a", admin)[0] == 503
     assert len(rows("room-a")) == 6
 
-    # DELETE をやり直すと(404)、残りを消す
+    # DELETE をやり直すと、残りを消す
     monkeypatch.setattr(room_cleanup, "PURGE_BUDGET_S", 6.0)
-    assert call("DELETE", "/rooms/room-a", admin)[0] == 404
+    assert call("DELETE", "/rooms/room-a", admin)[0] == 204
     assert rows("room-a") == []
+    assert keys("room-a") == []
     assert keys("room-a") == []
     assert uploads("room-a") == []
 
 
-def test_delete_again_finishes_purge(
+def test_delete_unknown_room_does_no_cleanup(
     admin: str, lk: FakeLiveKit, invalidations: list[list[str]]
 ) -> None:
-    # rooms の行だけ消えて、後始末の前で止まった
-    store.delete_room("room-a")
-    put_rows("room-a")
-    put_objects("room-a")
+    # 行の無いルームには、誰でも CloudFront の無効化や LiveKit の呼び出しを走らせられない
+    assert call("DELETE", "/rooms/room-x", admin)[0] == 404
+    assert lk.deleted_rooms == []
+    assert invalidations == []
 
-    # 2回目の DELETE は 404 だが、後始末はやり直す
-    assert call("DELETE", "/rooms/room-a", admin)[0] == 404
-    assert rows("room-a") == []
-    assert keys("room-a") == []
-    assert lk.deleted_rooms == ["room-a"]
+
+def test_delete_removes_staged_uploads(
+    admin: str, lk: FakeLiveKit, invalidations: list[list[str]]
+) -> None:
+    key = media_store.staging_media_key("room-a", "m1")
+    s3 = boto3.client("s3")
+    s3.put_object(Bucket=MEDIA_BUCKET, Key=key, Body=b"x")
+
+    assert call("DELETE", "/rooms/room-a", admin)[0] == 204
+    assert "Contents" not in s3.list_objects_v2(Bucket=MEDIA_BUCKET, Prefix=key)
+
+
+# 所属を変えたとき
+
+
+def test_evict_from_rooms(lk: FakeLiveKit) -> None:
+    lk.participants = [("member-1", STANDARD), ("member-2", STANDARD)]
+
+    assert room_cleanup.evict_from_rooms(["room-a", "room-b"], "member-1") == []
+    assert sorted(lk.removed) == [("room-a", "member-1"), ("room-b", "member-1")]
+
+
+def test_evict_from_rooms_reports_failure(lk: FakeLiveKit) -> None:
+    lk.participants = [("member-1", STANDARD)]
+    lk.remove_errors["member-1"] = RuntimeError("LiveKit に届かない")
+
+    assert room_cleanup.evict_from_rooms(["room-a"], "member-1") == ["room-a"]
+
+
+def test_evict_from_rooms_stops_at_budget(lk: FakeLiveKit, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def slow(_req: Any) -> None:
+        await asyncio.sleep(1)
+
+    monkeypatch.setattr(lk, "list_participants", slow)
+    monkeypatch.setattr(room_cleanup, "EVICT_BUDGET_S", 0.01)
+
+    assert room_cleanup.evict_from_rooms(["room-a"], "member-1") == ["room-a"]
+
+
+def test_changing_tenant_evicts_from_livekit(
+    admin: str, lk: FakeLiveKit, make_token: Token
+) -> None:
+    store.create_tenant("t2", "テナント2")
+    lk.participants = [("member-1", STANDARD)]
+    operator = make_token(sub="op", **{"cognito:groups": ["operator"]})
+
+    assert call("PUT", "/users/member-1/tenant", operator, {"tenant_id": "t2"})[0] == 404
+    store.put_user("member-1", display_name="太郎", language="ja")
+    assert call("PUT", "/users/member-1/tenant", operator, {"tenant_id": "t2"})[0] == 200
+
+    assert lk.removed == [("room-a", "member-1")]
+    assert "member-1" not in store.get_room("room-a").member_ids  # pyright: ignore[reportOptionalMemberAccess]

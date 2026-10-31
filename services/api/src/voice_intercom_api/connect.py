@@ -146,6 +146,7 @@ def delete_connect_request(room_id: RoomIdPath, admin: AdminUser) -> Response[st
         store.delete_room(room_id)
     except store.NotFoundError as e:
         raise NotFoundError("申請がない") from e
-    # 申請中は入れないので履歴は無いはずだが、念のため後始末をする
+    # 申請中は入れないので履歴は無いはずだが、念のため後始末をする。消すものが無いので、
+    # rooms.py の DELETE のように行を残してやり直させることはしない
     room_cleanup.after_delete(room_id)
     return Response(status_code=204, body="", content_type=None)

@@ -45,8 +45,9 @@ from voice_intercom_api.routing import writable_room as _writable_room
 # Agent が翻訳先を決めるのに使う、参加者の属性のキー(services/agent の languages.py)
 LANGUAGE_ATTRIBUTE = "language"
 
-# アプリは接続直後に使うだけで、接続後のトークンは LiveKit サーバーが更新する
-LIVEKIT_TOKEN_TTL = timedelta(minutes=15)
+# アプリは受け取ってすぐ接続に使い、接続後のトークンは LiveKit サーバーが更新する。入り直すときも
+# 取り直す(client-core の roomKeeper)。発行済みのトークンはアーカイブや削除の後も使えるので短くする
+LIVEKIT_TOKEN_TTL = timedelta(minutes=2)
 
 app = APIGatewayHttpResolver(enable_validation=True)
 app.configure_openapi(
@@ -180,7 +181,11 @@ def create_livekit_token(
             }
         )
         .with_ttl(LIVEKIT_TOKEN_TTL)
-        .with_grants(livekit.VideoGrants(room_join=True, room=body.room_name))
+        # 参加者が自分の表示名や言語を変えられないよう、属性の変更の権限は明示して渡さない
+        # (participants.py)
+        .with_grants(
+            livekit.VideoGrants(room_join=True, room=body.room_name, can_update_own_metadata=False)
+        )
         # Agent は明示ディスパッチ(services/agent の README)。トークンのディスパッチは
         # ルームを作るときにしか効かないので、だれが最初に入ってもよいよう全員のトークンに入れる
         .with_room_config(

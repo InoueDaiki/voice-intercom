@@ -19,11 +19,11 @@ from aws_lambda_powertools.event_handler.openapi.params import Body, Path, Query
 from voice_intercom_api import deletion, timeline_store
 from voice_intercom_api.auth import AgentPrincipal, CurrentUser
 from voice_intercom_api.routing import (
+    AGENT_WRITE_ERRORS,
     AUTH,
-    ROOM_NOT_FOUND,
     ROOM_READ_ERRORS,
     RoomIdPath,
-    existing_room,
+    agent_writable_room,
     responses,
     visible_room,
     writable_room,
@@ -141,11 +141,12 @@ def delete_timeline_event(
     summary="発話かテキスト入力を履歴に保存する(Agent)。同じ内容なら何度呼んでも同じ結果になる",
     description="event_id は `<occurred_at>#<source_id>` で作る。"
     "同じ event_id があれば置き換える。ただし送った本人が消した行(墓石)は置き換えず、"
-    "墓石を返す。",
+    "墓石を返す。アーカイブしたルームは 409 で、LiveKit のルームを閉じる"
+    "(発行済みのトークンで作り直されたもの)。",
     operation_id="putTimelineEvent",
     tags=["timeline"],
     security=AUTH,
-    responses=responses(TimelineEvent, errors=ROOM_NOT_FOUND),
+    responses=responses(TimelineEvent, errors=AGENT_WRITE_ERRORS),
 )
 def put_timeline_event(
     room_id: RoomIdPath,
@@ -159,5 +160,5 @@ def put_timeline_event(
     body: Annotated[PutTimelineEventRequest, Body()],
     _agent: AgentPrincipal,
 ) -> TimelineEvent:
-    existing_room(room_id)
+    agent_writable_room(room_id)
     return timeline_store.put_event(room_id, source_id, body)

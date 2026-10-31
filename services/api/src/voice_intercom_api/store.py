@@ -4,7 +4,8 @@
 ローカルでは scripts/with-local-aws.sh が接続先を DynamoDB Local に向ける。
 
 テナントとルームの種別は docs/設計メモ.md の「テナントとルームの種別」。
-- ルームの行は、作ったテナント(tenant_id)、種別(kind)、アーカイブした時刻(archived_at)を持つ。
+- ルームの行は、作ったテナント(tenant_id)、種別(kind)、アーカイブした時刻(archived_at)、
+  削除を始めた時刻(deleting_at。room_cleanup.py の後始末が終わるまで)を持つ。
   Connect は相手のテナント(connect_tenant_id)と、申請中か(connect_status)も持つ。
   テナントのルームは GSI(tenant_id-index、connect_tenant_id-index)で引く。
 - メンバーの行は、役割(role。owner か member)と、その人のテナント(tenant_id)を持つ。
@@ -160,6 +161,7 @@ def _room(item: dict[str, Any], members: list[Member]) -> Room:
         member_ids=[m.user_id for m in members],
         owner_ids=[m.user_id for m in members if m.role == "owner"],
         archived_at=item.get("archived_at"),
+        deleting_at=item.get("deleting_at"),
         created_at=item["created_at"],
         updated_at=item["updated_at"],
     )
@@ -200,6 +202,45 @@ def delete_member(room_id: str, user_id: str) -> None:
     _members().delete_item(Key={"room_id": room_id, "user_id": user_id})
 
 
+def member_tenant(room_id: str, user_id: str) -> str | None:
+    """メンバーの行のテナント。メンバーでなければ None、移す前の行なら空文字。"""
+    item = (
+        _members()
+        .get_item(Key={"room_id": room_id, "user_id": user_id}, ConsistentRead=True)
+        .get("Item")
+    )
+    return None if item is None else item.get("tenant_id", "")
+
+
+def memberships_outside(user_id: str, tenant_id: str | None) -> list[str]:
+    """その人のメンバーの行のうち、テナントが tenant_id でないもののルーム(所属を変えたとき)。
+
+    移す前の行(テナントが無い)は、ルームを作ったテナントの人として扱う。行が残っていて rooms に
+    無いルームも返す。GSI は結果整合なので、足した直後の行が漏れることはあるが、その行は
+    routing.py の今の所属の確かめで使えない。
+    """
+    room_ids = [
+        item["room_id"]
+        for item in _query(
+            _members(),
+            IndexName=MEMBER_ROOMS_INDEX,
+            KeyConditionExpression=Key("user_id").eq(user_id),
+        )
+    ]
+    rooms = {
+        item["room_id"]: item
+        for item in _batch_get(get_settings().rooms_table, "room_id", room_ids)
+    }
+    outside: list[str] = []
+    for room_id in room_ids:
+        home = member_tenant(room_id, user_id)
+        if home is None:
+            continue
+        if (home or rooms.get(room_id, {}).get("tenant_id")) != tenant_id:
+            outside.append(room_id)
+    return outside
+
+
 def _clear_members(room_id: str) -> None:
     with _members().batch_writer() as batch:
         for m in members_of(room_id):
@@ -214,8 +255,12 @@ def _rooms_with_members(items: Iterable[dict[str, Any]]) -> list[Room]:
     return sorted(rooms, key=lambda r: (r.name, r.room_id))
 
 
-def list_member_rooms(user_id: str) -> list[Room]:
-    """その人がメンバーのルーム(名前の順)。申請中の Connect は出さない。"""
+def list_member_rooms(user_id: str, tenant_id: str) -> list[Room]:
+    """その人がメンバーのルーム(名前の順)。申請中の Connect と、消している途中のルームは出さない。
+
+    メンバーの行のテナントが今の所属(tenant_id)と違うルームも出さない(所属を変えたときの
+    後始末が途中で止まった行)。
+    """
     room_ids = [
         item["room_id"]
         for item in _query(
@@ -228,10 +273,16 @@ def list_member_rooms(user_id: str) -> list[Room]:
     items = [
         item
         for item in _batch_get(get_settings().rooms_table, "room_id", room_ids)
-        if item.get("connect_status") != "pending"
+        if item.get("connect_status") != "pending" and "deleting_at" not in item
     ]
-    # GSI は結果整合なので、外した直後の人の行が残っていることがある
-    return [r for r in _rooms_with_members(items) if user_id in r.member_ids]
+    rooms: list[Room] = []
+    for item in items:
+        members = members_of(item["room_id"])
+        # GSI は結果整合なので、外した直後の人の行が残っていることがある
+        mine = next((m for m in members if m.user_id == user_id), None)
+        if mine is not None and (mine.tenant_id or item.get("tenant_id")) == tenant_id:
+            rooms.append(_room(item, members))
+    return sorted(rooms, key=lambda r: (r.name, r.room_id))
 
 
 def _tenant_room_items(tenant_id: str) -> list[dict[str, Any]]:
@@ -250,7 +301,10 @@ def _tenant_room_items(tenant_id: str) -> list[dict[str, Any]]:
 
 
 def list_tenant_rooms(tenant_id: str) -> list[Room]:
-    """テナントに関わるルーム(管理者の一覧。名前の順)。申請中の Connect も出す。"""
+    """テナントに関わるルーム(管理者の一覧。名前の順)。
+
+    申請中の Connect も、消している途中のルーム(deleting_at。管理者が DELETE をやり直す)も出す。
+    """
     return _rooms_with_members(_tenant_room_items(tenant_id))
 
 
@@ -263,7 +317,7 @@ def list_joinable_rooms(tenant_id: str, user_id: str) -> list[Room]:
             IndexName=TENANT_ROOMS_INDEX,
             KeyConditionExpression=Key("tenant_id").eq(tenant_id),
         )
-        if item.get("kind") == "public" and "archived_at" not in item
+        if item.get("kind") == "public" and "archived_at" not in item and "deleting_at" not in item
     ]
     return [r for r in _rooms_with_members(items) if user_id not in r.member_ids]
 
@@ -321,7 +375,9 @@ REMOVE = object()
 
 
 def update_room(room_id: str, **values: Any) -> Room:
-    """ルームの行の項目(name、kind、archived_at、connect_status)を変える。値が REMOVE なら消す。
+    """ルームの行の項目(name、kind、archived_at、deleting_at、connect_status)を変える。
+
+    値が REMOVE なら消す。
 
     updated_at も変える。無いルームなら NotFoundError。
     """
@@ -348,15 +404,17 @@ def update_room(room_id: str, **values: Any) -> Room:
 
 
 def delete_room(room_id: str) -> None:
-    """rooms とメンバーの行を消す。履歴とメディアは呼び出し側が消す(room_cleanup.py)。"""
+    """メンバーと rooms の行を消す。履歴とメディアは呼び出し側が先に消す(room_cleanup.py)。
+
+    rooms の行を後に消すので、途中で失敗しても、行が残っていれば DELETE をやり直せる。
+    """
+    _clear_members(room_id)
     try:
         _rooms().delete_item(Key={"room_id": room_id}, ConditionExpression=Attr("room_id").exists())
     except ClientError as e:
         if _is_conditional_check_failed(e):
             raise NotFoundError(room_id) from e
         raise
-    # 途中で失敗して行が残っても、一覧は rooms に無いルームを出さず、同じ room_id で作り直せば消える
-    _clear_members(room_id)
 
 
 def room_members(room_id: str) -> list[RoomMember]:

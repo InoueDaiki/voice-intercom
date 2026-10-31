@@ -44,6 +44,7 @@ from voice_intercom_api.routing import (
     RoomIdPath,
     can_manage,
     existing_room,
+    is_member,
     managed_room,
     responses,
     tenant_actor,
@@ -55,6 +56,8 @@ router = Router()
 UserIdPath = Annotated[
     str, Path(min_length=1, max_length=128, description="user_id(Cognito の sub)")
 ]
+
+DELETE_INCOMPLETE = "後始末が途中で止まった。同じ DELETE をやり直す"
 
 LAST_OWNER = "最後のオーナーは抜けられない(ほかの人をオーナーにするか、アーカイブする)"
 
@@ -105,7 +108,8 @@ def list_rooms(
     ] = "member",
 ) -> RoomList:
     if scope == "member":
-        return RoomList(items=store.list_member_rooms(user.sub))
+        tenant_id = store.tenant_of(user.sub)
+        return RoomList(items=store.list_member_rooms(user.sub, tenant_id) if tenant_id else [])
     actor = tenant_actor(user)
     if scope == "joinable":
         return RoomList(items=store.list_joinable_rooms(actor.tenant_id, actor.sub))
@@ -153,8 +157,15 @@ def create_room(body: Annotated[CreateRoomRequest, Body()], user: CurrentUser) -
     responses=responses(Room, errors=ROOM_NOT_FOUND),
 )
 def get_room(room_id: RoomIdPath, user: CurrentUser) -> Room:
-    room = existing_room(room_id)
-    if user.sub in room.member_ids:
+    room = store.get_room(room_id)
+    if room is None:
+        raise NotFoundError("ルームがない")
+    if room.deleting_at is not None:
+        # 消している途中のルームは、DELETE をやり直す管理者にだけ見せる
+        if user.is_admin and room.tenant_id == store.tenant_of(user.sub):
+            return room
+        raise NotFoundError("ルームがない")
+    if is_member(room, user.sub):
         return room
     actor = tenant_actor(user)
     # 参加する前に、Public の名前と人数を見られる
@@ -188,12 +199,20 @@ def update_room(
 @router.delete(
     "/rooms/<room_id>",
     summary="ルームを消す(ルームを作ったテナントの管理者)",
-    description="LiveKit のルームにいる全員を切り、履歴とメディアも消す。",
+    description="LiveKit のルームにいる全員を切り、履歴とメディアも消す。"
+    "後始末を時間内に終えられなければ 503 で、ルームは消している途中(deleting_at)のまま残る。"
+    "同じ DELETE をやり直すと続きを消し、終わると 204 を返す。"
+    "やり直す間も、メンバーにはルームが無いものとして見える。",
     operation_id="deleteRoom",
     tags=["rooms"],
     security=AUTH,
     status_code=204,
-    responses=responses(None, status=204, description="消した", errors=ROOM_NOT_FOUND),
+    responses=responses(
+        None,
+        status=204,
+        description="消した",
+        errors=ROOM_NOT_FOUND | {503: DELETE_INCOMPLETE},
+    ),
 )
 def delete_room(room_id: RoomIdPath, user: CurrentUser) -> Response[str]:
     if not user.is_admin:
@@ -201,17 +220,19 @@ def delete_room(room_id: RoomIdPath, user: CurrentUser) -> Response[str]:
     actor = tenant_actor(user)
     room = store.get_room(room_id)
     if room is None:
-        # 前の DELETE の後始末が途中で終わっていても、やり直せるようにする
-        room_cleanup.after_delete(room_id)
         raise NotFoundError("ルームがない")
     if room.tenant_id != actor.tenant_id:
         raise ForbiddenError("ルームを作ったテナントの管理者だけが消せる")
     try:
+        # 行は後始末が終わるまで残す。やり直す人のテナントを確かめ、やり直せることを覚えておくため
+        if room.deleting_at is None:
+            store.update_room(room_id, deleting_at=store.now())
+        # LiveKit のルームを消して全員を切り、履歴とメディアを消す(room_cleanup.py)
+        if not room_cleanup.after_delete(room_id):
+            raise ServiceError(HTTPStatus.SERVICE_UNAVAILABLE, DELETE_INCOMPLETE)
         store.delete_room(room_id)
     except store.NotFoundError as e:
         raise NotFoundError("ルームがない") from e
-    # LiveKit のルームを消して全員を切り、履歴とメディアを消す(room_cleanup.py)
-    room_cleanup.after_delete(room_id)
     return Response(status_code=204, body="", content_type=None)
 
 
@@ -228,7 +249,7 @@ def delete_room(room_id: RoomIdPath, user: CurrentUser) -> Response[str]:
 def join_room(room_id: RoomIdPath, user: CurrentUser) -> Room:
     actor = tenant_actor(user)
     room = existing_room(room_id)
-    if actor.sub in room.member_ids:
+    if is_member(room, actor.sub):
         return room
     if room.kind != "public" or room.tenant_id != actor.tenant_id:
         raise ForbiddenError("招待された人だけが入れるルーム")
@@ -251,22 +272,14 @@ def join_room(room_id: RoomIdPath, user: CurrentUser) -> Room:
 )
 def list_room_members(room_id: RoomIdPath, user: CurrentUser) -> RoomMemberList:
     room = existing_room(room_id)
-    if user.sub not in room.member_ids and not can_manage(room, tenant_actor(user)):
+    if not is_member(room, user.sub) and not can_manage(room, tenant_actor(user)):
         raise ForbiddenError("このルームのメンバーではない")
     return RoomMemberList(items=store.room_members(room_id))
 
 
-def _member_tenant(room_id: str, user_id: str) -> str | None:
-    """メンバーの行のテナント。メンバーでなければ None。"""
-    for m in store.members_of(room_id):
-        if m.user_id == user_id:
-            return m.tenant_id
-    return None
-
-
 def _check_own_side(room: Room, actor: Actor, user_id: str) -> None:
     """そのメンバーを、自分が変えてよいか(自分のテナントの人か)。"""
-    tenant_id = _member_tenant(room.room_id, user_id)
+    tenant_id = store.member_tenant(room.room_id, user_id)
     # 移す前の行(テナントが無い)は、ルームを作ったテナントの人として扱う
     if (tenant_id or room.tenant_id) != actor.tenant_id:
         raise ForbiddenError("自分のテナントの人だけを変えられる")
@@ -356,7 +369,10 @@ def archive_room(room_id: RoomIdPath, user: CurrentUser) -> Room:
     _not_pending(room)
     if room.archived_at is not None:
         return room
-    room = store.update_room(room_id, archived_at=store.now())
+    try:
+        room = store.update_room(room_id, archived_at=store.now())
+    except store.NotFoundError as e:
+        raise NotFoundError("ルームがない") from e
     room_cleanup.close_livekit_room(room_id)
     return room
 
@@ -373,7 +389,10 @@ def unarchive_room(room_id: RoomIdPath, user: CurrentUser) -> Room:
     room = managed_room(room_id, tenant_actor(user))
     if room.archived_at is None:
         return room
-    return store.update_room(room_id, archived_at=store.REMOVE)
+    try:
+        return store.update_room(room_id, archived_at=store.REMOVE)
+    except store.NotFoundError as e:
+        raise NotFoundError("ルームがない") from e
 
 
 # 音声

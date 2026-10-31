@@ -28,7 +28,13 @@ from pydantic import BaseModel, Field
 
 from voice_intercom_api import room_push, store
 from voice_intercom_api.auth import AgentPrincipal
-from voice_intercom_api.routing import AUTH, ROOM_NOT_FOUND, RoomIdPath, existing_room, responses
+from voice_intercom_api.routing import (
+    AGENT_WRITE_ERRORS,
+    AUTH,
+    RoomIdPath,
+    agent_writable_room,
+    responses,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,14 +90,14 @@ class NotificationResult(BaseModel):
     operation_id="notifySpeaking",
     tags=["notifications"],
     security=AUTH,
-    responses=responses(NotificationResult, errors=ROOM_NOT_FOUND),
+    responses=responses(NotificationResult, errors=AGENT_WRITE_ERRORS),
 )
 def notify_speaking(
     room_id: RoomIdPath,
     body: Annotated[SpeakingNotificationRequest, Body()],
     _agent: AgentPrincipal,
 ) -> NotificationResult:
-    room = existing_room(room_id)
+    room = agent_writable_room(room_id)
     recipients = room_push.recipients_of(room.member_ids, [body.speaker_id, *body.present_ids])
     if not recipients:
         return NotificationResult(sent=0, skipped=0)
@@ -129,14 +135,14 @@ def text_body(sender_name: str | None, text: str) -> str:
     operation_id="notifyText",
     tags=["notifications"],
     security=AUTH,
-    responses=responses(NotificationResult, errors=ROOM_NOT_FOUND),
+    responses=responses(NotificationResult, errors=AGENT_WRITE_ERRORS),
 )
 def notify_text(
     room_id: RoomIdPath,
     body: Annotated[TextNotificationRequest, Body()],
     _agent: AgentPrincipal,
 ) -> NotificationResult:
-    room = existing_room(room_id)
+    room = agent_writable_room(room_id)
     recipients = room_push.recipients_of(room.member_ids, [body.sender_id, *body.present_ids])
     if not recipients:
         return NotificationResult(sent=0, skipped=0)

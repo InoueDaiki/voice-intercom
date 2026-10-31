@@ -2,7 +2,15 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
-from timeline_env import AGENT_SCOPE, Token, call, setup_timeline, teardown_timeline
+from timeline_env import (
+    AGENT_SCOPE,
+    FakeLiveKit,
+    Token,
+    belong,
+    call,
+    setup_timeline,
+    teardown_timeline,
+)
 
 from voice_intercom_api import store, timeline_store
 
@@ -177,8 +185,35 @@ def test_pending_connect_cannot_be_read(make_token: Token) -> None:
     store.create_room(
         "room-c", "C", tenant_id="t1", kind="connect", owner_ids=["admin-1"], connect_tenant_id="t2"
     )
+    belong("admin-1", "t1")
 
     assert call("GET", "/rooms/room-c/timeline", make_token(sub="admin-1"))[0] == 409
+
+
+def test_moved_member_cannot_read(member: str) -> None:
+    # メンバーの行が残っていても、今の所属が違えば読めない
+    belong("member-1", "t2")
+
+    assert call("GET", "/rooms/room-a/timeline", member)[0] == 403
+
+
+def test_agent_cannot_save_to_archived_room(agent: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    lk = FakeLiveKit()
+    lk.install(monkeypatch)
+    store.update_room("room-a", archived_at=store.now())
+
+    status, _ = put(agent, "seg-archived", utterance())
+
+    assert status == 409
+    assert timeline_store.list_events("room-a", limit=10, before=None) == ([], None)
+    # 発行済みのトークンで作り直されたルームなので、閉じて全員を切る
+    assert lk.deleted_rooms == ["room-a"]
+
+
+def test_agent_cannot_save_while_deleting(agent: str) -> None:
+    store.update_room("room-a", deleting_at=store.now())
+
+    assert put(agent, "seg-1", utterance())[0] == 404
 
 
 def test_non_member_cannot_read(member: str, outsider: str) -> None:

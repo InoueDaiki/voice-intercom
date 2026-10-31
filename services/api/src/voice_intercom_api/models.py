@@ -46,6 +46,11 @@ class Room(BaseModel):
     member_ids: MemberIds
     owner_ids: Annotated[list[str], Field(description="オーナーの user_id(user_id の順)")]
     archived_at: Timestamp | None = Field(default=None, description="アーカイブした時刻")
+    deleting_at: Timestamp | None = Field(
+        default=None,
+        description="削除を始めた時刻。後始末が終わるまでの間だけあり、管理者にだけ見える"
+        "(DELETE をやり直す)",
+    )
     created_at: Timestamp
     updated_at: Timestamp
 

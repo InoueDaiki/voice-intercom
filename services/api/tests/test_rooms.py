@@ -26,22 +26,32 @@ class FakeCleanup:
         self.evicted: list[tuple[str, list[str]]] = []
         self.closed: list[str] = []
         self.deleted: list[str] = []
+        self.evicted_from: list[tuple[list[str], str]] = []
+        self.evict_failures: set[str] = set()
+        self.purge_finishes = True
 
     def evict(self, room_id: str, user_ids: list[str]) -> list[str]:
         self.evicted.append((room_id, user_ids))
         return user_ids
 
-    def close_livekit_room(self, room_id: str) -> None:
-        self.closed.append(room_id)
+    def evict_from_rooms(self, room_ids: list[str], user_id: str) -> list[str]:
+        self.evicted_from.append((sorted(room_ids), user_id))
+        return [room_id for room_id in room_ids if room_id in self.evict_failures]
 
-    def after_delete(self, room_id: str) -> None:
+    def close_livekit_room(self, room_id: str) -> bool:
+        self.closed.append(room_id)
+        return True
+
+    def after_delete(self, room_id: str) -> bool:
         self.deleted.append(room_id)
+        return self.purge_finishes
 
 
 @pytest.fixture(autouse=True)
 def cleanup(monkeypatch: pytest.MonkeyPatch) -> FakeCleanup:
     fake = FakeCleanup()
     monkeypatch.setattr(room_cleanup, "evict", fake.evict)
+    monkeypatch.setattr(room_cleanup, "evict_from_rooms", fake.evict_from_rooms)
     monkeypatch.setattr(room_cleanup, "close_livekit_room", fake.close_livekit_room)
     monkeypatch.setattr(room_cleanup, "after_delete", fake.after_delete)
     return fake
@@ -78,6 +88,8 @@ def seed(tables: None) -> None:
 def token(make_token: Token) -> Callable[[str], str]:
     def make(user_id: str) -> str:
         groups = ["admin"] if user_id.startswith("admin") else []
+        if user_id.startswith("operator"):
+            groups = ["operator"]
         return make_token(sub=user_id, **{"cognito:groups": groups})
 
     return make
@@ -500,6 +512,142 @@ def test_set_audio_errors(
     assert audio_calls == []
 
 
+def test_archive_of_deleted_room(
+    token: Callable[[str], str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def gone(room_id: str, **_values: object) -> None:
+        raise store.NotFoundError(room_id)
+
+    monkeypatch.setattr(store, "update_room", gone)
+
+    assert call("POST", "/rooms/room-a/archive", token("owner-1"))[0] == 404
+
+
+def test_unarchive_of_deleted_room(
+    token: Callable[[str], str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store.update_room("room-a", archived_at=store.now())
+
+    def gone(room_id: str, **_values: object) -> None:
+        raise store.NotFoundError(room_id)
+
+    monkeypatch.setattr(store, "update_room", gone)
+
+    assert call("DELETE", "/rooms/room-a/archive", token("owner-1"))[0] == 404
+
+
+# 所属を変えたとき
+
+
+def set_tenant(token: Callable[[str], str], user_id: str, tenant_id: str | None) -> int:
+    return call("PUT", f"/users/{user_id}/tenant", token("operator-1"), {"tenant_id": tenant_id})[0]
+
+
+def connect_room() -> None:
+    store.create_room(
+        "room-c", "C", tenant_id="t1", kind="connect", owner_ids=["owner-1"], connect_tenant_id="t2"
+    )
+    store.update_room("room-c", connect_status="active")
+    store.put_member("room-c", "outsider-1", role="owner", tenant_id="t2")
+
+
+def test_changing_tenant_removes_memberships(
+    token: Callable[[str], str], cleanup: FakeCleanup
+) -> None:
+    assert set_tenant(token, "member-1", "t2") == 200
+
+    assert store.tenant_of("member-1") == "t2"
+    assert "member-1" not in store.get_room("room-a").member_ids  # pyright: ignore[reportOptionalMemberAccess]
+    assert cleanup.evicted_from == [(["room-a"], "member-1")]
+
+
+def test_removing_tenant_removes_memberships(
+    token: Callable[[str], str], cleanup: FakeCleanup
+) -> None:
+    assert set_tenant(token, "member-1", None) == 200
+
+    assert store.tenant_of("member-1") is None
+    assert "member-1" not in store.get_room("room-a").member_ids  # pyright: ignore[reportOptionalMemberAccess]
+
+
+def test_same_tenant_keeps_memberships(token: Callable[[str], str], cleanup: FakeCleanup) -> None:
+    assert set_tenant(token, "member-1", "t1") == 200
+
+    assert "member-1" in store.get_room("room-a").member_ids  # pyright: ignore[reportOptionalMemberAccess]
+    assert cleanup.evicted_from == [([], "member-1")]
+
+
+def test_last_owner_is_removed_and_admin_takes_over(
+    token: Callable[[str], str],
+) -> None:
+    assert set_tenant(token, "owner-1", "t2") == 200
+
+    room = store.get_room("room-a")
+    assert room is not None
+    assert room.owner_ids == []
+    # オーナーの居ないルームは、テナントの管理者が扱う
+    assert (
+        call("PUT", "/rooms/room-a/members/member-1", token("admin-1"), {"role": "owner"})[0] == 200
+    )
+
+
+def test_connect_removes_only_own_side(token: Callable[[str], str]) -> None:
+    connect_room()
+
+    assert set_tenant(token, "owner-1", None) == 200
+
+    room = store.get_room("room-c")
+    assert room is not None
+    assert room.member_ids == ["outsider-1"]
+    assert room.owner_ids == ["outsider-1"]
+
+
+def test_moving_to_connect_partner_removes_member(token: Callable[[str], str]) -> None:
+    # 相手のテナントへ移っても、元の側のメンバーのままにはしない
+    connect_room()
+
+    assert set_tenant(token, "owner-1", "t2") == 200
+
+    assert store.get_room("room-c").member_ids == ["outsider-1"]  # pyright: ignore[reportOptionalMemberAccess]
+
+
+def test_evict_failure_keeps_row_for_retry(
+    token: Callable[[str], str], cleanup: FakeCleanup
+) -> None:
+    cleanup.evict_failures = {"room-a"}
+
+    assert set_tenant(token, "member-1", "t2") == 503
+    # 所属の変更は効いていて、外せなかったルームも使えない
+    assert store.tenant_of("member-1") == "t2"
+    assert "member-1" in store.get_room("room-a").member_ids  # pyright: ignore[reportOptionalMemberAccess]
+    assert call("GET", "/rooms/room-a", token("member-1"))[0] == 403
+
+    cleanup.evict_failures = set()
+    assert set_tenant(token, "member-1", "t2") == 200
+    assert "member-1" not in store.get_room("room-a").member_ids  # pyright: ignore[reportOptionalMemberAccess]
+
+
+def test_stale_row_gives_no_access(token: Callable[[str], str]) -> None:
+    # 所属の変更だけが効いて、メンバーの行が残っている(前からあるデータも同じ)
+    store.set_user_tenant("member-1", "t2")
+
+    member = token("member-1")
+    assert call("GET", "/rooms", member)[1]["items"] == []
+    assert call("GET", "/rooms/room-a", member)[0] == 403
+    assert call("GET", "/rooms/room-a/members", member)[0] == 403
+    # 所属の無い人も同じ
+    store.set_user_tenant("member-1", None)
+    assert call("GET", "/rooms", member)[1]["items"] == []
+    assert call("GET", "/rooms/room-a", member)[0] == 403
+
+
+def test_stale_owner_of_connect_cannot_manage(token: Callable[[str], str]) -> None:
+    connect_room()
+    store.set_user_tenant("owner-1", "t2")
+
+    assert call("PATCH", "/rooms/room-c", token("owner-1"), {"name": "D"})[0] == 403
+
+
 # 削除
 
 
@@ -524,8 +672,40 @@ def test_delete_requires_admin_of_room_tenant(
 
 def test_delete_unknown_room(token: Callable[[str], str], cleanup: FakeCleanup) -> None:
     assert call("DELETE", "/rooms/room-x", token("admin-1"))[0] == 404
-    # 前の DELETE の後始末が途中で終わっていても、やり直せる
-    assert cleanup.deleted == ["room-x"]
+    # 行が無いルームの後始末は、どのテナントのものか確かめられないので行わない
+    assert cleanup.deleted == []
+
+
+def test_unfinished_delete_can_be_retried(
+    token: Callable[[str], str], cleanup: FakeCleanup
+) -> None:
+    cleanup.purge_finishes = False
+
+    assert call("DELETE", "/rooms/room-p", token("admin-1"))[0] == 503
+
+    # 行は残るが、メンバーやテナントの人からは、もう無いルームに見える
+    room = store.get_room("room-p")
+    assert room is not None and room.deleting_at is not None
+    assert call("GET", "/rooms/room-p", token("owner-1"))[0] == 404
+    assert call("POST", "/rooms/room-p/join", token("member-1"))[0] == 404
+    ids = [r["room_id"] for r in call("GET", "/rooms", token("owner-1"))[1]["items"]]
+    assert "room-p" not in ids
+    joinable = call("GET", "/rooms", token("member-1"), scope="joinable")[1]["items"]
+    assert joinable == []
+    # 管理者には見え、やり直せる
+    assert call("GET", "/rooms/room-p", token("admin-1"))[0] == 200
+    listed = call("GET", "/rooms", token("admin-1"), scope="tenant")[1]["items"]
+    assert [r["deleting_at"] is not None for r in listed if r["room_id"] == "room-p"] == [True]
+
+    # ほかのテナントの管理者は、やり直せない
+    assert call("DELETE", "/rooms/room-p", token("admin-2"))[0] == 403
+    assert cleanup.deleted == ["room-p"]
+
+    cleanup.purge_finishes = True
+    assert call("DELETE", "/rooms/room-p", token("admin-1"))[0] == 204
+    assert store.get_room("room-p") is None
+    assert store.members_of("room-p") == []
+    assert call("DELETE", "/rooms/room-p", token("admin-1"))[0] == 404
 
 
 # 前のデータを移す

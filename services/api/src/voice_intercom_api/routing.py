@@ -17,7 +17,7 @@ from aws_lambda_powertools.event_handler.openapi.params import Path
 from aws_lambda_powertools.event_handler.openapi.types import OpenAPIResponse
 from pydantic import BaseModel
 
-from voice_intercom_api import store
+from voice_intercom_api import room_cleanup, store
 from voice_intercom_api.auth import Principal
 from voice_intercom_api.models import Room
 
@@ -65,21 +65,34 @@ RoomIdPath = Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]{1,64}$", description="
 
 
 def existing_room(room_id: str) -> Room:
-    """ルームを返す。なければ 404。"""
+    """ルームを返す。なければ、消している途中なら 404。"""
     room = store.get_room(room_id)
-    if room is None:
+    if room is None or room.deleting_at is not None:
         raise NotFoundError("ルームがない")
     return room
 
 
+def is_member(room: Room, user_id: str) -> bool:
+    """メンバーの行があり、その行のテナントが今の所属と同じか。
+
+    所属を変えたら tenants.py がメンバーの行を外すが、途中で失敗したときや、前からある行でも
+    使えないよう、ここでも確かめる。移す前の行(テナントが無い)は、ルームを作ったテナントの人。
+    Connect でも、行のテナントを見るので、相手のテナントに移った人は入れない。
+    """
+    if user_id not in room.member_ids:
+        return False
+    home = store.member_tenant(room.room_id, user_id) or room.tenant_id
+    return store.tenant_of(user_id) == home
+
+
 def visible_room(room_id: str, user: Principal) -> Room:
-    """メンバーなら、ルームを返す(読むとき。アーカイブしたルームも読める)。
+    """今の所属のメンバーなら、ルームを返す(読むとき。アーカイブしたルームも読める)。
 
     管理者もメンバーでなければ読めない(docs/設計メモ.md の「テナントとルームの種別」)。
     申請中の Connect は 409。
     """
     room = existing_room(room_id)
-    if user.sub not in room.member_ids:
+    if not is_member(room, user.sub):
         raise ForbiddenError("このルームのメンバーではない")
     if room.connect_status == "pending":
         raise ServiceError(HTTPStatus.CONFLICT, "Connect の申請中")
@@ -94,8 +107,23 @@ def writable_room(room_id: str, user: Principal) -> Room:
     return room
 
 
+def agent_writable_room(room_id: str) -> Room:
+    """Agent が履歴や通知を書けるルームを返す。アーカイブしたルームは 409。
+
+    発行済みのトークンで入り直すと、LiveKit はルームを作り直し、Agent も割り当てる。ここに
+    来るのはそのときなので、LiveKit のルームを閉じて全員を切る(docs/設計メモ.md の
+    「メンバーを外したとき・ルームを消したときの後始末」)。
+    """
+    room = existing_room(room_id)
+    if room.archived_at is not None:
+        room_cleanup.close_livekit_room(room_id)
+        raise ServiceError(HTTPStatus.CONFLICT, "アーカイブしたルーム")
+    return room
+
+
 ROOM_READ_ERRORS = ROOM_NOT_FOUND | {409: "Connect の申請中"}
 ROOM_WRITE_ERRORS = ROOM_NOT_FOUND | {409: "Connect の申請中か、アーカイブしたルーム"}
+AGENT_WRITE_ERRORS = ROOM_NOT_FOUND | {409: "アーカイブしたルーム"}
 
 
 @dataclass(frozen=True)
@@ -127,7 +155,7 @@ def can_manage(room: Room, actor: Actor) -> bool:
     """オーナーか、ルームに関わるテナントの管理者か。"""
     if actor.tenant_id not in room_tenants(room):
         return False
-    return actor.sub in room.owner_ids or actor.user.is_admin
+    return actor.user.is_admin or (actor.sub in room.owner_ids and is_member(room, actor.sub))
 
 
 def managed_room(room_id: str, actor: Actor) -> Room:
