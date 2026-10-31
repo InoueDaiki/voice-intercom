@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { createClientApi } from "../api.ts";
-import { LoginRequiredError, RenewalRetry, storedUserChange, storedUserSub } from "./session.ts";
+import { isInvalidGrant, LoginRequiredError, RenewalRetry, storedUserChange, storedUserSub, withDeadline } from "./session.ts";
 
 class Refused extends Error {}
 
@@ -33,6 +33,34 @@ describe("RenewalRetry", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(renew).toHaveBeenCalledTimes(2);
     expect(retry.retrying).toBe(false);
+  });
+
+  test("やり直しの末に更新できたら、1回だけ知らせる", async () => {
+    const retry: RenewalRetry = setup(async () => {
+      // 実際の更新でも、完了の合図(succeeded)は renew の中で届く
+      retry.succeeded();
+    });
+    const recovered = vi.fn();
+    retry.subscribeRecovered(recovered);
+
+    retry.failed(new Error("offline"));
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(recovered).toHaveBeenCalledTimes(1);
+  });
+
+  test("ふだんの更新の成功や、解除の後は知らせない", async () => {
+    const retry = setup(async () => {});
+    const recovered = vi.fn();
+    const unsubscribe = retry.subscribeRecovered(recovered);
+
+    retry.succeeded();
+    expect(recovered).not.toHaveBeenCalled();
+
+    unsubscribe();
+    retry.failed(new Error("offline"));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(recovered).not.toHaveBeenCalled();
   });
 
   test("サーバーが断ったら、やり直さない", async () => {
@@ -124,5 +152,36 @@ describe("API の呼び出し", () => {
       },
     });
     await expect(api.listRooms()).rejects.toBeInstanceOf(LoginRequiredError);
+  });
+});
+
+describe("isInvalidGrant", () => {
+  test("invalid_grant だけを断られたとみなす", () => {
+    expect(isInvalidGrant({ error: "invalid_grant" })).toBe(true);
+    expect(isInvalidGrant({ error: "server_error" })).toBe(false);
+    expect(isInvalidGrant(new TypeError("Failed to fetch"))).toBe(false);
+    expect(isInvalidGrant(undefined)).toBe(false);
+  });
+});
+
+describe("withDeadline", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("期限が来たら、応答を待たずに投げる", async () => {
+    const caught = withDeadline(new Promise(() => {}), 5000).catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await caught).toBeInstanceOf(Error);
+  });
+
+  test("期限の前に終われば、その結果を返す", async () => {
+    await expect(withDeadline(Promise.resolve("ok"), 5000)).resolves.toBe("ok");
+    await expect(withDeadline(Promise.reject(new Error("refused")), 5000)).rejects.toThrow("refused");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

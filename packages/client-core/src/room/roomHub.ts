@@ -122,6 +122,14 @@ export class RoomHub extends Observable {
     }
   }
 
+  // 止まっていたログインが戻った。切れたまま・入れなかったままのルームに入り直す。
+  // 入り直せないルーム(追い出された、つないでいる)は keeper.rejoin が何もしない
+  rejoinAll(): void {
+    for (const entry of this.entries.values()) {
+      void entry.keeper.rejoin();
+    }
+  }
+
   dispose(): void {
     if (this.disposed) {
       return;

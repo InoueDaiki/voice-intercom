@@ -6,7 +6,7 @@ import { adminApi, ApiError, type MemberRole, type Room, type RoomUpdate } from 
 import { MemberEditor } from "../MemberEditor.tsx";
 import { useDeleteRoom, useMe, useRoom, useRoomMembers, useRoomMutation, useUsers } from "../queries.ts";
 import { RoomForm } from "../RoomForm.tsx";
-import { DELETE_INCOMPLETE_MESSAGE, errorMessage, formatDateTime, isIncomplete, ROOM_KIND_LABELS } from "../rooms.ts";
+import { DELETE_INCOMPLETE_MESSAGE, errorMessage, formatDateTime, isIncomplete, isPermanentError, ROOM_KIND_LABELS } from "../rooms.ts";
 
 export default function RoomDetail() {
   const roomId = useParams().roomId ?? "";
@@ -29,9 +29,9 @@ export default function RoomDetail() {
     );
   }
   const current = room.data;
-  // 無いルームは読み込み直しても出てこない
-  const gone = room.error instanceof ApiError && room.error.status === 404;
-  // 読み直しの失敗なら、持っている値で表示を続ける。無くなったときは続けない
+  // 無いルーム・権限の無いルームは読み込み直しても変わらない
+  const gone = isPermanentError(room.error);
+  // 読み直しの失敗なら、持っている値で表示を続ける。無くなった・権限が無くなったときは続けない
   if (current === undefined || gone) {
     return (
       <section>

@@ -218,6 +218,42 @@ describe("RoomHub", () => {
   });
 });
 
+describe("RoomHub.rejoinAll", () => {
+  test("トークンを取れずに止まったルームだけ入り直し、つないでいるルームには触らない", async () => {
+    const { hub, getToken } = setup();
+    getToken.mockRejectedValueOnce(new Error("ログインが切れています"));
+    const stopped = hub.open("r1", "ルーム1");
+    await flush();
+    const connected = hub.open("r2", "ルーム2");
+    await flush();
+    expect(stopped.keeper.joinError).toBeDefined();
+    expect(connected.session.connected).toBe(true);
+    getToken.mockClear();
+
+    hub.rejoinAll();
+    await flush();
+
+    expect(getToken).toHaveBeenCalledTimes(1);
+    expect(getToken).toHaveBeenCalledWith("r1", false);
+    expect(stopped.session.connected).toBe(true);
+    expect(stopped.keeper.joinError).toBeUndefined();
+  });
+
+  test("また失敗しても、やり直し続けない", async () => {
+    const { hub, getToken } = setup();
+    getToken.mockRejectedValue(new Error("offline"));
+    hub.open("r1", "ルーム1");
+    await flush();
+    getToken.mockClear();
+
+    hub.rejoinAll();
+    await flush();
+    await flush();
+
+    expect(getToken).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("SharedMicrophone", () => {
   test("マイクは1回だけ取り、ルームごとに clone を渡し、全部を放したら元も放す", async () => {
     const source = fakeSourceTrack();

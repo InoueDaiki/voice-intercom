@@ -1,12 +1,12 @@
 import { LANGUAGE_LABELS } from "@voice-intercom/client-core";
 import { errorMessage, RoomHubProvider, useMe } from "@voice-intercom/client-react";
 import { AppHeader, appHeaderLinkClass, appHeaderTextClass, Button, FullScreenMessage, LoadErrorAlert } from "@voice-intercom/ui-web";
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { hasAuthParams, useAuth } from "react-oidc-context";
 import { Link, Navigate, Outlet, useLocation, useMatch } from "react-router";
 
 import { AudioDock } from "../AudioDock.tsx";
-import { signOut, useLoginLost } from "../auth.ts";
+import { restoreLogin, signOut, subscribeLoginRecovered, takeSignedOutElsewhere, useLoginLost } from "../auth.ts";
 import { webAppPresence, webRoomPlatform, webScreenAwake } from "../roomPlatform.ts";
 import { SpacePtt } from "../spacePtt.ts";
 
@@ -16,21 +16,40 @@ export default function AppLayout() {
   const auth = useAuth();
   const location = useLocation();
   const loginLost = useLoginLost(auth);
+  const returnTo = location.pathname + location.search;
+  const [signedOutElsewhere] = useState(takeSignedOutElsewhere);
   const needsSignIn =
-    !auth.isAuthenticated && !auth.isLoading && !auth.activeNavigator && !auth.error && !hasAuthParams();
+    !auth.isAuthenticated &&
+    !auth.isLoading &&
+    !auth.activeNavigator &&
+    !auth.error &&
+    !hasAuthParams() &&
+    !signedOutElsewhere;
 
+  // 認可の画面へ送る前に、リフレッシュトークンを試す。試すのは、ログインが要る状態になるごとに1回
+  const signingIn = useRef(false);
   useEffect(() => {
-    if (needsSignIn) {
-      void auth.signinRedirect({ state: location.pathname + location.search });
+    if (!needsSignIn) {
+      signingIn.current = false;
+      return;
     }
-  }, [needsSignIn, auth, location]);
+    if (signingIn.current) {
+      return;
+    }
+    signingIn.current = true;
+    void restoreLogin().then((restored) => {
+      if (!restored) {
+        void auth.signinRedirect({ state: returnTo });
+      }
+    });
+  }, [needsSignIn, auth, returnTo]);
 
   // 自動更新の失敗だけでは出さない。ここで止めると RoomHub ごと接続が切れる
   if (loginLost && auth.error) {
     return (
       <FullScreenMessage
         action={
-          <Button variant="primary" onClick={() => void auth.signinRedirect()}>
+          <Button variant="primary" onClick={() => void auth.signinRedirect({ state: returnTo })}>
             ログインし直す
           </Button>
         }
@@ -38,6 +57,19 @@ export default function AppLayout() {
         {auth.error.source === "renewSilent"
           ? "ログインが切れました。ログインし直してください。"
           : `ログインに失敗しました: ${auth.error.message}`}
+      </FullScreenMessage>
+    );
+  }
+  if (signedOutElsewhere && !auth.isAuthenticated) {
+    return (
+      <FullScreenMessage
+        action={
+          <Button variant="primary" onClick={() => void auth.signinRedirect({ state: returnTo })}>
+            ログインする
+          </Button>
+        }
+      >
+        別のタブでログアウトしました。
       </FullScreenMessage>
     );
   }
@@ -101,6 +133,7 @@ function SignedIn() {
       platform={webRoomPlatform}
       presence={webAppPresence}
       createAwake={webScreenAwake}
+      subscribeLoginRecovered={subscribeLoginRecovered}
     >
       <SpacePtt />
       {layout}

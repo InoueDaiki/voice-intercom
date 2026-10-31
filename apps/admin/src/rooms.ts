@@ -64,6 +64,11 @@ export function isIncomplete(error: Error | null): boolean {
 
 export const DELETE_INCOMPLETE_MESSAGE = "途中まで削除しました。もう一度「削除を続ける」を押してください。";
 
+// 読み直しても変わらない失敗(無いもの、権限が無いもの)。持っている値があっても表示を続けない
+export function isPermanentError(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 403 || error.status === 404);
+}
+
 // API の失敗を、画面に出す文に直す
 export function errorMessage(error: Error): string {
   if (!(error instanceof ApiError)) {

@@ -1,6 +1,6 @@
 // 標準の OIDC(認可コード + PKCE)でログインする。本番は Cognito、ローカルは模擬 OIDC。
-import { LoginRequiredError, RenewalRetry } from "@voice-intercom/client-core/auth";
-import { ErrorResponse, type User, UserManager, type UserManagerSettings, WebStorageStateStore } from "oidc-client-ts";
+import { isInvalidGrant, LoginRequiredError, RenewalRetry, withDeadline } from "@voice-intercom/client-core/auth";
+import { type User, UserManager, type UserManagerSettings, WebStorageStateStore } from "oidc-client-ts";
 import { useEffect, useReducer, useSyncExternalStore } from "react";
 import type { AuthContextProps } from "react-oidc-context";
 
@@ -44,9 +44,8 @@ function settings(): UserManagerSettings {
     userStore: new WebStorageStateStore({ store: window.sessionStorage }),
     // アクセストークンの期限が近づいたら、リフレッシュトークンで更新する
     automaticSilentRenew: true,
-    // ログアウトでリフレッシュトークンを取り消す。Cognito の取り消しはリフレッシュトークンだけを受ける
-    // (アクセストークンも送ると断られ、ログアウトまで止まる)
-    revokeTokensOnSignout: true,
+    // ログアウトで取り消すのはリフレッシュトークンだけ(signOut)。Cognito の取り消しはリフレッシュトークンだけを
+    // 受ける(アクセストークンも送ると断られる)
     revokeTokenTypes: ["refresh_token"],
     // Cognito のログイン画面を日本語で出す(lang が無いと英語)。管理コンソールの画面が日本語なので揃える
     extraQueryParams: { lang: "ja" },
@@ -73,6 +72,21 @@ export function getUserManager(): AppUserManager {
   return userManager;
 }
 
+// 応答の無い相手を待つ長さ。signinSilent も取り消しも、引数なしでは通信に期限が付かない。
+// requestTimeoutInSeconds はログインのコードの交換や探索にも効き、応答の本文の遅れや探索との合計には
+// 効かないので、処理の全体をここで区切る
+const RENEW_DEADLINE_MS = 10_000;
+const REVOKE_DEADLINE_MS = 5_000;
+
+// リフレッシュトークンでトークンを更新する。同時に呼ばれたら1回にまとめる
+let renewing: Promise<User | null> | undefined;
+function renewNow(manager: UserManager): Promise<User | null> {
+  renewing ??= withDeadline(manager.signinSilent(), RENEW_DEADLINE_MS).finally(() => {
+    renewing = undefined;
+  });
+  return renewing;
+}
+
 // 自動更新が通信の失敗で止まったら、やり直す
 function watchRenewal(manager: AppUserManager): RenewalRetry {
   const retry = new RenewalRetry({
@@ -81,10 +95,9 @@ function watchRenewal(manager: AppUserManager): RenewalRetry {
       if (!user?.refresh_token) {
         throw new LoginRequiredError();
       }
-      await manager.signinSilent();
+      await renewNow(manager);
     },
-    // 認可サーバーがエラーで答えた(リフレッシュトークンの失効など)。通信の失敗は別の型になる
-    isRefused: (e) => e instanceof ErrorResponse,
+    isRefused: isInvalidGrant,
   });
   manager.events.addSilentRenewError((e) => retry.failed(e));
   manager.events.addUserLoaded(() => retry.succeeded());
@@ -113,28 +126,62 @@ export async function signOut(): Promise<void> {
   const manager = getUserManager();
   // 更新の通信中でも、この後にログインが戻らないようにする
   manager.close();
+  // トークンを取り消せなくても(通信の失敗、応答が無い、取り消しの窓口が無いなど)、ログアウトは止めない
+  try {
+    await withDeadline(manager.revokeTokens(), REVOKE_DEADLINE_MS);
+  } catch (e) {
+    console.warn("トークンを取り消せないままログアウトする", e);
+  }
   try {
     await redirectToLogout(manager);
-  } catch (e) {
-    // トークンを取り消せなくても(通信の失敗、取り消しの窓口が無いなど)、ログアウトは止めない
-    console.warn("トークンを取り消せないままログアウトする", e);
-    try {
-      await redirectToLogout(new UserManager({ ...settings(), revokeTokensOnSignout: false, automaticSilentRenew: false }));
-    } catch (logoutError) {
-      // ログアウトの画面に行けなくても、この端末からはログインを消す
-      console.warn("ログアウトの画面に移れなかった", logoutError);
-      await manager.removeUser();
-    }
+  } catch (logoutError) {
+    // ログアウトの画面に行けなくても、この端末からはログインを消す
+    console.warn("ログアウトの画面に移れなかった", logoutError);
+    await manager.removeUser();
   }
 }
 
-// API の呼び出しに付けるアクセストークン
+// 保存したリフレッシュトークンでログインを戻す(期限切れのまま開き直したとき)。戻せたら true。
+// 戻せなければ、認可の画面へ送る
+export async function restoreLogin(): Promise<boolean> {
+  const manager = getUserManager();
+  const user = await manager.getUser();
+  if (!user?.refresh_token) {
+    return false;
+  }
+  try {
+    const renewed = await renewNow(manager);
+    return renewed != null && !renewed.expired;
+  } catch (e) {
+    console.info("リフレッシュトークンでログインを戻せなかった", e);
+    return false;
+  }
+}
+
+// API の呼び出しに付けるアクセストークン。期限が切れていても、更新できるなら更新を待つ
+// (スリープから戻った直後は、自動更新より先に呼ばれる)
 export async function getAccessToken(): Promise<string> {
-  const user = await getUserManager().getUser();
-  if (!user || user.expired) {
+  const manager = getUserManager();
+  const user = await manager.getUser();
+  if (user && !user.expired) {
+    return user.access_token;
+  }
+  if (!user?.refresh_token || manager.closing) {
     throw new LoginRequiredError();
   }
-  return user.access_token;
+  try {
+    const renewed = await renewNow(manager);
+    if (renewed && !renewed.expired && !manager.closing) {
+      return renewed.access_token;
+    }
+  } catch (e) {
+    // 自動更新の失敗と同じに扱う: 断られたらログインし直してもらい、通信の失敗ならやり直す
+    await manager.events._raiseSilentRenewError(e instanceof Error ? e : new Error(String(e)));
+    if (!isInvalidGrant(e)) {
+      throw e; // ログインは切れていない
+    }
+  }
+  throw new LoginRequiredError();
 }
 
 // ログインが本当に切れたか。自動更新に失敗しても、トークンが有効な間と、通信の失敗からやり直している間は
