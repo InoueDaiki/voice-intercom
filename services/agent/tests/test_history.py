@@ -479,3 +479,13 @@ def test_text_without_usable_message_id(message_id: str) -> None:
 
     fake = run(test)
     assert "message_id" not in fake.puts[0][3]
+
+
+def test_put_does_not_retry_conflict() -> None:
+    # アーカイブされたルームなどで拒まれたら、再送を続けない
+    async def test(fake: FakeServer, s: HistorySettings, http: aiohttp.ClientSession) -> None:
+        client = TimelineClient(http, s, ClientCredentials(http, s))
+        assert await client.put("room-1", "seg1", {"text": "x"}) is PutResult.REJECTED
+
+    fake = run(test, FakeServer(put_statuses=[409]))
+    assert len(fake.puts) == 1

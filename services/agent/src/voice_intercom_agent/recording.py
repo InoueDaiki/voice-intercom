@@ -123,13 +123,19 @@ class OggOpusEncoder:
     def __init__(self, out: IO[bytes], *, sample_rate: int = SAMPLE_RATE, bitrate: int = 24000):
         self._sample_rate = sample_rate
         self._container: Any = av.open(out, mode="w", format="ogg")
-        stream: Any = self._container.add_stream("libopus", rate=sample_rate, layout="mono")
-        stream.bit_rate = bitrate
-        # 音声向けの調整(libopus の application=voip)
-        stream.codec_context.options = {"application": "voip"}
-        self._stream = stream
         self.samples = 0
         self._closed = False
+        # 発話が打ち切られると、スレッドの write が終わらないうちに abort が呼ばれる
+        self._lock = threading.Lock()
+        try:
+            stream: Any = self._container.add_stream("libopus", rate=sample_rate, layout="mono")
+            stream.bit_rate = bitrate
+            # 音声向けの調整(libopus の application=voip)
+            stream.codec_context.options = {"application": "voip"}
+        except Exception:
+            self.abort()
+            raise
+        self._stream = stream
 
     @property
     def duration_s(self) -> float:
@@ -143,17 +149,34 @@ class OggOpusEncoder:
         frame.sample_rate = self._sample_rate
         frame.pts = self.samples
         self.samples += data.shape[1]
-        for packet in self._stream.encode(frame):
-            self._container.mux(packet)
+        with self._lock:
+            if self._closed:
+                return
+            for packet in self._stream.encode(frame):
+                self._container.mux(packet)
 
     def close(self) -> None:
         """残りを出し切って Ogg を閉じる。out は閉じない。"""
-        if self._closed:
-            return
-        self._closed = True
-        for packet in self._stream.encode(None):
-            self._container.mux(packet)
-        self._container.close()
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            try:
+                for packet in self._stream.encode(None):
+                    self._container.mux(packet)
+            finally:
+                self._container.close()
+
+    def abort(self) -> None:
+        """エンコードをやめて、コンテナを閉じる。閉じた後なら何もしない。失敗は記録だけする。"""
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            try:
+                self._container.close()
+            except Exception:
+                logger.warning("エンコーダーを閉じられなかった", exc_info=True)
 
 
 class Uploader(Protocol):
@@ -256,6 +279,7 @@ class Recording:
     async def run(self) -> None:
         """エンコードし、発話が終わったら保存する。"""
         with tempfile.SpooledTemporaryFile(max_size=SPOOL_MAX_BYTES) as out:
+            encoder: OggOpusEncoder | None = None
             try:
                 encoder = await asyncio.to_thread(
                     OggOpusEncoder, out, bitrate=self._recorder.bitrate
@@ -269,6 +293,11 @@ class Recording:
                 # この発話の残りの音声は受け取らない(キューにためない)
                 self.finished = True
                 return
+            finally:
+                # out を閉じる前に閉じる。打ち切り(CancelledError)のときも通る
+                if encoder is not None:
+                    await asyncio.to_thread(encoder.abort)
+            assert encoder is not None
             if encoder.samples == 0:
                 # 音声が1フレームも届かなかった(すぐにミュートした、など)
                 return
