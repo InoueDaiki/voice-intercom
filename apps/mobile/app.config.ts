@@ -14,7 +14,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   name: "voice-intercom",
   slug: "voice-intercom",
   version: "0.1.0",
-  // ログインのリダイレクト(voiceintercom://callback。Cognito の mobile クライアントの callback_urls と同じ)
+  // ログインとログアウトのリダイレクト(voiceintercom://callback と voiceintercom://signout。
+  // Cognito の mobile クライアントの callback_urls・logout_urls と同じ)
   scheme: "voiceintercom",
   orientation: "portrait",
   // 明暗は OS の設定に従う(トークンが切り替える)
