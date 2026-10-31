@@ -674,3 +674,13 @@ def test_multipart_file_sets_disposition(member: str) -> None:
     part = s3.upload_part(Bucket=MEDIA_BUCKET, Key=key, UploadId=upload_id, PartNumber=1, Body=b"x")
     media_store.complete_multipart(key, upload_id, [(1, part["ETag"])])
     assert s3.head_object(Bucket=MEDIA_BUCKET, Key=key)["ContentDisposition"] == "attachment"
+
+
+def test_complete_accepts_body_put_with_url_issued_before_staging(member: str) -> None:
+    # 仮置きを入れる前に出した URL は配信するキーへ直接 PUT する。キーは変えていないので、
+    # 前の complete がコピーした後と同じ道で通り、409 にならない
+    _, upload = create_upload(member)
+    media_id = upload["media_id"]
+    put_object(f"rooms/room-a/{media_id}/original", "image/png")
+
+    assert complete(member, media_id)[0] == 200
