@@ -5,6 +5,7 @@
 
 export * from "./api.ts";
 export * from "./auth/loginLanguage.ts";
+export * from "./auth/session.ts";
 export * from "./observable.ts";
 export * from "./room/captionBoard.ts";
 export * from "./room/deletionLabels.ts";

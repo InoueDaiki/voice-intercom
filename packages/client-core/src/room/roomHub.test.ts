@@ -84,6 +84,42 @@ describe("RoomHub", () => {
     expect(rooms.get("room-a")?.room.disconnect).toHaveBeenCalled();
   });
 
+  test("ルームの名前が変わっても切らず、表示の名前だけを変える", async () => {
+    const { hub, rooms, getToken } = setup();
+    const connection = hub.open("room-a", "A");
+    await flush();
+    const notified = vi.fn();
+    hub.subscribe(notified);
+
+    hub.setRoomName("room-a", "B");
+
+    expect(hub.get("room-a")).toBe(connection);
+    expect(connection.roomName).toBe("B");
+    expect(connection.session.roomName).toBe("B");
+    expect(notified).toHaveBeenCalled();
+    expect(getToken).toHaveBeenCalledTimes(1);
+    expect(rooms.get("room-a")?.room.disconnect).not.toHaveBeenCalled();
+  });
+
+  test("作り直した RoomHub で、音声をつないでいたルームをつなぎ直す", async () => {
+    const before = setup();
+    before.hub.open("room-a", "A");
+    await before.hub.setAudio("room-a", "A", true);
+    before.hub.open("room-b", "B");
+    await flush();
+    const audioRooms = before.hub.audioRooms.map(({ roomId, roomName }) => ({ roomId, roomName }));
+    before.hub.dispose();
+
+    const after = setup();
+    after.hub.resumeAudio(audioRooms);
+    await flush();
+
+    expect(after.hub.audioRooms.map((r) => r.roomId)).toEqual(["room-a"]);
+    expect(after.hub.get("room-a")?.session.connected).toBe(true);
+    expect(after.getToken).toHaveBeenCalledWith("room-a", true);
+    expect(after.hub.get("room-b")).toBeUndefined();
+  });
+
   test("音声をつないだルームは、画面を閉じてもつないだまま", async () => {
     const { hub, rooms, setAudioAttribute } = setup();
     hub.open("room-a", "A");

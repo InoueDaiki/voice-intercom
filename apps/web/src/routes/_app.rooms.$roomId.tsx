@@ -16,12 +16,15 @@ import {
 import {
   captionLanguageLabel,
   captionTranslation,
+  connectionState,
+  type ConnectionState,
   continuesPrevious,
   type DeleteEntry,
   errorMessage,
   formatBytes,
   formatDuration,
   formatTime,
+  isPermanentError,
   joinErrorMessage,
   outgoingMediaLabel,
   PAGE_LIMIT,
@@ -43,6 +46,7 @@ import {
   ConfirmDialog,
   cx,
   KeyButton,
+  LoadErrorAlert,
   SignalLamp,
   type SignalState,
   Textarea,
@@ -93,11 +97,15 @@ export default function RoomPage() {
   if (room.isPending || me.isPending) {
     return <p className={roomMessageClass}>読み込み中…</p>;
   }
-  if (room.isError) {
+  const current = room.data;
+  // 読み直しの失敗なら、持っている値で表示を続ける(接続を切らない)。無くなった・権限が無くなったときは続けない
+  if (current === undefined || (room.isError && isPermanentError(room.error))) {
     return (
       <section className={cx(roomMessageClass, "grid gap-3")}>
         <BackLink />
-        <Alert tone="danger">ルームを開けません: {errorMessage(room.error)}</Alert>
+        <LoadErrorAlert onRetry={() => void room.refetch()} retryable={!isPermanentError(room.error)}>
+          ルームを開けません: {errorMessage(room.error)}
+        </LoadErrorAlert>
       </section>
     );
   }
@@ -108,13 +116,13 @@ export default function RoomPage() {
       </div>
     );
   }
-  if (!room.data.member_ids.includes(myIdentity)) {
-    return <JoinRoom room={room.data} />;
+  if (!current.member_ids.includes(myIdentity)) {
+    return <JoinRoom room={current} />;
   }
-  if (room.data.archived_at) {
-    return <ArchivedRoom key={roomId} room={room.data} me={me.data} myIdentity={myIdentity} />;
+  if (current.archived_at) {
+    return <ArchivedRoom key={roomId} room={current} me={me.data} myIdentity={myIdentity} />;
   }
-  return <RoomScreen key={roomId} room={room.data} me={me.data} myIdentity={myIdentity} />;
+  return <RoomScreen key={roomId} room={current} me={me.data} myIdentity={myIdentity} />;
 }
 
 const roomMessageClass = "mx-auto max-w-3xl px-4 py-6 text-fg-muted";
@@ -179,17 +187,19 @@ function JoinRoom({ room }: { room: Room }) {
 function ArchivedRoom({ room, me, myIdentity }: { room: Room; me: User; myIdentity: string }) {
   const [session, setSession] = useState<RoomSession>();
   useObservable(session);
+  // 名前は入室中の通知にしか使わない(つながないので出ない)。改名で読み直さないよう、依存に入れない
+  const initialName = useRef(room.name);
   useEffect(() => {
     const s = new RoomSession({
       myIdentity,
       myLanguage: me.language,
-      roomName: room.name,
+      roomName: initialName.current,
       fetchTimelinePage: (before) => api.listTimeline(room.room_id, { limit: PAGE_LIMIT, before }),
     });
     setSession(s);
     void s.timeline.syncLatest().then(() => s.applyTimeline([]));
     return () => s.dispose();
-  }, [room.room_id, room.name, me.language, myIdentity]);
+  }, [room.room_id, me.language, myIdentity]);
   return (
     <section className="flex h-full flex-col">
       <RoomHeader room={room} />
@@ -211,6 +221,8 @@ function RoomScreen({ room, me, myIdentity }: { room: Room; me: User; myIdentity
   const roomId = room.room_id;
   const roomName = room.name;
   const hub = useRoomHub();
+  // 改名で切り直さないよう、つなぐときは最初の名前を使い、改名は下の effect で伝える
+  const initialName = useRef(roomName);
   const [connection, setConnection] = useState<RoomConnection>();
   const [uploader, setUploader] = useState<Uploader>();
   const [dragging, setDragging] = useState(false);
@@ -221,14 +233,14 @@ function RoomScreen({ room, me, myIdentity }: { room: Room; me: User; myIdentity
   useObservable(uploader);
   const joinError = keeper?.joinError === undefined ? undefined : joinErrorMessage(keeper.joinError);
   // 切断された後は、戻ったときに自動で入り直す。見えたまま切断されたときは、ここから入り直す
-  const rejoinAction = keeper && session?.canRejoin && (
+  const rejoinAction = keeper?.canRejoin && (
     <Button size="sm" onClick={() => void keeper.rejoin()}>
       入り直す
     </Button>
   );
 
   useEffect(() => {
-    const c = hub.open(roomId, roomName);
+    const c = hub.open(roomId, initialName.current);
     const s = c.session;
     const u: Uploader = new MediaUploader({
       roomId,
@@ -244,6 +256,10 @@ function RoomScreen({ room, me, myIdentity }: { room: Room; me: User; myIdentity
       u.dispose();
       hub.close(roomId);
     };
+  }, [hub, roomId]);
+
+  useEffect(() => {
+    hub.setRoomName(roomId, roomName);
   }, [hub, roomId, roomName]);
 
   const sendFiles = (files: Iterable<File>) => {
@@ -283,7 +299,7 @@ function RoomScreen({ room, me, myIdentity }: { room: Room; me: User; myIdentity
       onDrop={onDrop}
     >
       <RoomHeader room={room}>
-        {session && <RoomStatus session={session} rejoining={keeper?.rejoining ?? false} />}
+        {session && keeper && <RoomStatus session={session} state={connectionState({ session, keeper })} />}
       </RoomHeader>
       {(joinError ||
         session?.error ||
@@ -338,12 +354,15 @@ function RoomScreen({ room, me, myIdentity }: { room: Room; me: User; myIdentity
 // 画面の中身の列。タイムラインと操作の台で、同じ幅と余白にそろえる
 const columnClass = "mx-auto w-full max-w-3xl px-4 sm:px-6";
 
-function RoomStatus({ session, rejoining }: { session: RoomSession; rejoining: boolean }) {
-  if (!session.connected) {
-    if (rejoining) {
-      return <Badge tone="neutral">つなぎ直し中…</Badge>;
-    }
-    return <Badge tone={session.error ? "danger" : "neutral"}>{session.error ? "切断" : "接続中…"}</Badge>;
+function RoomStatus({ session, state }: { session: RoomSession; state: ConnectionState }) {
+  if (state === "rejoining") {
+    return <Badge tone="neutral">つなぎ直し中…</Badge>;
+  }
+  if (state === "failed") {
+    return <Badge tone="danger">切断</Badge>;
+  }
+  if (state === "connecting") {
+    return <Badge tone="neutral">接続中…</Badge>;
   }
   return (
     <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-fg-muted">
@@ -394,11 +413,21 @@ function Timeline({ session, myLanguage, readOnly = false }: { session: RoomSess
 
   const loadOlder = () => {
     const el = listRef.current;
-    if (!el || timeline.loadingOlder || !timeline.hasOlder || !timeline.loaded) {
+    // 失敗した後は、下の「読み直す」を押すまで読まない
+    if (!el || timeline.loadingOlder || !timeline.hasOlder || !timeline.loaded || timeline.olderFailed) {
       return;
     }
     heightBeforeOlder.current = el.scrollHeight;
     void session.loadOlder();
+  };
+
+  const retryLoad = () => {
+    if (timeline.olderFailed) {
+      heightBeforeOlder.current = listRef.current?.scrollHeight;
+      void session.retryOlder();
+    } else {
+      void timeline.syncLatest();
+    }
   };
 
   // 画像の読み込みなどで、描き直さずに高さが変わったときも、下端を見ていれば追いかける
@@ -439,9 +468,9 @@ function Timeline({ session, myLanguage, readOnly = false }: { session: RoomSess
     >
       <ol ref={contentRef} className={cx(columnClass, "flex min-h-full flex-col py-4")}>
         {/* 何も無いときは、下の案内だけを出す */}
-        {(!timeline.loaded || timeline.loadingOlder || entries.length > 0) && (
+        {((!timeline.loaded && !timeline.error) || timeline.loadingOlder || entries.length > 0) && (
           <li className="py-2 text-center text-xs text-fg-muted">
-            {!timeline.loaded || timeline.loadingOlder
+            {(!timeline.loaded && !timeline.error) || timeline.loadingOlder
               ? "読み込み中…"
               : timeline.hasOlder
                 ? "上へ戻ると、古いものを読み込みます"
@@ -451,7 +480,7 @@ function Timeline({ session, myLanguage, readOnly = false }: { session: RoomSess
         {timeline.error && (
           <li className="flex flex-wrap items-center justify-center gap-2 py-2 text-center text-sm text-danger-fg">
             {timeline.error}
-            <Button variant="link" onClick={() => void timeline.syncLatest()}>
+            <Button variant="link" onClick={retryLoad}>
               読み直す
             </Button>
           </li>
@@ -493,11 +522,13 @@ function FeedRow({
   at,
   head,
   continued,
+  remove,
   children,
 }: {
   at: Date;
   head: ReactNode;
   continued: boolean;
+  remove: DeleteEntry;
   children: ReactNode;
 }) {
   return (
@@ -508,10 +539,18 @@ function FeedRow({
       >
         {formatTime(at)}
       </time>
-      <div className="grid min-w-0 gap-1">
-        {!continued && head}
-        {children}
-      </div>
+      {continued ? (
+        // 名前の段を省くので、消す操作は本文の横に置く
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2">
+          <div className="grid min-w-0 gap-1">{children}</div>
+          <RemoveEntry remove={remove} />
+        </div>
+      ) : (
+        <div className="grid min-w-0 gap-1">
+          {head}
+          {children}
+        </div>
+      )}
     </li>
   );
 }
@@ -536,6 +575,15 @@ function FeedHead({
       {/* 幅の狭い画面では、時刻を名前の横に出す */}
       <span className="text-xs text-fg-muted sm:hidden">{formatTime(at)}</span>
       {children}
+      <RemoveEntry remove={remove} />
+    </div>
+  );
+}
+
+// 行を消す操作と確認
+function RemoveEntry({ remove }: { remove: DeleteEntry }) {
+  return (
+    <>
       {remove.can && (
         <Button
           variant="link"
@@ -555,7 +603,7 @@ function FeedHead({
         onConfirm={() => void remove.run()}
         onCancel={remove.cancel}
       />
-    </div>
+    </>
   );
 }
 
@@ -583,6 +631,7 @@ function CaptionItem({
     <FeedRow
       at={entry.at}
       continued={continued}
+      remove={remove}
       head={
         <FeedHead
           name={session.displayName(entry.speakerIdentity)}
@@ -648,6 +697,7 @@ function MediaItem({
     <FeedRow
       at={entry.at}
       continued={continued}
+      remove={remove}
       head={
         <FeedHead
           name={session.displayName(event.sender_id)}

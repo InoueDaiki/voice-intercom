@@ -2,7 +2,8 @@ import type { RoomSession, TimelineEntry } from "@voice-intercom/client-core";
 
 export type CaptionEntry = Extract<TimelineEntry, { type: "caption" }>;
 
-// ほかの人の声が流れているか。確定していない(話している途中の)音声の字幕のうち、最後のもの
+// ほかの人の声が流れているか。確定していない(話している途中の)音声の字幕のうち、最後のもの。
+// 確定が届かないまま続きも届かなくなったもの(Agent が落ちたなど)は除く
 export function receivingCaption(session: RoomSession, myIdentity: string): CaptionEntry | undefined {
   return session.entries.findLast(
     (e): e is CaptionEntry =>
@@ -10,7 +11,8 @@ export function receivingCaption(session: RoomSession, myIdentity: string): Capt
       !e.isText &&
       e.speakerIdentity !== myIdentity &&
       e.original !== undefined &&
-      !e.original.isFinal,
+      !e.original.isFinal &&
+      e.segment?.isFresh() === true,
   );
 }
 

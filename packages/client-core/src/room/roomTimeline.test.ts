@@ -150,7 +150,7 @@ describe("読み込み", () => {
     expect(history.calls).toHaveLength(2);
   });
 
-  test("つなぎ直しでは、知っている行に届くまで新しいほうを読む", async () => {
+  test("つなぎ直しでは、持っている行のうち最も古いものに届くまで読む", async () => {
     const history = new FakeHistory(2);
     history.rows = [1, 2].map((i) => textEvent(`2026-10-13T00:00:0${i}.000Z`, `t${i}`));
     const { timeline } = make(history);
@@ -162,7 +162,49 @@ describe("読み込み", () => {
     await timeline.syncLatest();
 
     expect(keys(timeline.entries(new CaptionBoard()))).toEqual(["t1", "t2", "t3", "t4", "t5", "t6", "t7"]);
-    expect(history.calls).toHaveLength(3);
+    expect(history.calls).toHaveLength(4);
+  });
+
+  test("切断中に消された古い行も、つなぎ直しで墓石に替わる", async () => {
+    const history = new FakeHistory(2);
+    const old = ownText("2026-10-13T00:00:01.000Z", { sourceId: "old" });
+    history.rows = [old, textEvent("2026-10-13T00:00:02.000Z", "t2"), textEvent("2026-10-13T00:00:03.000Z", "t3")];
+    const { timeline } = make(history);
+    await timeline.syncLatest();
+    await timeline.loadOlder();
+    expect(timeline.isDeleted(old.event_id)).toBe(false);
+
+    // 1ページ目には載らない古い行が、切れていた間に消された
+    history.rows[0] = tombstoneOf(old);
+    await timeline.syncLatest();
+    expect(timeline.isDeleted(old.event_id)).toBe(true);
+  });
+
+  test("読み足しに失敗したら止まり、やり直すと続きを読む", async () => {
+    const history = new FakeHistory(1);
+    history.rows = [1, 2].map((i) => textEvent(`2026-10-13T00:00:0${i}.000Z`, `t${i}`));
+    const { timeline } = make(history);
+    await timeline.syncLatest();
+
+    const working = history.fetchPage;
+    const failing = vi.fn(async () => {
+      throw new Error("503");
+    });
+    (timeline as unknown as { fetchPage: unknown }).fetchPage = failing;
+    await timeline.loadOlder();
+    expect(timeline.olderFailed).toBe(true);
+    expect(timeline.error).toContain("503");
+
+    // 画面が何度呼んでも読みに行かない
+    await timeline.loadOlder();
+    await timeline.loadOlder();
+    expect(failing).toHaveBeenCalledTimes(1);
+
+    (timeline as unknown as { fetchPage: unknown }).fetchPage = working;
+    await timeline.retryOlder();
+    expect(timeline.olderFailed).toBe(false);
+    expect(timeline.error).toBeUndefined();
+    expect(keys(timeline.entries(new CaptionBoard()))).toEqual(["t1", "t2"]);
   });
 
   test("読めなければ error に入れ、行は変えない", async () => {

@@ -132,9 +132,29 @@ export class RoomHub extends Observable {
     this.disposed = true;
   }
 
+  // ルームの名前が変わった。接続はそのままで、音声中の帯などの表示だけを変える
+  setRoomName(roomId: string, roomName: string): void {
+    const entry = this.entries.get(roomId);
+    if (!entry || entry.roomName === roomName) {
+      return;
+    }
+    entry.roomName = roomName;
+    entry.session.roomName = roomName;
+    this.changed();
+  }
+
+  // 作り直す前の RoomHub で音声をつないでいたルームを、つなぎ直す(言語の変更など)。
+  // rooms は、前の RoomHub を dispose する前に audioRooms から取っておく
+  resumeAudio(rooms: readonly Pick<RoomConnection, "roomId" | "roomName">[]): void {
+    for (const r of rooms) {
+      void this.setAudio(r.roomId, r.roomName, true);
+    }
+  }
+
   private ensure(roomId: string, roomName: string, audio: boolean): Entry {
     const existing = this.entries.get(roomId);
     if (existing) {
+      this.setRoomName(roomId, roomName);
       return existing;
     }
     const session = this.options.createSession({

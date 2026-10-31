@@ -20,7 +20,7 @@ export default function Tenants() {
           テナントを取得できません: {errorMessage(tenants.error)}
         </LoadErrorAlert>
       )}
-      {tenants.isSuccess &&
+      {tenants.data &&
         (tenants.data.length === 0 ? (
           <p className="text-fg-muted">テナントはまだありません。</p>
         ) : (

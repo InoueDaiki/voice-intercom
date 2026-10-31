@@ -3,13 +3,14 @@ import { useEffect, type ReactNode } from "react";
 import { hasAuthParams, useAuth } from "react-oidc-context";
 import { useLocation } from "react-router";
 
-import { ADMIN_GROUP, groupsOf, OPERATOR_GROUP, signOut } from "./auth.ts";
+import { ADMIN_GROUP, groupsOf, OPERATOR_GROUP, signOut, useLoginLost } from "./auth.ts";
 
 // ログインしていなければログイン画面へ送り、admin か operator のグループでなければ画面を見せない。
 // 実際の権限の判定は API がする。ここは表示の出し分けだけ
 export function RequireAdmin({ children }: { children: ReactNode }) {
   const auth = useAuth();
   const location = useLocation();
+  const loginLost = useLoginLost(auth);
   const needsSignIn =
     !auth.isAuthenticated && !auth.isLoading && !auth.activeNavigator && !auth.error && !hasAuthParams();
 
@@ -19,7 +20,7 @@ export function RequireAdmin({ children }: { children: ReactNode }) {
     }
   }, [needsSignIn, auth, location]);
 
-  if (auth.error) {
+  if (loginLost && auth.error) {
     return (
       <FullScreenMessage
         action={
@@ -28,7 +29,9 @@ export function RequireAdmin({ children }: { children: ReactNode }) {
           </Button>
         }
       >
-        ログインに失敗しました: {auth.error.message}
+        {auth.error.source === "renewSilent"
+          ? "ログインが切れました。ログインし直してください。"
+          : `ログインに失敗しました: ${auth.error.message}`}
       </FullScreenMessage>
     );
   }

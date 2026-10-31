@@ -28,22 +28,20 @@ export default function RoomDetail() {
       </section>
     );
   }
-  if (room.isError) {
+  const current = room.data;
+  // 無いルームは読み込み直しても出てこない
+  const gone = room.error instanceof ApiError && room.error.status === 404;
+  // 読み直しの失敗なら、持っている値で表示を続ける。無くなったときは続けない
+  if (current === undefined || gone) {
     return (
       <section>
         <PageHeader title={`ルーム「${roomId}」`} back={back} />
-        <LoadErrorAlert
-          onRetry={() => void room.refetch()}
-          // 無いルームは読み込み直しても出てこない
-          retryable={!(room.error instanceof ApiError && room.error.status === 404)}
-        >
-          {errorMessage(room.error)}
+        <LoadErrorAlert onRetry={() => void room.refetch()} retryable={!gone}>
+          {room.error ? errorMessage(room.error) : "ルームを取得できません"}
         </LoadErrorAlert>
       </section>
     );
   }
-
-  const current = room.data;
   const myTenant = me.data?.tenant_id ?? undefined;
   const pending = current.connect_status === "pending";
 
@@ -147,7 +145,7 @@ function RoomMembers({ room, myTenant }: { room: Room; myTenant: string | undefi
 
   return (
     <div className="grid gap-3">
-      <h2>メンバー{members.isSuccess && `(${members.data.length}人)`}</h2>
+      <h2>メンバー{members.data && `(${members.data.length}人)`}</h2>
       {members.isError && (
         <LoadErrorAlert onRetry={() => void members.refetch()}>
           メンバーを取得できません: {errorMessage(members.error)}

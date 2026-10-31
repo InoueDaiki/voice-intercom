@@ -2,6 +2,7 @@
 // 型は生成クライアント(@voice-intercom/api-client)から取る。
 
 import type { Schemas } from "@voice-intercom/api-client";
+import { LoginRequiredError } from "@voice-intercom/client-core/auth";
 
 import { api } from "./api.ts";
 
@@ -76,7 +77,11 @@ async function call<T>(result: Promise<{ data?: T; error?: unknown; response: Re
   let r: Awaited<typeof result>;
   try {
     r = await result;
-  } catch {
+  } catch (e) {
+    // トークンを渡せなかったのは、通信の失敗ではない
+    if (e instanceof LoginRequiredError) {
+      throw e;
+    }
     throw new ApiError(0);
   }
   if (!r.response.ok) {

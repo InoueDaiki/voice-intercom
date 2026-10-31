@@ -25,7 +25,7 @@ export default function RoomList() {
           ルームの一覧を取得できません: {errorMessage(rooms.error)}
         </LoadErrorAlert>
       )}
-      {rooms.isSuccess &&
+      {rooms.data &&
         (rooms.data.length === 0 ? (
           <p className="text-fg-muted">ルームはまだありません。</p>
         ) : (

@@ -1,9 +1,36 @@
 import { describe, expect, test } from "vitest";
 
 import { caption } from "../testing/fixtures.ts";
-import { CaptionBoard } from "./captionBoard.ts";
+import { CAPTION_STALE_MS, CaptionBoard } from "./captionBoard.ts";
 
 describe("CaptionBoard", () => {
+  test("上限を超えて捨てた区切りを知らせる", () => {
+    const evicted: string[] = [];
+    const board = new CaptionBoard({ maxSegments: 2, onEvicted: (s) => evicted.push(s.segmentId) });
+    for (const id of ["s1", "s2", "s3"]) {
+      board.apply(caption(id, "はい", { isFinal: true }));
+    }
+    expect(evicted).toEqual(["s1"]);
+    expect(board.segments.map((s) => s.segmentId)).toEqual(["s2", "s3"]);
+  });
+
+  test("続きが届かなくなった字幕は新しくないとみなす", () => {
+    let now = new Date("2026-10-13T00:00:00.000Z");
+    const board = new CaptionBoard({ now: () => now });
+    board.apply(caption("s1", "こん"));
+    const [segment] = board.segments;
+
+    now = new Date(now.getTime() + CAPTION_STALE_MS - 1);
+    expect(segment!.isFresh(now)).toBe(true);
+    // 続きが届けば、最初から時間がたっていても新しい
+    board.apply(caption("s1", "にちは"));
+    now = new Date(now.getTime() + CAPTION_STALE_MS - 1);
+    expect(segment!.isFresh(now)).toBe(true);
+
+    now = new Date(now.getTime() + 1);
+    expect(segment!.isFresh(now)).toBe(false);
+  });
+
   test("断片を連結し、確定で置き換える", () => {
     const board = new CaptionBoard();
     board.apply(caption("s1", "こん"));
