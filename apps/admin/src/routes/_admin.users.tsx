@@ -55,7 +55,7 @@ export default function UserList() {
             : errorMessage(users.error)}
         </LoadErrorAlert>
       )}
-      {users.isSuccess &&
+      {users.data &&
         (users.data.length === 0 ? (
           <p className="text-fg-muted">登録したユーザーはまだいません。</p>
         ) : (
@@ -109,7 +109,7 @@ export default function UserList() {
                         {isAdmin && (
                           <Td className="min-w-48">
                             {rooms.isPending && <span className="text-fg-muted">読み込み中…</span>}
-                            {rooms.isSuccess &&
+                            {rooms.data &&
                               (joined.length === 0 ? (
                                 <span className="text-fg-muted">なし</span>
                               ) : (

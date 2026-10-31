@@ -1,5 +1,5 @@
 import { LANGUAGE_LABELS, type MemberRole, type Room, type RoomMember } from "@voice-intercom/client-core";
-import { errorMessage, useMe, useRoom, useRoomHub, useRoomMembers, useRoomMutation, useUsers } from "@voice-intercom/client-react";
+import { errorMessage, isPermanentError, useMe, useRoom, useRoomHub, useRoomMembers, useRoomMutation, useUsers } from "@voice-intercom/client-react";
 import {
   Alert,
   BackIcon,
@@ -42,15 +42,26 @@ export default function RoomSettings() {
   if (room.isPending || me.isPending) {
     return <p className={pageClass}>読み込み中…</p>;
   }
-  if (room.isError || !me.data || !myIdentity) {
+  const r = room.data;
+  // 読み直しの失敗なら、持っている値で表示を続ける。無くなった・権限が無くなったときは続けない
+  if (r === undefined || (room.isError && isPermanentError(room.error))) {
     return (
       <section className={pageClass}>
         <PageHeader title="メンバーと設定" back={back} />
-        <Alert tone="danger">ルームを開けません: {room.isError ? errorMessage(room.error) : "プロフィールがありません"}</Alert>
+        <LoadErrorAlert onRetry={() => void room.refetch()} retryable={!isPermanentError(room.error)}>
+          ルームを開けません: {errorMessage(room.error)}
+        </LoadErrorAlert>
       </section>
     );
   }
-  const r = room.data;
+  if (!me.data || !myIdentity) {
+    return (
+      <section className={pageClass}>
+        <PageHeader title="メンバーと設定" back={back} />
+        <Alert tone="danger">ルームを開けません: プロフィールがありません</Alert>
+      </section>
+    );
+  }
   const myTenant = me.data.tenant_id ?? undefined;
   const tenants = [r.tenant_id, r.connect_tenant_id].filter(Boolean);
   const canManage = myTenant !== undefined && tenants.includes(myTenant) && (r.owner_ids.includes(myIdentity) || isAdmin);
@@ -169,7 +180,7 @@ function Members({
           メンバーを取得できません: {errorMessage(members.error)}
         </LoadErrorAlert>
       )}
-      {members.isSuccess && (
+      {members.data && (
         <ul className="divide-y divide-border">
           {members.data.map((m) => {
             const owner = m.role === "owner";
@@ -221,7 +232,7 @@ function Members({
             }
           }}
         >
-          {users.isSuccess && (
+          {users.data && (
             <CheckboxList
               legend="招待する"
               hint="自分のテナントの人を、すぐにメンバーにします。"

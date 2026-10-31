@@ -153,10 +153,10 @@ export class RoomSession extends Observable {
   // 最初の入室に失敗したまま、まだ入れていないか
   private joinFailed = false;
   // 捨てた字幕の分の履歴を読み直す予定と、前回読み直した時刻
-  private captionGapTimer: unknown;
+  private captionGapTimer: ReturnType<typeof setTimeout> | undefined;
   private lastCaptionGapSyncAt = 0;
   // 確定しないまま途切れた字幕を、受信中でなくすための描き直しの予定
-  private captionStaleTimer: unknown;
+  private captionStaleTimer: ReturnType<typeof setTimeout> | undefined;
   // Room のイベントを聞き始めたか(入り直しでは同じ Room を使い、聞き直さない)
   private listening = false;
   // ミュートの操作を順に1つずつ行うためのつなぎ
@@ -478,7 +478,9 @@ export class RoomSession extends Observable {
 
   // 確定が届かないまま途切れたときも、受信中の表示が消えるよう描き直す
   private scheduleCaptionStale(): void {
-    clearTimeout(this.captionStaleTimer);
+    if (this.captionStaleTimer !== undefined) {
+      clearTimeout(this.captionStaleTimer);
+    }
     this.captionStaleTimer = setTimeout(() => this.changed(), CAPTION_STALE_MS);
   }
 
@@ -712,8 +714,11 @@ export class RoomSession extends Observable {
     this.textSender.dispose();
     this.mediaReceiver?.dispose();
     this.deletionReceiver?.dispose();
-    clearTimeout(this.captionGapTimer);
-    clearTimeout(this.captionStaleTimer);
+    for (const timer of [this.captionGapTimer, this.captionStaleTimer]) {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+    }
     // 下で聞くのをやめるので、切断の TrackUnsubscribed は届かない。鳴らしている音声はここで外す
     // (Web 版なら <audio> が body に残らないように)
     for (const p of this.room.remoteParticipants.values()) {

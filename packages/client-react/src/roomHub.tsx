@@ -3,13 +3,14 @@
 // 端末に依るところ(音声の出し方、画面の見え方、画面を消させない)は各アプリから渡す
 import {
   type AppPresence,
+  type RoomConnection,
   RoomHub,
   type RoomPlatform,
   RoomSession,
   type ScreenAwake,
   type User,
 } from "@voice-intercom/client-core";
-import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
+import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from "react";
 
 import { useApi } from "./api.tsx";
 import { useObservable } from "./useObservable.ts";
@@ -32,8 +33,10 @@ export interface RoomHubProviderProps {
 export function RoomHubProvider({ me, myIdentity, platform, presence, createAwake, children }: RoomHubProviderProps) {
   const api = useApi();
   const [hub, setHub] = useState<RoomHub>();
+  // 作り直す前の RoomHub で音声をつないでいたルーム
+  const carried = useRef<{ identity: string; rooms: Pick<RoomConnection, "roomId" | "roomName">[] }>(undefined);
 
-  // 言語を変えたら、受け取る翻訳が変わるので、つなぎ直す
+  // 言語を変えたら、受け取る翻訳が変わるので、つなぎ直す。音声をつないでいたルームは、音声ごとつなぎ直す
   useEffect(() => {
     const h = new RoomHub({
       createSession: (seed) =>
@@ -56,7 +59,18 @@ export function RoomHubProvider({ me, myIdentity, platform, presence, createAwak
       awake: createAwake(),
     });
     setHub(h);
-    return () => h.dispose();
+    // 別の人に替わったときは引き継がない
+    if (carried.current?.identity === myIdentity) {
+      h.resumeAudio(carried.current.rooms);
+    }
+    carried.current = undefined;
+    return () => {
+      carried.current = {
+        identity: myIdentity,
+        rooms: h.audioRooms.map(({ roomId, roomName }) => ({ roomId, roomName })),
+      };
+      h.dispose();
+    };
   }, [api, myIdentity, me.language, platform, presence, createAwake]);
 
   return hub ? <RoomHubContext value={hub}>{children}</RoomHubContext> : null;
@@ -70,6 +84,20 @@ export function useRoomHub(): RoomHub {
   }
   useObservable(hub);
   return hub;
+}
+
+// ルームの接続の状態。connecting は最初の入室の途中、rejoining は入り直しの途中、
+// failed は切断された・入室できなかった後(keeper.canRejoin なら入り直せる)
+export type ConnectionState = "connected" | "connecting" | "rejoining" | "failed";
+
+export function connectionState({ session, keeper }: Pick<RoomConnection, "session" | "keeper">): ConnectionState {
+  if (session.connected) {
+    return "connected";
+  }
+  if (keeper.rejoining) {
+    return "rejoining";
+  }
+  return keeper.joinError !== undefined || session.error !== undefined ? "failed" : "connecting";
 }
 
 // PTT を押す・離す(音声をつないだ全部のルーム)。押すときに、自動再生で止められた音も鳴らす

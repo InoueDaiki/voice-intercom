@@ -26,7 +26,7 @@ export default function Connect() {
           申請を取得できません: {errorMessage(requests.error)}
         </LoadErrorAlert>
       )}
-      {requests.isSuccess && (
+      {requests.data && (
         <>
           <div className="grid gap-3">
             <h2>届いている申請</h2>

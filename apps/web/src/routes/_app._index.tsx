@@ -41,7 +41,7 @@ export default function RoomList() {
           ルームの一覧を取得できません: {errorMessage(rooms.error)}
         </LoadErrorAlert>
       )}
-      {rooms.isSuccess && (
+      {rooms.data && (
         <RoomSection title="自分のルーム">
           {active.length === 0 ? (
             <p className="text-fg-muted">参加しているルームはありません。ルームを作るか、下の一覧から参加してください。</p>
@@ -50,7 +50,7 @@ export default function RoomList() {
           )}
         </RoomSection>
       )}
-      {joinable.isSuccess && joinable.data.length > 0 && (
+      {joinable.data && joinable.data.length > 0 && (
         <RoomSection title="参加できるルーム" description="テナントの誰でも参加できる Public のルームです。">
           <RoomRows rooms={joinable.data} joinable />
         </RoomSection>

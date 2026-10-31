@@ -9,6 +9,11 @@ export function retry(failureCount: number, error: Error): boolean {
   return failureCount < 1;
 }
 
+// 読み直しても変わらない失敗(無いもの、権限が無いもの)。持っている値があっても表示を続けない
+export function isPermanentError(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 403 || error.status === 404);
+}
+
 export function errorMessage(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 403) {

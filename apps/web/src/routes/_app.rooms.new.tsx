@@ -65,7 +65,7 @@ export default function NewRoom() {
           />
           {users.isPending && <p className="text-sm text-fg-muted">ユーザーを読み込み中…</p>}
           {users.isError && <p className="text-sm text-danger-fg">ユーザーを取得できません: {errorMessage(users.error)}</p>}
-          {users.isSuccess && (
+          {users.data && (
             <CheckboxList
               legend="一緒に入れる人"
               hint="あとからでも招待できます。"

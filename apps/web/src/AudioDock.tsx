@@ -6,12 +6,38 @@
 // - ルームの並びはたためる。幅の狭い画面では、たたんで始める(画面の下を取りすぎないよう)。たたんでいても、
 //   どこかで声が流れていれば見出しの灯りでわかる
 import type { RoomConnection, RoomHub } from "@voice-intercom/client-core";
-import { mainPttState, pressAll, pressOne, receivingCaption, signalOf, useRoomHub } from "@voice-intercom/client-react";
+import {
+  connectionState,
+  mainPttState,
+  pressAll,
+  pressOne,
+  receivingCaption,
+  signalOf,
+  useRoomHub,
+} from "@voice-intercom/client-react";
 import { Button, cx, PttButton, SignalLamp, type SignalState } from "@voice-intercom/ui-web";
 import { ChevronDown, Headphones, Mic, PhoneOff } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 
+// 押している間だけ話すキーの、押す・離す。押したままキーが消えたら(画面を移った、音声を切った、言語を変えた)、
+// 離す操作は届かないので、ここで離す。Space で話しているときは、キーが消えても止めない
+function useHoldKey(press: (value: boolean) => void) {
+  const held = useRef<() => void>(undefined);
+  const release = () => {
+    held.current?.();
+    held.current = undefined;
+  };
+  // 最後に押したときの press で離す(押している間に hub が替わっても、押した先を離す)
+  useEffect(() => () => held.current?.(), []);
+  return {
+    down: () => {
+      held.current = () => press(false);
+      press(true);
+    },
+    up: release,
+  };
+}
 
 export function AudioDock({ currentRoomId, myIdentity }: { currentRoomId: string | undefined; myIdentity: string }) {
   const hub = useRoomHub();
@@ -30,10 +56,12 @@ export function AudioDock({ currentRoomId, myIdentity }: { currentRoomId: string
       <div className="mx-auto grid w-full max-w-3xl gap-1 px-4 py-2 sm:px-6">
         {/* 長いルーム名で帯ごと横に広がらないよう、grid の項目を中身の幅より狭められるようにする */}
         <h2 className="min-w-0">
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="sm"
             aria-expanded={open}
-            className="flex h-8 w-full items-center gap-2 rounded-sm text-left text-sm font-bold focus-visible:outline-2 focus-visible:outline-fg"
+            // 文字の頭を下の行にそろえ、余白の分だけ外へ広げる
+            className="-mx-3 w-[calc(100%+1.5rem)] justify-start text-left"
             onClick={() => setOpen(!open)}
           >
             <Headphones aria-hidden="true" className="size-4 shrink-0" />
@@ -49,7 +77,7 @@ export function AudioDock({ currentRoomId, myIdentity }: { currentRoomId: string
               aria-hidden="true"
               className={cx("ml-auto size-4 shrink-0 text-fg-muted transition-transform", open && "rotate-180")}
             />
-          </button>
+          </Button>
         </h2>
         {open && (
           <ul className="grid max-h-40 gap-1 overflow-y-auto">
@@ -74,6 +102,7 @@ export function AudioDock({ currentRoomId, myIdentity }: { currentRoomId: string
 // 音声をつないだ全部のルームに届く PTT
 export function MainPtt({ hub, className }: { hub: RoomHub; className?: string }) {
   const { state, label, connected } = mainPttState(hub);
+  const key = useHoldKey((value) => pressAll(hub, value));
   return (
     <PttButton
       className={cx("w-full", className)}
@@ -81,12 +110,13 @@ export function MainPtt({ hub, className }: { hub: RoomHub; className?: string }
       shortcut="Space"
       disabled={!connected}
       aria-pressed={hub.pressingAny}
+      data-ptt
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId);
-        pressAll(hub, true);
+        key.down();
       }}
-      onPointerUp={() => pressAll(hub, false)}
-      onPointerCancel={() => pressAll(hub, false)}
+      onPointerUp={key.up}
+      onPointerCancel={key.up}
       onContextMenu={(e) => e.preventDefault()}
     >
       {label}
@@ -107,8 +137,17 @@ function AudioRoomRow({
   myIdentity: string;
   current: boolean;
 }) {
-  const { session } = room;
-  let status: ReactNode = session.connected ? "待機中" : "接続中…";
+  const { session, keeper } = room;
+  const key = useHoldKey((value) => pressOne(session, value));
+  const connection = connectionState(room);
+  let status: ReactNode =
+    connection === "connected"
+      ? "待機中"
+      : connection === "connecting"
+        ? "接続中…"
+        : connection === "rejoining"
+          ? "つなぎ直し中…"
+          : "切断";
   if (signal === "tx") {
     status = <span className="font-bold text-live">送話中</span>;
   } else if (signal === "rx") {
@@ -128,19 +167,25 @@ function AudioRoomRow({
         </Link>
       )}
       <span className="min-w-0 flex-1 truncate text-fg-muted">{status}</span>
+      {keeper.canRejoin && (
+        <Button variant="link" className="text-xs" onClick={() => void keeper.rejoin()}>
+          入り直す
+        </Button>
+      )}
       {/* このルームだけに話す。押している間だけ */}
       <Button
         size="sm"
         className="touch-none"
         disabled={!session.connected}
         aria-pressed={session.pressing}
+        data-ptt
         title={`${room.roomName} だけに話す(押している間)`}
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId);
-          pressOne(session, true);
+          key.down();
         }}
-        onPointerUp={() => pressOne(session, false)}
-        onPointerCancel={() => pressOne(session, false)}
+        onPointerUp={key.up}
+        onPointerCancel={key.up}
         onContextMenu={(e) => e.preventDefault()}
       >
         <Mic aria-hidden="true" className="size-4" />
