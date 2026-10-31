@@ -114,10 +114,29 @@ export function Timeline({
 }
 
 // タイムラインの1行。続きの行は名前と時刻を省く
-function FeedRow({ head, continued, children }: { head: ReactNode; continued: boolean; children: ReactNode }) {
+function FeedRow({
+  head,
+  continued,
+  remove,
+  children,
+}: {
+  head: ReactNode;
+  continued: boolean;
+  remove: DeleteEntry;
+  children: ReactNode;
+}) {
+  if (continued) {
+    // 名前の段を省くので、消す操作は本文の横に置く
+    return (
+      <View className="flex-row items-start gap-x-2 pt-2.5">
+        <View className="min-w-0 flex-1 gap-1">{children}</View>
+        <RemoveEntry remove={remove} />
+      </View>
+    );
+  }
   return (
-    <View className={cx("gap-1", continued ? "pt-2.5" : "mt-3 border-t border-border pt-3")}>
-      {!continued && head}
+    <View className="mt-3 gap-1 border-t border-border pt-3">
+      {head}
       {children}
     </View>
   );
@@ -142,6 +161,15 @@ function FeedHead({
       {icon}
       <Text className="text-xs text-fg-muted">{formatTime(at)}</Text>
       {children}
+      <RemoveEntry remove={remove} />
+    </View>
+  );
+}
+
+// 行を消す操作と確認
+function RemoveEntry({ remove }: { remove: DeleteEntry }) {
+  return (
+    <>
       {remove.can && (
         <Button
           variant="link"
@@ -162,7 +190,7 @@ function FeedHead({
         onConfirm={() => void remove.run()}
         onCancel={remove.cancel}
       />
-    </View>
+    </>
   );
 }
 
@@ -185,6 +213,7 @@ function CaptionItem({
   return (
     <FeedRow
       continued={continued}
+      remove={remove}
       head={
         <FeedHead
           name={session.displayName(entry.speakerIdentity)}
@@ -247,6 +276,7 @@ function MediaItem({
   return (
     <FeedRow
       continued={continued}
+      remove={remove}
       head={
         <FeedHead
           name={session.displayName(event.sender_id)}
