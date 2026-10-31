@@ -161,7 +161,7 @@ PR と main への push で動く。ツールは mise で `mise.toml` と同じ�
 1. `.env` に `AWS_PROFILE` と `TF_STATE_BUCKET` を書き、`aws sso login` する。
 2. 初回だけ `terraform -chdir=infra/envs/dev init -backend-config="bucket=$TF_STATE_BUCKET"` を実行する。state 用のバケットがまだなければ、先に `scripts/bootstrap-tfstate.sh` で作る(dev と prod で共用し、キーで分ける)。
 3. `mise run plan:dev` で差分を確かめてから、`terraform -chdir=infra/envs/dev apply` する。
-4. LiveKit の API シークレットを SSM に入れる(下の「秘密情報」)。
+4. LiveKit の API シークレットを SSM に入れる(下の「秘密情報」)。API の Lambda はトークンの検証の前に設定をまとめて読むので、入れるまでは `/health` 以外のほぼすべてのルートが 500 になる。
 
    ```sh
    aws ssm put-parameter --overwrite --type SecureString \
@@ -265,7 +265,7 @@ Agent は `services/agent/Dockerfile` のイメージ(linux/arm64)を、ECS Farg
 
    Cognito のクライアントを作り直したとき(シークレットが変わる)も、同じコマンドで入れ直し、下の `update-service` でタスクを入れ替える。
 
-3. コミットしてから、イメージを ECR に push する。最後に apply に渡すタグ(コミットのハッシュ)が表示される。prod は `main` ブランチでだけ push できる。
+3. コミットしてから、イメージを ECR に push する。最後に apply に渡すタグ(コミットのハッシュ)が表示される。prod は `main` ブランチで、`origin/main` と同じコミットのときだけ push できる(スクリプトが fetch して確かめる)。
 
    ```sh
    mise run push:agent dev
@@ -320,11 +320,11 @@ SSM の値を変えたときは、新しいタスクでないと読み直さな�
 | エンドポイント | 内容 | 使える人 |
 | --- | --- | --- |
 | `GET /health` | 死活監視 | だれでも |
-| `GET /rooms` | ルームの一覧(`{items}`、名前の順)。`scope` が `member`(既定)なら自分がメンバーのルーム(アーカイブしたものも)、`joinable` なら自分のテナントの Public で参加していないもの、`tenant` なら自分のテナントに関わるすべて(申請中の Connect も) | だれでも(`tenant` は管理者) |
+| `GET /rooms` | ルームの一覧(`{items}`、名前の順)。`scope` が `member`(既定)なら自分がメンバーのルーム(アーカイブしたものも)、`joinable` なら自分のテナントの Public で参加していないもの、`tenant` なら自分のテナントに関わるすべて(申請中の Connect も。消している途中のルームは、作ったテナントにだけ `deleting_at` つきで出る) | だれでも(`tenant` は管理者) |
 | `POST /rooms` | ルームを作る(`{name, kind: "public" \| "private", member_ids}`)。`room_id` はサーバーが乱数で作る。作った人がオーナーになる。`member_ids` は同じテナントの人だけ(違えば 400) | テナントに属する人 |
 | `GET /rooms/{room_id}` | ルームを取る。`kind`、`tenant_id`、`connect_tenant_id`・`connect_status`(Connect)、`member_ids`、`owner_ids`、`archived_at` を返す | メンバー、オーナーか管理者、同じテナントの Public なら誰でも |
 | `PATCH /rooms/{room_id}` | 名前と種別(Public と Private の間だけ)を変える | オーナーか管理者 |
-| `DELETE /rooms/{room_id}` | ルームを消す(204)。LiveKit のルームを消して全員(Agent も)を切り、履歴(timeline)と S3 の `rooms/<room_id>/` を消して CloudFront を無効にする。無いルームは 404 だが、後始末はやり直す | ルームを作ったテナントの管理者 |
+| `DELETE /rooms/{room_id}` | ルームを消す(204)。LiveKit のルームを消して全員(Agent も)を切り、履歴(timeline)と S3 の `rooms/<room_id>/`、仮置きの `rooms/.staging/<room_id>/` を消して CloudFront を無効にする。時間内に終わらなければ 503 で、ルームは `deleting_at` のまま残り、同じ DELETE をやり直すと続きを消す。行の無いルームは 404 で、後始末はしない | ルームを作ったテナントの管理者 |
 | `POST /rooms/{room_id}/join` | Public に参加する。参加していれば何もしない。アーカイブしていれば 409 | 同じテナントの人 |
 | `GET /rooms/{room_id}/members` | メンバーの一覧(`user_id`、`role`、`tenant_id`、`display_name`) | メンバー、オーナーか管理者 |
 | `PUT /rooms/{room_id}/members/{user_id}` | メンバーに足すか、役割(`{role: "owner" \| "member"}`)を変える。承諾は待たない。足せるのは自分のテナントの人だけ(違えば 400、相手のテナントのメンバーは 403)。最後のオーナーをメンバーに戻すと 409 | オーナーか管理者 |
@@ -336,7 +336,7 @@ SSM の値を変えたときは、新しいタスクでないと読み直さな�
 | `POST /connect-requests/{room_id}/accept` | 申請を受ける。受けた人もオーナーになり、ルームが使えるようになる | 申請を受けたテナントの管理者 |
 | `DELETE /connect-requests/{room_id}` | 申請を断る・取り下げる(ルームを消す) | どちらかのテナントの管理者 |
 | `GET /tenants`、`POST /tenants` | テナントの一覧と作成(`{tenant_id, name}`。`tenant_id` は英小文字・数字・ハイフンの 2〜32 文字) | 運営者 |
-| `PUT /users/{user_id}/tenant` | ユーザーの所属を変える(`{tenant_id}`、null で外す) | 運営者 |
+| `PUT /users/{user_id}/tenant` | ユーザーの所属を変える(`{tenant_id}`、null で外す)。元のテナントのルームのメンバーから外し(最後のオーナーでも)、LiveKit のルームからも出す。出しきれなければ 503 で、所属の変更は効いたまま、同じ PUT をやり直すと続きを行う | 運営者 |
 | `GET /users/me` | 自分のプロフィール(表示名、言語)。未登録なら 404 | 本人 |
 | `PUT /users/me` | プロフィールを登録・更新する | 本人 |
 | `PUT /users/me/devices` | push 通知の端末トークンを登録する(`{token, platform: "ios" \| "android"}`、204)。アプリの起動時とトークンの更新時に呼ぶ | 本人 |
@@ -413,10 +413,19 @@ complete で履歴に保存した後に、API が LiveKit の Server API でル�
 - メンバーを外したら(抜けたときも)、`ListParticipants` で今ルームにいる人を取り、外した人を `RemoveParticipant` で出す。
 - アーカイブしたら、`DeleteRoom` で全員(Agent も)を切る。履歴とメディアは消さない。
 - ルームを消したら、`DeleteRoom` で全員(Agent も)を切り、timeline テーブルのルームのパーティション(履歴、`media-upload#<room_id>`、`notify#<room_id>`)と S3 の `rooms/<room_id>/` の下(途中のマルチパートも)を消し、CloudFront を `/rooms/<room_id>/*` で無効にする。録音のバケットは消さない。
-- アーカイブや削除の後に発行済みのトークンで LiveKit のルームが作り直されたら、Agent が履歴の保存か通知で 404・409 を受けたときに、`DeleteRoom` でルームを閉じてジョブを終える(`services/agent` の `agent.py`。一時的なエラーやほかの 4xx では閉じない)。
-- 後始末が失敗しても、外す・アーカイブ・DELETE は成功で返す(ログに残す)。履歴とメディアの削除は6秒で打ち切り、残りは DELETE のやり直しで消す(`room_id` は乱数なので、作り直しは起きない)。
+- アーカイブや削除の後に発行済みのトークンで LiveKit のルームが作り直されたら、Agent が履歴の保存か通知で、ルームが無いという 404(本文の `code` が `room_gone`)か 409 を受けたときに、`DeleteRoom` でルームを閉じてジョブを終える(`services/agent` の `agent.py`。一時的なエラー、ほかの 4xx、印の無い 404 では閉じない)。
+- アーカイブから2分の間は、`occurred_at` がアーカイブより前の履歴の PUT を保存する(訳を待っている間にアーカイブされた発話を残すため)。
+- 後始末が失敗しても、外す・アーカイブは成功で返す(ログに残す)。DELETE と所属の変更(`PUT /users/{user_id}/tenant`)は 503 を返し、やり直すと続きを行う。履歴とメディアの削除は6秒で打ち切り、残りは DELETE のやり直しで消す(`room_id` は乱数なので、作り直しは起きない)。
 - Lambda には `s3:ListBucketMultipartUploads` も許してある(ほかは画像・動画の削除と同じ権限)。
 - 出した人も、出す前に受け取ったトークン(2分)で入り直すことはできる(アプリは入り直さない)。
+- `deleting_at` を入れる前の DELETE は rooms の行を先に消していたので、途中で止まった分の履歴とメディアが、行の無いまま残っていることがある。DELETE は 404 になるので、手で掃除する(1回でよい)。
+  1. S3 の `rooms/` と `rooms/.staging/` の下、timeline テーブルの `room_id`(`media-upload#`、`notify#` の前置きを除く)に出る ID のうち、rooms テーブルに行が無いものを選ぶ。
+  2. ID ごとに次を実行する。`True` が出るまでやり直す。rooms に行のある ID は渡さない。
+
+     ```sh
+     TIMELINE_TABLE=... MEDIA_BUCKET=... MEDIA_BASE_URL=... MEDIA_DISTRIBUTION_ID=... \
+       uv run python -c 'import sys; from voice_intercom_api import room_cleanup; print(room_cleanup.purge(sys.argv[1], always_invalidate=True))' <room_id>
+     ```
 
 ### push 通知
 
