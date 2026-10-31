@@ -13,7 +13,7 @@ variable "livekit_api_key" {
 }
 
 variable "agent_image_tag" {
-  description = "Agent のイメージのタグ(mise run push:agent が表示する)。空なら Agent のタスクを起動しない"
+  description = "Agent のイメージのタグ(mise run push:agent が表示する)。必須。空だと plan が止まる(初回は README の手順で ECR だけを先に作る)"
   type        = string
   default     = ""
 }

@@ -7,7 +7,8 @@ data "aws_region" "current" {}
 data "aws_caller_identity" "current" {}
 
 locals {
-  # タグが無いうちは起動しない(初回の apply で ECR を作り、push してからもう一度 apply する)。
+  # タグが無いうちは起動しない(dev の初回の apply で ECR を作り、push してからもう一度 apply する)。
+  # prod は require_image_tag でタグが無い apply を止めるので、ここを通らない。
   # 台数はオートスケールの最小・最大で決める(desired_count は Terraform では作るときにしか使わない)
   max_count = var.image_tag == "" ? 0 : var.max_count
   min_count = min(var.min_count, local.max_count)
@@ -221,6 +222,14 @@ resource "aws_ecs_task_definition" "this" {
     cpu_architecture        = "ARM64"
   }
 
+  # タグを渡し忘れた apply で、台数を 0 にしたり、存在しない :latest に替えたりしない
+  lifecycle {
+    precondition {
+      condition     = !var.require_image_tag || var.image_tag != ""
+      error_message = "image_tag が空。TF_VAR_agent_image_tag に push 済みのタグを渡す。初回は ECR だけを -target で作り、push してから渡す(README の「LiveKit Agent(ECS Fargate)」)"
+    }
+  }
+
   container_definitions = jsonencode([
     {
       name      = "agent"
@@ -280,7 +289,8 @@ resource "aws_ecs_task_definition" "this" {
 #   ジョブがある間は延長する。保護を続ける長さには上限(既定 12 時間)がある。
 # - desired_count は作るときの値にだけ使い、その後はオートスケールに任せる(ignore_changes)。
 #   台数を変えるときは min_count・max_count を変える。RegisterScalableTarget は、今の台数が
-#   最小・最大の外にあれば中に入れ直すので、image_tag が空の間(最大 0)は 0 台になる。
+#   最小・最大の外にあれば中に入れ直すので、image_tag が空の間(最大 0)は 0 台になる
+#   (require_image_tag が true の環境では、空のまま apply できない)。
 #
 # デプロイは「新しいタスクを先に起動してから古いタスクを止める」(minimum 100% / maximum 200%)。
 # 新しいタスクが LiveKit に登録してから古いタスクが止められるので、新しいジョブは新しいタスクにも行く。

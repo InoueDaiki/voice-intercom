@@ -232,8 +232,17 @@ Agent は `services/agent/Dockerfile` のイメージ(linux/arm64)を、ECS Farg
 
 イメージのビルドと push は devContainer でできる。devContainer は docker-outside-of-docker で、ホストの Docker Desktop(Apple Silicon なので arm64 のエンジン)を使うため、エミュレーションなしで linux/arm64 をビルドする。ECR へのログインには devContainer の AWS CLI(`aws sso login` 済みのプロファイル)を使う。
 
-1. 初回の apply では ECR などができるだけで、タスクは起動しない(`agent_image_tag` が空のうちは台数を 0 にする)。
-2. OpenAI の API キーを SSM に入れる(LiveKit の API シークレットと同じく、上の「秘密情報」)。prod では LiveKit の API シークレットも同じように入れる。
+1. dev の初回の apply では ECR などができるだけで、タスクは起動しない(`agent_image_tag` が空のうちは台数を 0 にする)。
+
+   prod はタグが無いと plan が止まる(動いている Agent を、渡し忘れで 0 台にしないため。`require_image_tag`)。初回は ECR だけを先に作る。
+
+   ```sh
+   terraform -chdir=infra/envs/prod apply \
+     -target=module.agent.aws_ecr_repository.this \
+     -target=module.agent.aws_ecr_lifecycle_policy.this
+   ```
+
+2. OpenAI の API キーを SSM に入れる(イメージのタグを渡す apply より先に。LiveKit の API シークレットと同じく、上の「秘密情報」)。prod では LiveKit の API シークレットも同じように入れる。
 
    ```sh
    aws ssm put-parameter --overwrite --type SecureString \
@@ -250,7 +259,7 @@ Agent は `services/agent/Dockerfile` のイメージ(linux/arm64)を、ECS Farg
 
    Cognito のクライアントを作り直したとき(シークレットが変わる)も、同じコマンドで入れ直し、下の `update-service` でタスクを入れ替える。
 
-3. コミットしてから、イメージを ECR に push する。最後に apply に渡すタグ(コミットのハッシュ)が表示される。
+3. コミットしてから、イメージを ECR に push する。最後に apply に渡すタグ(コミットのハッシュ)が表示される。prod は `main` ブランチでだけ push できる。
 
    ```sh
    mise run push:agent dev
@@ -260,6 +269,13 @@ Agent は `services/agent/Dockerfile` のイメージ(linux/arm64)を、ECS Farg
 
    ```sh
    TF_VAR_agent_image_tag=<タグ> terraform -chdir=infra/envs/dev apply
+   ```
+
+   prod は Agent に関係のない変更の apply でも、タグを毎回渡す。今のタグは次で分かる。
+
+   ```sh
+   aws ecs describe-task-definition --task-definition voice-intercom-prod-agent \
+     --query 'taskDefinition.containerDefinitions[0].image' --output text
    ```
 
 SSM の値を変えたときは、新しいタスクでないと読み直さない。`aws ecs update-service --force-new-deployment --cluster voice-intercom-dev-agent --service voice-intercom-dev-agent` で入れ替える。dev は scale to zero にしてあり(下の「台数」)、使っていない間は 0 台で Fargate の料金がかからない。入室しても起こさないようにするには `TF_VAR_agent_max_count=0` で apply する。
@@ -278,7 +294,7 @@ SSM の値を変えたときは、新しいタスクでないと読み直さな�
   - **割り当て直す**: LiveKit は、Agent が1台も登録していないときに作られたルームの割り当てを、後から登録した Agent に渡さない(ローカルの livekit-server 1.13.9 で確かめた)。そこで Agent は登録した 5 秒後に、人がいて Agent のいないルームを探し、`CreateDispatch` で割り当て直す(`services/agent` の `scale_to_zero.py`)。ローカルでは、入室の 30 秒後に起動した Agent が、その 9 秒後にルームに入った。
   - **止める**: ジョブの無い状態が 15 分続き、人のいるルームも無ければ、Agent が自分のサービスの台数を 0 にする(タスクロールに自分のサービスへの `ecs:UpdateService` を許す)。止めた直後に入った人のルームには Agent がいないが、入り直せば起こし直す。
   - `agent_image_tag` が空の間と、`agent_max_count` が 0 のときは、API は起こさない。
-- **prod の台数**: CPU 使用率(サービスのタスクの平均)のターゲット追跡でオートスケールする。目標は 50%(`cpu_target_percent`)、スケールアウトの後は 120 秒、スケールインの後は 900 秒待つ。dev は 1 vCPU・2GB(scale to zero で 0〜1 つ)、prod は 4 vCPU・8GB を 1〜4 つ。prod を冗長にするなら `agent_min_count` を 2 に。最小を 0 にすると、CPU の指標が出ないので 0 台から増えない(止めたいときだけ `agent_max_count` を 0 にする)。台数はオートスケールが変えるので、Terraform はサービスの `desired_count` を作るときにしか使わない(`ignore_changes`)。`agent_image_tag` が空の間は最大を 0 にし、0 台にする。Fargate Spot は、2分前の通知で止められるので使わない。
+- **prod の台数**: CPU 使用率(サービスのタスクの平均)のターゲット追跡でオートスケールする。目標は 50%(`cpu_target_percent`)、スケールアウトの後は 120 秒、スケールインの後は 900 秒待つ。dev は 1 vCPU・2GB(scale to zero で 0〜1 つ)、prod は 4 vCPU・8GB を 1〜4 つ。prod を冗長にするなら `agent_min_count` を 2 に。最小を 0 にすると、CPU の指標が出ないので 0 台から増えない(止めたいときだけ `agent_max_count` を 0 にする)。台数はオートスケールが変えるので、Terraform はサービスの `desired_count` を作るときにしか使わない(`ignore_changes`)。`agent_image_tag` が空の apply は plan で止まる(dev では、空の間は最大を 0 にし、0 台にする)。Fargate Spot は、2分前の通知で止められるので使わない。
   - **CPU の目標と LiveKit の負荷の閾値**: LiveKit のワーカーは、自分の CPU 使用率(cgroup で測る、2.5 秒の移動平均)が `load_threshold`(本番の既定 0.7)以上になると「満杯」になり、新しいジョブを断る(LiveKit はほかのワーカーに回す)。ECS の指標は 1 分ごとの全タスクの平均なので、目標を閾値と同じ 70% にすると、平均が届く前に一部のタスクが断り始め、増えるのも遅れる。タスクの起動と LiveKit への登録にも 1〜2 分かかるので、目標は閾値より低い 50% にして早めに増やす(設計メモの「0.5 付近で早めにスケールアウト」)。目標を上げるなら、閾値(70%)より下に収める(変数の検証で 70 未満に制限している)。
 - **録音**: Agent は話者ごと・発話ごとの録音(Ogg/Opus)を、録音用のバケット `voice-intercom-<env>-recordings-<アカウント ID>`(`infra/modules/recordings`)に置く。キーは `rooms/<room_id>/<YYYY>/<MM>/<DD>/<utterance_id>-<speaker_id>.ogg`(詳しくは `services/agent/README.md` の「録音」)。LiveKit の Egress は使わない(固定費を抑えるため。設計メモの「録音の方式」)。
   - 画像・動画のバケット(media)には置かない。media は CloudFront の既定の振る舞いがバケット全体を署名なしで配信するので、キーが分かれば誰でも聞けてしまう。録音のバケットは CloudFront につながず、パブリックアクセスをすべてブロックし、SSE-S3 で暗号化し、HTTPS 以外を拒む。

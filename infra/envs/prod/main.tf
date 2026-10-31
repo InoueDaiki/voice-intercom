@@ -78,10 +78,12 @@ module "agent" {
 
   name      = "${local.name_prefix}-agent"
   image_tag = var.agent_image_tag
-  cpu       = 4096
-  memory    = 8192
-  min_count = var.agent_min_count
-  max_count = var.agent_max_count
+  # タグを渡し忘れた apply で Agent を 0 台にしない
+  require_image_tag = true
+  cpu               = 4096
+  memory            = 8192
+  min_count         = var.agent_min_count
+  max_count         = var.agent_max_count
 
   livekit_url                      = var.livekit_client_url
   livekit_api_key                  = var.livekit_api_key
