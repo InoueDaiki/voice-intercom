@@ -44,6 +44,8 @@ module "admin_site" {
   name          = "${local.name_prefix}-admin"
   bucket_name   = "${local.name_prefix}-admin-${data.aws_caller_identity.current.account_id}"
   force_destroy = true
+
+  csp_connect_sources = local.csp_api_sources
 }
 
 module "web_site" {
@@ -52,9 +54,31 @@ module "web_site" {
   name          = "${local.name_prefix}-web"
   bucket_name   = "${local.name_prefix}-web-${data.aws_caller_identity.current.account_id}"
   force_destroy = true
+
+  csp_connect_sources = concat(local.csp_api_sources, [
+    # livekit-client は接続先に加えて、https で地域の一覧も取る。地域のホストは <project>.<地域>.production.livekit.cloud
+    "wss://*.livekit.cloud",
+    "https://*.livekit.cloud",
+    # 署名付き URL での PUT(services/api の media_store.py はバケット名をホストに入れる)
+    "https://${local.media_bucket_name}.s3.${data.aws_region.current.region}.amazonaws.com",
+    "https://${local.media_bucket_name}.s3.amazonaws.com",
+    "https://${module.media.cdn_domain_name}",
+  ])
+  csp_media_sources    = ["https://${module.media.cdn_domain_name}"]
+  csp_video_conversion = true
 }
 
 locals {
+  media_bucket_name = "${local.name_prefix}-media-${data.aws_caller_identity.current.account_id}"
+
+  # CSP の接続先。API はワイルドカードにする。API の CORS が配信のドメインを参照し、配信の CSP が API の
+  # ドメインを参照すると循環するため。Cognito は固定の名前から作れる
+  csp_api_sources = [
+    "https://*.execute-api.${data.aws_region.current.region}.amazonaws.com",
+    "https://cognito-idp.${data.aws_region.current.region}.amazonaws.com",
+    "https://${local.name_prefix}.auth.${data.aws_region.current.region}.amazoncognito.com",
+  ]
+
   # 管理コンソールと Web 版クライアントのオリジン。ローカルの開発サーバーと、CloudFront での配信
   admin_origins = ["http://localhost:5173", module.admin_site.url]
   web_origins   = ["http://localhost:5174", module.web_site.url]
@@ -165,7 +189,7 @@ module "media" {
   source = "../../modules/media"
 
   # バケット名は全世界で一意なので、アカウント ID を付ける
-  bucket_name          = "${local.name_prefix}-media-${data.aws_caller_identity.current.account_id}"
+  bucket_name          = local.media_bucket_name
   force_destroy        = true
   cors_allowed_origins = local.client_origins
 }

@@ -215,7 +215,10 @@ Cognito の Agent のクライアントシークレットは、Cognito のクラ
   1. `terraform output` から `VITE_OIDC_ISSUER`(`oidc_issuer`)、`VITE_OIDC_CLIENT_ID`(`cognito_client_ids.<app>`)、`VITE_OIDC_LOGOUT_URL`(`<cognito_hosted_ui_url>/logout`)、`VITE_API_BASE_URL`(`api_endpoint`)を作り、`pnpm build` する(`.env` のローカル向けの値より優先する)。
   2. `assets/`(名前にハッシュが付く)を `Cache-Control: public, max-age=31536000, immutable` で置き、次に `index.html` を `no-cache` で置く。最後に、今のビルドに無いファイルを消す。開いたままの古いタブは、画面を移るときに古いファイルを読めず失敗することがあるので、再読み込みする。
   3. CloudFront のキャッシュを `/*` で無効にする(月 1,000 パスまで無料)。
-- 応答には HSTS、`X-Frame-Options: DENY`、`X-Content-Type-Options: nosniff`、`Referrer-Policy` を付ける。CSP はまだ付けていない。
+- 応答には HSTS、`X-Frame-Options: DENY`、`X-Content-Type-Options: nosniff`、`Referrer-Policy` と、CSP を付ける。
+- CSP は今は `Content-Security-Policy-Report-Only` で送り、違反をブラウザのコンソールに出すだけにしている(`csp_report_only`。既定は `true`)。Web 版でログイン、入室、音声、画像と動画の送信(動画の変換を含む)、管理コンソールでログインと一覧を試し、コンソールに違反が出ないことを確かめてから、`false` にして強制する。
+  - 接続先は `infra/envs/dev/main.tf` の `csp_*`。つなぐ先を足したら、ここにも足す。API は `https://*.execute-api.<リージョン>.amazonaws.com` のワイルドカードにしている(API の CORS と配信のドメインが循環するため)。
+  - `script-src` には `'unsafe-inline'` が要る。React Router の SPA の `index.html` がインラインの script で起動し、中身がビルドごとに変わるため。インラインの script の注入は CSP では防げない(外への接続、埋め込み、`base` の差し替えは防ぐ)。防ぐには、デプロイのときに hash を計算してヘッダーに入れる仕組みが要る。
 - 独自のドメインはまだ使わない。使うときは、ACM の証明書(us-east-1)と Route 53 を足し、Cognito の戻り先も替える。
 
 ### Cognito のログイン画面

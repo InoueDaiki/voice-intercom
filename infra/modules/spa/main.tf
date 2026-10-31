@@ -59,12 +59,54 @@ data "aws_cloudfront_cache_policy" "caching_optimized" {
   name = "Managed-CachingOptimized"
 }
 
-# HTTPS だけで使わせ(HSTS)、ほかのサイトの枠に入れさせず、Content-Type どおりに扱わせる。
-# CSP は、つなぐ先(API、Cognito、LiveKit、画像・動画の CloudFront)が環境で変わるので、まだ付けない
+# CSP。つなぐ先は環境で変わるので、呼び出し元から受け取る。
+# - script-src の 'unsafe-inline': React Router の SPA の index.html はインラインの script で起動し、
+#   中身(ファイル名のハッシュ)はビルドごとに変わるので、Terraform では hash を固定できない。
+# - style-src の 'unsafe-inline': ダイアログのスクロールの固定(react-style-singleton)が style 要素を足す。
+# - font-src の data:: ビルドが書体を CSS に埋め込む。
+# - 'wasm-unsafe-eval' と blob: の Worker: 動画の変換の AAC の符号化器(WASM を埋め込んだ Blob の Worker)。
+locals {
+  content_security_policy = join("; ", [
+    "default-src 'self'",
+    join(" ", concat(["script-src 'self' 'unsafe-inline'"], var.csp_video_conversion ? ["'wasm-unsafe-eval'"] : [])),
+    "style-src 'self' 'unsafe-inline'",
+    join(" ", concat(["img-src 'self' data: blob:"], var.csp_media_sources)),
+    join(" ", concat(["media-src 'self' blob:"], var.csp_media_sources)),
+    "font-src 'self' data:",
+    join(" ", concat(["connect-src 'self'"], var.csp_connect_sources)),
+    var.csp_video_conversion ? "worker-src 'self' blob:" : "worker-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ])
+}
+
+# HTTPS だけで使わせ(HSTS)、ほかのサイトの枠に入れさせず、Content-Type どおりに扱わせる
 resource "aws_cloudfront_response_headers_policy" "this" {
   name = var.name
 
+  # Report-Only はセキュリティヘッダーの設定に無いので、カスタムヘッダーで送る
+  dynamic "custom_headers_config" {
+    for_each = var.csp_report_only ? [1] : []
+    content {
+      items {
+        header   = "Content-Security-Policy-Report-Only"
+        value    = local.content_security_policy
+        override = true
+      }
+    }
+  }
+
   security_headers_config {
+    dynamic "content_security_policy" {
+      for_each = var.csp_report_only ? [] : [1]
+      content {
+        content_security_policy = local.content_security_policy
+        override                = true
+      }
+    }
+
     content_type_options {
       override = true
     }
