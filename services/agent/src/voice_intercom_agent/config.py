@@ -35,6 +35,10 @@ class Settings:
     tts_idle_close_s: float
     # テキスト入力の最大の文字数。超えたものは断る
     text_max_chars: int
+    # ジョブの終わりに、発話の書き起こしと字幕の訳を待つ上限(秒)。commit から確定まで約0.7秒、
+    # 訳が 1.2〜2.6秒。この後の履歴と録音の送信(既定5秒)と合わせて、livekit-agents の
+    # shutdown_process_timeout(既定10秒)に収める
+    shutdown_drain_s: float = 4.0
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -57,6 +61,7 @@ class Settings:
             tts_prewarm=os.environ.get("TTS_PREWARM", "1") != "0",
             tts_idle_close_s=float(os.environ.get("TTS_IDLE_CLOSE_S", "60")),
             text_max_chars=int(os.environ.get("TEXT_MAX_CHARS", "500")),
+            shutdown_drain_s=float(os.environ.get("SHUTDOWN_DRAIN_S", cls.shutdown_drain_s)),
         )
 
 

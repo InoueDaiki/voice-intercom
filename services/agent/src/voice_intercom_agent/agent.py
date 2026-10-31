@@ -6,7 +6,7 @@
 import asyncio
 import logging
 from collections.abc import Coroutine
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import aiohttp
@@ -40,11 +40,17 @@ class Deps:
     notifier: RoomNotifier
     recordings: Recorder
     background: set[asyncio.Task[Any]]
+    # background のうち、ジョブの終わりに終わるのを待つもの(発話の書き起こしと字幕の訳)
+    draining: set[asyncio.Task[Any]] = field(default_factory=set)
 
-    def spawn(self, coro: Coroutine[Any, Any, None]) -> None:
+    def spawn(self, coro: Coroutine[Any, Any, None], *, drain: bool = False) -> asyncio.Task[None]:
         task = asyncio.create_task(coro)
         self.background.add(task)
         task.add_done_callback(self.background.discard)
+        if drain:
+            self.draining.add(task)
+            task.add_done_callback(self.draining.discard)
+        return task
 
 
 class Utterance:
@@ -155,10 +161,23 @@ class Utterance:
             s.finish()
         self._recording.finish()
 
-    async def run(self) -> None:
-        await asyncio.gather(*(s.run() for s in self._sessions))
+    def start(self) -> None:
+        """セッションを動かし始める。
+
+        書き起こしと字幕の訳は、ジョブの終わりでも待つ(履歴に残すため)。翻訳音声は待たない。
+        translate の close は長いと35秒かかり、ルームを出た後では流す先も無い。
+        """
+        text = self._deps.spawn(self._run_text(), drain=True)
+        self._deps.spawn(self._run_audio(text))
+
+    async def _run_text(self) -> None:
+        await self._whisper.run()
         # 翻訳の字幕は whisper の確定の中で始まる。終わるまで待つ
         await asyncio.gather(*self._translations)
+
+    async def _run_audio(self, text: asyncio.Task[None]) -> None:
+        await asyncio.gather(*(s.run() for s in self._sessions if s is not self._whisper))
+        await text
         logger.info("発話を終えた: %s", self.utterance_id)
 
     def _on_delta(self, index: int, text: str) -> None:
@@ -183,7 +202,7 @@ class Utterance:
             return
         logger.info("原文 #%d: %s", index, text)
         for lang in self._targets:
-            self._translations.append(asyncio.create_task(self._translate(index, text, lang)))
+            self._translations.append(self._deps.spawn(self._translate(index, text, lang)))
 
     async def _translate(self, index: int, text: str, target: str) -> None:
         track = self._caption_track(index, target, translated=True)
@@ -259,7 +278,7 @@ class Speaker:
                 ",".join(audio_targets) or "なし",
                 self._utterance.utterance_id,
             )
-            self._deps.spawn(self._utterance.run())
+            self._utterance.start()
             # 話し始めの push 通知(バックグラウンドで API を呼ぶ。発話の処理は待たない)
             self._deps.notifier.started(
                 identity,
@@ -410,6 +429,10 @@ class IntercomAgent:
             or is_agent(participant)
         ):
             return
+        # 同じ sid で購読し直されたら(Python の SDK は重複を除かない)、前の発話を閉じて作り直す
+        if (previous := self._speakers.pop(publication.sid, None)) is not None:
+            logger.warning("同じトラックをもう一度購読した: %s", publication.sid)
+            self._deps.spawn(previous.aclose())
         speaker = Speaker(self._deps, self._room, participant, track)
         self._speakers[publication.sid] = speaker
         speaker.subscribed(muted=publication.muted)
@@ -435,6 +458,7 @@ class IntercomAgent:
     async def aclose(self) -> None:
         await asyncio.gather(*(s.aclose() for s in self._speakers.values()))
         self._speakers.clear()
+        await self._drain_utterances()
         # 閉じかけのセッションが残っていれば、打ち切る
         for task in list(self._deps.background):
             task.cancel()
@@ -449,3 +473,16 @@ class IntercomAgent:
         await self._deps.tracks.aclose()
         await self._deps.captions.aclose()
         await self._deps.http.close()
+
+    async def _drain_utterances(self) -> None:
+        """終わった発話の書き起こしと字幕の訳を、上限まで待つ。
+
+        最後の人が PTT を離してすぐ抜けると、commit の結果が届く前にここへ来る。打ち切ると
+        whisper が空の全文で確定し、その発話は履歴に残らない。
+        """
+        if not self._deps.draining:
+            return
+        limit = self._deps.settings.shutdown_drain_s
+        _, late = await asyncio.wait(self._deps.draining, timeout=limit)
+        if late:
+            logger.warning("ジョブの終わりまでに書き起こせなかった発話を打ち切る: %d件", len(late))
