@@ -2,7 +2,7 @@
 # Agent(services/agent)のイメージを linux/arm64 でビルドし、ECR に push する。
 #   scripts/push-agent.sh dev   # または prod
 # 送り先の ECR は terraform output から取るので、先にその環境を apply しておく(prod の初回は、ECR だけを作る。README を参照)。
-# prod には main ブランチからだけ push する。
+# prod には origin/main と同じコミットの main ブランチからだけ push する。
 # タグはコミットのハッシュ(ECR はタグの上書きを禁じている)。最後に、apply に渡すタグを表示する。
 set -euo pipefail
 
@@ -18,6 +18,12 @@ if [[ "$env" == "prod" ]]; then
   branch="$(git -C "$root" branch --show-current)"
   if [[ "$branch" != "main" ]]; then
     echo "prod には main ブランチからだけ push できます(今: ${branch:-detached HEAD})" >&2
+    exit 1
+  fi
+  # レビューを通っていないローカルのコミットや、古い main を prod に出さない
+  git -C "$root" fetch --quiet origin main
+  if [[ "$(git -C "$root" rev-parse HEAD)" != "$(git -C "$root" rev-parse origin/main)" ]]; then
+    echo "prod には origin/main と同じコミットからだけ push できます" >&2
     exit 1
   fi
 fi
