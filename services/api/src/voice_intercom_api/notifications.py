@@ -7,8 +7,8 @@
   テキストはアプリから Agent にだけ届き、API は履歴の保存(訳がそろってから)まで知らないので、
   話し始めと同じく Agent から知らせる。
 
-- 送る相手は、ルームの member_ids から、送信者(話者)と今ルームに入っている人(present_ids)を
-  除いた人。
+- 送る相手は、今の所属のメンバー(store.current_member_ids)から、送信者(話者)と今ルームに
+  入っている人(present_ids)を除いた人。
 - 間引きは room_push.py: 同じルーム × 同じ受け手には、NOTIFY_INTERVAL_S 秒(既定 300)に1回まで。
   通知の種類(テキスト、話し始め、画像・動画)は分けずに数える。会話が続く間、発話やテキストの
   たびに通知が鳴り続けないようにする。
@@ -98,7 +98,9 @@ def notify_speaking(
     _agent: AgentPrincipal,
 ) -> NotificationResult:
     room = agent_writable_room(room_id)
-    recipients = room_push.recipients_of(room.member_ids, [body.speaker_id, *body.present_ids])
+    recipients = room_push.recipients_of(
+        store.current_member_ids(room), [body.speaker_id, *body.present_ids]
+    )
     if not recipients:
         return NotificationResult(sent=0, skipped=0)
     profile = store.get_user(body.speaker_id)
@@ -143,7 +145,9 @@ def notify_text(
     _agent: AgentPrincipal,
 ) -> NotificationResult:
     room = agent_writable_room(room_id)
-    recipients = room_push.recipients_of(room.member_ids, [body.sender_id, *body.present_ids])
+    recipients = room_push.recipients_of(
+        store.current_member_ids(room), [body.sender_id, *body.present_ids]
+    )
     if not recipients:
         return NotificationResult(sent=0, skipped=0)
     profile = store.get_user(body.sender_id)

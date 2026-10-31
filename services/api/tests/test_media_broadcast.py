@@ -331,6 +331,15 @@ def test_push_to_members_not_in_room(member: str, lk: FakeLiveKit, push: FakeNot
     ]
 
 
+def test_moved_member_gets_no_media_push(member: str, lk: FakeLiveKit, push: FakeNotify) -> None:
+    lk.participants = [("member-1", STANDARD), ("member-2", STANDARD)]
+    belong("member-4", "t2")
+
+    upload(member)
+
+    assert [uid for c in push.calls for uid in c["user_ids"]] == ["member-3"]
+
+
 def test_push_body_for_video_and_unknown_sender(
     make_token: Token, lk: FakeLiveKit, push: FakeNotify
 ) -> None:

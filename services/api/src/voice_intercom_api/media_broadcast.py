@@ -32,7 +32,7 @@ import aiohttp
 from livekit import api as livekit
 from livekit.api.room_service import RoomService
 
-from voice_intercom_api import room_push
+from voice_intercom_api import room_push, store
 from voice_intercom_api.config import get_settings
 from voice_intercom_api.models import Room, User
 from voice_intercom_api.timeline_models import TimelineEvent
@@ -156,7 +156,9 @@ def notify_absent(
     room: Room, event: TimelineEvent, sender: User | None, present: list[str] | None
 ) -> None:
     """ルームのメンバーから、送信者と今ルームにいる人を除いた人に push 通知を送る。"""
-    recipients = room_push.recipients_of(room.member_ids, [event.sender_id, *(present or [])])
+    recipients = room_push.recipients_of(
+        store.current_member_ids(room), [event.sender_id, *(present or [])]
+    )
     # 同じルーム × 同じ受け手に、テキスト・話し始めと共通の間隔で1回まで(room_push.py)
     room_push.send_throttled(
         room.room_id,

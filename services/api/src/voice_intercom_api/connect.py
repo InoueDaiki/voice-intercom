@@ -73,7 +73,11 @@ def _pending_room(room_id: str, actor: Actor) -> Room:
 )
 def list_connect_requests(admin: AdminUser) -> ConnectRequestList:
     actor = tenant_actor(admin)
-    rooms = [r for r in store.list_tenant_rooms(actor.tenant_id) if r.connect_status == "pending"]
+    rooms = [
+        r
+        for r in store.list_tenant_rooms(actor.tenant_id)
+        if r.connect_status == "pending" and r.deleting_at is None
+    ]
     return ConnectRequestList(items=[_request(r, actor) for r in rooms])
 
 

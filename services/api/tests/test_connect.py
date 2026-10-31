@@ -218,3 +218,24 @@ def test_tenant_api_requires_operator(token: Callable[[str], str]) -> None:
     assert call("GET", "/tenants", admin)[0] == 403
     assert call("POST", "/tenants", admin, {"tenant_id": "acme", "name": "x"})[0] == 403
     assert call("PUT", "/users/member-1/tenant", admin, {"tenant_id": "t1"})[0] == 403
+
+
+def test_deleting_connect_room_is_listed_only_for_creating_tenant(
+    token: Callable[[str], str],
+) -> None:
+    _, created = request(token("admin-1"))
+    room_id = created["room"]["room_id"]
+    call("POST", f"/connect-requests/{room_id}/accept", token("admin-2"))
+    store.update_room(room_id, deleting_at=store.now())
+
+    assert [r.room_id for r in store.list_tenant_rooms("t1")] == [room_id]
+    # 相手のテナントは DELETE をやり直せないので、一覧に出さない
+    assert store.list_tenant_rooms("t2") == []
+
+
+def test_deleting_request_is_not_listed(token: Callable[[str], str]) -> None:
+    _, created = request(token("admin-1"))
+    store.update_room(created["room"]["room_id"], deleting_at=store.now())
+
+    assert call("GET", "/connect-requests", token("admin-1"))[1]["items"] == []
+    assert call("GET", "/connect-requests", token("admin-2"))[1]["items"] == []

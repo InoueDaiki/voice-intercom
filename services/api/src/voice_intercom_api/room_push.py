@@ -49,7 +49,10 @@ def interval_s() -> int:
 
 
 def recipients_of(member_ids: Iterable[str], excluded: Iterable[str]) -> list[str]:
-    """ルームのメンバーから、excluded(送信者と今ルームにいる人)を除いた人を、重ねずに順に返す。"""
+    """メンバー(store.current_member_ids)から、excluded(送信者と今ルームにいる人)を除いた人。
+
+    重ねずに順に返す。
+    """
     skip = set(excluded)
     return [uid for uid in dict.fromkeys(member_ids) if uid not in skip]
 

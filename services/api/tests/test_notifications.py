@@ -5,7 +5,15 @@ from typing import Any
 
 import boto3
 import pytest
-from timeline_env import AGENT_SCOPE, TIMELINE_TABLE, Token, call, setup_timeline, teardown_timeline
+from timeline_env import (
+    AGENT_SCOPE,
+    TIMELINE_TABLE,
+    Token,
+    belong,
+    call,
+    setup_timeline,
+    teardown_timeline,
+)
 
 from voice_intercom_api import notifications, notify, room_push, store, timeline_store
 from voice_intercom_api.device_store import Device
@@ -51,6 +59,8 @@ def timeline(tables: None, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         "room-n", "現場A", ["speaker", "present-1", "away-1", "away-2"], tenant_id="t1"
     )
     store.put_user("speaker", display_name="太郎", language="ja")
+    for user_id in ("speaker", "present-1", "away-1", "away-2"):
+        belong(user_id, "t1")
     yield
     teardown_timeline()
 
@@ -100,6 +110,40 @@ def test_sends_to_members_not_present(agent: str, fake: FakeNotify) -> None:
         "body": "太郎さんが話しています",
         "data": {"type": "speaking", "room_id": "room-n"},
     }
+
+
+def test_moved_member_gets_no_speaking_push(agent: str, fake: FakeNotify) -> None:
+    # 所属を変えた途中でメンバーの行が残っていても、元のルームの通知は届かない
+    belong("away-1", "t2")
+
+    speak(agent)
+
+    assert fake.recipients == ["away-2"]
+
+
+def test_moved_member_gets_no_text_push(agent: str, fake: FakeNotify) -> None:
+    belong("away-2", "t2")
+
+    call(
+        "POST",
+        "/rooms/room-n/notifications/text",
+        agent,
+        {"sender_id": "speaker", "present_ids": ["present-1"], "text": "秘密の話"},
+    )
+
+    assert fake.recipients == ["away-1"]
+
+
+def test_member_without_tenant_gets_no_push(agent: str, fake: FakeNotify) -> None:
+    # 所属を外した人(users の行に tenant_id が無い)
+    store.put_user("away-1", display_name="次郎", language="ja")
+    store._users().update_item(  # pyright: ignore[reportPrivateUsage]
+        Key={"user_id": "away-1"}, UpdateExpression="REMOVE tenant_id"
+    )
+
+    speak(agent)
+
+    assert fake.recipients == ["away-2"]
 
 
 def test_unknown_speaker_is_someone(agent: str, fake: FakeNotify) -> None:

@@ -109,13 +109,18 @@ def _query(table: Any, **kwargs: Any) -> Iterator[dict[str, Any]]:
         kwargs["ExclusiveStartKey"] = res["LastEvaluatedKey"]
 
 
-def _batch_get(name: str, key: str, ids: list[str]) -> list[dict[str, Any]]:
+def _batch_get(
+    name: str, key: str, ids: list[str], *, consistent: bool = False
+) -> list[dict[str, Any]]:
     """行をまとめて取る(無いものは返さない)。"""
     items: list[dict[str, Any]] = []
     ids = _unique(ids)
     for i in range(0, len(ids), _BATCH_GET_LIMIT):
         request: dict[str, Any] = {
-            name: {"Keys": [{key: v} for v in ids[i : i + _BATCH_GET_LIMIT]]}
+            name: {
+                "Keys": [{key: v} for v in ids[i : i + _BATCH_GET_LIMIT]],
+                "ConsistentRead": consistent,
+            }
         }
         # 処理しきれなかったキー(UnprocessedKeys)は、返ってこなくなるまで取り直す
         while request:
@@ -178,6 +183,20 @@ def members_of(room_id: str) -> list[Member]:
         ConsistentRead=True,
     )
     return [_member(item) for item in items]
+
+
+def current_member_ids(room: Room) -> list[str]:
+    """メンバーのうち、行のテナントが今の所属と同じ人(通知の宛先)。
+
+    routing.py の is_member と同じ条件を、1人ずつ読まずに確かめる。所属を変えた直後は、
+    元のテナントのルームに行が残っている(tenants.py)。
+    """
+    members = members_of(room.room_id)
+    users = _batch_get(
+        get_settings().users_table, "user_id", [m.user_id for m in members], consistent=True
+    )
+    tenants = {item["user_id"]: item.get("tenant_id") for item in users}
+    return [m.user_id for m in members if tenants.get(m.user_id) == (m.tenant_id or room.tenant_id)]
 
 
 def put_member(room_id: str, user_id: str, *, role: str, tenant_id: str) -> None:
@@ -303,9 +322,14 @@ def _tenant_room_items(tenant_id: str) -> list[dict[str, Any]]:
 def list_tenant_rooms(tenant_id: str) -> list[Room]:
     """テナントに関わるルーム(管理者の一覧。名前の順)。
 
-    申請中の Connect も、消している途中のルーム(deleting_at。管理者が DELETE をやり直す)も出す。
+    申請中の Connect も出す。消している途中のルーム(deleting_at)は、DELETE をやり直せる
+    ルームを作ったテナントにだけ出し、Connect の相手には出さない。
     """
-    return _rooms_with_members(_tenant_room_items(tenant_id))
+    return _rooms_with_members(
+        item
+        for item in _tenant_room_items(tenant_id)
+        if "deleting_at" not in item or item.get("tenant_id") == tenant_id
+    )
 
 
 def list_joinable_rooms(tenant_id: str, user_id: str) -> list[Room]:
