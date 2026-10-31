@@ -6,6 +6,9 @@
 //   - ルーム `forbidden`: 一覧には出るが、詳細を開くと 403
 //   - 名前 `network-error` で作成: 通信の失敗
 //   - 最後のオーナーを外す・メンバーに戻す: 409、ない ID を開く: 404
+//   - ルーム `half-deleted`: 削除の途中(deleting_at)。DELETE は1回目が 503、2回目で消える
+//   - ルーム `delete-503`(「削除が止まるルーム」): 1回目の DELETE が 503 で、削除の途中になる
+//   - Carlos García の所属を変える: 1回目の PUT が 503(所属は変わる)、2回目で終わる
 
 import {
   type AdminApi,
@@ -129,6 +132,29 @@ const rooms = new Map<string, MockRoom>(
       },
       members: new Map(),
     },
+    {
+      room: {
+        room_id: "half-deleted",
+        name: "削除の途中のルーム",
+        kind: "private" as const,
+        tenant_id: MY_TENANT,
+        deleting_at: hoursAgo(1),
+        created_at: hoursAgo(90),
+        updated_at: hoursAgo(1),
+      },
+      members: new Map([member(0, "owner"), member(1)]),
+    },
+    {
+      room: {
+        room_id: "delete-503",
+        name: "削除が止まるルーム",
+        kind: "private" as const,
+        tenant_id: MY_TENANT,
+        created_at: hoursAgo(80),
+        updated_at: hoursAgo(8),
+      },
+      members: new Map([member(0, "owner")]),
+    },
   ].map((r) => [r.room.room_id, r as MockRoom]),
 );
 
@@ -146,12 +172,29 @@ function toRoom({ room, members }: MockRoom): Room {
   });
 }
 
-function find(roomId: string): MockRoom {
+// DELETE が止まる残りの回数(room_id → 回数)
+const incompleteDeletes = new Map([
+  ["half-deleted", 1],
+  ["delete-503", 1],
+]);
+// 所属の変更が止まるユーザー。1回だけ止まる
+const incompleteTenantChanges = new Set([users[3]!.user_id]);
+
+// ルームを返す。削除の途中のルームも返す(GET /rooms/{id} と DELETE だけが扱う)
+function findIncludingDeleting(roomId: string): MockRoom {
   if (roomId === "forbidden") {
     throw new ApiError(403, "このルームを見る権限がありません");
   }
   const room = rooms.get(roomId);
   if (!room) {
+    throw new ApiError(404, "ルームがない");
+  }
+  return room;
+}
+
+function find(roomId: string): MockRoom {
+  const room = findIncludingDeleting(roomId);
+  if (room.room.deleting_at) {
     throw new ApiError(404, "ルームがない");
   }
   return room;
@@ -185,7 +228,7 @@ export const mockAdminApi: AdminApi = {
   },
   async getRoom(roomId) {
     await delay();
-    return toRoom(find(roomId));
+    return toRoom(findIncludingDeleting(roomId));
   },
   async createRoom(body) {
     await delay();
@@ -212,7 +255,13 @@ export const mockAdminApi: AdminApi = {
   },
   async deleteRoom(roomId) {
     await delay();
-    find(roomId);
+    const r = findIncludingDeleting(roomId);
+    r.room.deleting_at ??= now();
+    const left = incompleteDeletes.get(roomId) ?? 0;
+    if (left > 0) {
+      incompleteDeletes.set(roomId, left - 1);
+      throw new ApiError(503, "後始末が途中で止まった。同じ DELETE をやり直す");
+    }
     rooms.delete(roomId);
   },
   async archiveRoom(roomId) {
@@ -318,6 +367,9 @@ export const mockAdminApi: AdminApi = {
     }
     user.tenant_id = tenantId;
     user.updated_at = now();
+    if (incompleteTenantChanges.delete(userId)) {
+      throw new ApiError(503, "LiveKit のルームから出しきれなかった。PUT をやり直す");
+    }
     return copy(user);
   },
 };

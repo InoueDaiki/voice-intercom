@@ -35,9 +35,20 @@ export function useRoom(roomId: string) {
 }
 
 export function useRoomMembers(roomId: string) {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: keys.members(roomId),
-    queryFn: async () => (await adminApi.listRoomMembers(roomId)).items,
+    queryFn: async () => {
+      try {
+        return (await adminApi.listRoomMembers(roomId)).items;
+      } catch (e) {
+        // 持っているルームが古い(ほかの管理者が削除を始めた)ことがある。読み直して削除の案内に変える
+        if (e instanceof ApiError && e.status === 404) {
+          void queryClient.invalidateQueries({ queryKey: keys.room(roomId), exact: true });
+        }
+        throw e;
+      }
+    },
     retry,
   });
 }
@@ -93,6 +104,11 @@ export function useDeleteRoom(roomId: string) {
       queryClient.removeQueries({ queryKey: keys.room(roomId) });
       void queryClient.invalidateQueries({ queryKey: keys.rooms, exact: true });
     },
+    // 503 などで止まっても、deleting_at が付いていることがある。読み直して削除の途中の表示に変える
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: keys.room(roomId), exact: true });
+      void queryClient.invalidateQueries({ queryKey: keys.rooms, exact: true });
+    },
   });
 }
 
@@ -121,6 +137,7 @@ export function useSetUserTenant() {
   return useMutation({
     mutationFn: ({ userId, tenantId }: { userId: string; tenantId: string | null }) =>
       adminApi.setUserTenant(userId, tenantId),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: keys.users }),
+    // 503 でも所属の変更は効いているので、失敗のときも読み直す
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: keys.users }),
   });
 }

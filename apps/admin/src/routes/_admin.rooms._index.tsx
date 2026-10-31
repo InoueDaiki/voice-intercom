@@ -1,8 +1,9 @@
-import { Badge, buttonClass, LoadErrorAlert, PageHeader, Table, Td, Th } from "@voice-intercom/ui-web";
+import { Badge, Button, buttonClass, LoadErrorAlert, PageHeader, Table, Td, Th } from "@voice-intercom/ui-web";
 import { Link } from "react-router";
 
-import { useRooms } from "../queries.ts";
-import { errorMessage, formatDateTime, ROOM_KIND_LABELS, roomState } from "../rooms.ts";
+import type { Room } from "../adminApi.ts";
+import { useDeleteRoom, useRooms } from "../queries.ts";
+import { DELETE_INCOMPLETE_MESSAGE, errorMessage, formatDateTime, isIncomplete, ROOM_KIND_LABELS, roomState } from "../rooms.ts";
 
 // 自分のテナントに関わるルーム(作ったものと、相手になっている Connect)
 export default function RoomList() {
@@ -55,6 +56,11 @@ export default function RoomList() {
                         <Link to={`/rooms/${encodeURIComponent(room.room_id)}`} className="font-medium">
                           {room.name}
                         </Link>
+                        {state === "deleting" && (
+                          <Badge tone="danger" className="ml-2">
+                            削除中
+                          </Badge>
+                        )}
                         {state === "pending" && (
                           <Badge tone="warning" className="ml-2">
                             申請中
@@ -65,6 +71,7 @@ export default function RoomList() {
                             アーカイブ
                           </Badge>
                         )}
+                        {state === "deleting" && <ContinueDelete room={room} />}
                       </Td>
                       <Td shrink>{ROOM_KIND_LABELS[room.kind].label}</Td>
                       <Td align="end" shrink>
@@ -83,5 +90,23 @@ export default function RoomList() {
           </Table>
         ))}
     </section>
+  );
+}
+
+// 削除が途中で止まったルームの、続きの操作。確認は最初の削除で済んでいるので、もう聞かない
+function ContinueDelete({ room }: { room: Room }) {
+  const remove = useDeleteRoom(room.room_id);
+  return (
+    <div className="mt-1 grid justify-items-start gap-1">
+      <span className="text-xs text-fg-muted">
+        {isIncomplete(remove.error) ? DELETE_INCOMPLETE_MESSAGE : "削除が途中で止まっています。"}
+      </span>
+      {remove.error && !isIncomplete(remove.error) && (
+        <span className="text-xs text-danger-fg">続けられません: {errorMessage(remove.error)}</span>
+      )}
+      <Button size="sm" disabled={remove.isPending} onClick={() => remove.mutate()}>
+        {remove.isPending ? "削除中…" : "削除を続ける"}
+      </Button>
+    </div>
   );
 }
