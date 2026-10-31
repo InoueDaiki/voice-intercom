@@ -6,11 +6,14 @@ from typing import Any
 import pytest
 
 from voice_intercom_agent.scale_to_zero import (
+    DISPATCH_PENDING_S,
     IdlePolicy,
     LiveKitRooms,
     RoomState,
     catch_up,
+    catch_up_enabled,
     idle_shutdown,
+    is_pending,
     needs_dispatch,
 )
 
@@ -134,3 +137,68 @@ async def test_idle_shutdown_retries_when_stop_fails() -> None:
 @pytest.fixture(autouse=True)
 def _quiet(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level("CRITICAL")
+
+
+def test_needs_dispatch_waits_for_pending_dispatch() -> None:
+    room = RoomState("a", 1, has_agent=False, dispatch_taken=False, dispatch_pending=True)
+    assert not needs_dispatch(room)
+
+
+def test_is_pending_only_for_fresh_empty_dispatches() -> None:
+    now = 1_000_000.0
+    created = int((now - 5) * 1e9)
+    assert is_pending(0, created, 0, now)
+    assert not is_pending(1, created, 0, now)
+    # 消された割り当て
+    assert not is_pending(0, created, 1, now)
+    # 時間がたっても空のままの割り当ては、渡されずに残ったもの
+    assert not is_pending(0, int((now - DISPATCH_PENDING_S - 1) * 1e9), 0, now)
+
+
+class SequenceRooms(FakeRooms):
+    """rooms() を呼ぶたびに、順に次の様子を返す。"""
+
+    def __init__(self, *states: list[RoomState]) -> None:
+        super().__init__([])
+        self.sequence = list(states)
+
+    async def rooms(self) -> list[RoomState]:
+        self.listed += 1
+        return self.sequence.pop(0)
+
+
+@run_async
+async def test_catch_up_rechecks_pending_dispatch_until_it_goes_stale() -> None:
+    pending = RoomState("a", 1, has_agent=False, dispatch_taken=False, dispatch_pending=True)
+    stale = RoomState("a", 1, has_agent=False, dispatch_taken=False)
+    rooms = SequenceRooms([pending], [stale])
+    await catch_up(rooms, delay_s=0, retry_s=0)
+    assert rooms.dispatched == ["a"]
+    assert rooms.listed == 2
+
+
+@run_async
+async def test_catch_up_stops_when_pending_dispatch_is_taken() -> None:
+    pending = RoomState("a", 1, has_agent=False, dispatch_taken=False, dispatch_pending=True)
+    taken = RoomState("a", 1, has_agent=False, dispatch_taken=True)
+    rooms = SequenceRooms([pending], [taken])
+    await catch_up(rooms, delay_s=0, retry_s=0)
+    assert rooms.dispatched == []
+
+
+@pytest.mark.parametrize(
+    ("value", "idle_enabled", "expected"),
+    [
+        (None, True, True),
+        (None, False, False),
+        ("1", False, True),
+        ("0", True, False),
+    ],
+)
+def test_catch_up_runs_by_default_only_with_scale_to_zero(
+    monkeypatch: pytest.MonkeyPatch, value: str | None, idle_enabled: bool, expected: bool
+) -> None:
+    monkeypatch.delenv("CATCH_UP_DISPATCH", raising=False)
+    if value is not None:
+        monkeypatch.setenv("CATCH_UP_DISPATCH", value)
+    assert catch_up_enabled(idle_enabled) is expected

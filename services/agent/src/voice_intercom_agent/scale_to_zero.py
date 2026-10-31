@@ -11,8 +11,14 @@
    登録した後に、人がいて Agent のいないルームを探し、CreateDispatch で割り当て直す。
    - 登録の直後に、普通の割り当てが届くのを少し待ってから(既定 5 秒)探す。
    - 割り当てに jobs があるルーム(ほかの Agent が受けた)と、Agent の参加者がいるルームは除く。
-   - dev 以外で動いても害は無い(割り当て直すのは Agent のいないルームだけ)。
-     CATCH_UP_DISPATCH=0 で止める。
+   - LiveKit は割り当てを重複排除しない。CreateDispatch を2回出すと、ジョブも2つできて Agent が
+     2つ入り、訳も履歴も二重になる。jobs が空でも、作られたばかりの割り当て
+     (DISPATCH_PENDING_S 以内)は処理の途中とみなして待ち、時間がたっても空のままなら割り当て
+     直す。作られてから時間がたった空の割り当ては、渡されないまま残ったものとみなす。
+   - 2台以上が同時に登録すると、読んでから作るまでの間に重なることは防げない。そこで既定では、
+     1台で動く scale to zero の環境(dev)でだけ動かす。prod は最小 1 台で、割り当てが残らない。
+     CATCH_UP_DISPATCH の 1 か 0 で、どの環境でも明示できる(ローカルで Agent を後から起動する
+     ときなど)。
 2. **使われなくなったら止める(idle shutdown)**: ジョブの無い状態が IDLE_SHUTDOWN_MIN 分続いたら、
    自分の ECS のサービスの台数(desiredCount)を 0 にする。ECS がタスクに SIGTERM を送って止める。
    - 止める前に LiveKit でも、人のいるルームが無いことを確かめる(割り当てがちょうど届いた、などの
@@ -41,6 +47,12 @@ logger = logging.getLogger(__name__)
 KIND_STANDARD = 0
 KIND_AGENT = 4
 
+# jobs が空の割り当てを、処理の途中とみなす長さ(秒)
+DISPATCH_PENDING_S = 30.0
+# 処理の途中の割り当てがあるルームを、見直す間隔(秒)と回数。DISPATCH_PENDING_S を超えるまで見る
+CATCH_UP_RETRY_S = 10.0
+CATCH_UP_ATTEMPTS = 4
+
 
 @dataclass(frozen=True)
 class RoomState:
@@ -53,11 +65,27 @@ class RoomState:
     has_agent: bool
     # この agent_name の割り当てのうち、ジョブを受けたものがあるか
     dispatch_taken: bool
+    # この agent_name の割り当てのうち、作られたばかりで jobs がまだ空のものがあるか
+    dispatch_pending: bool = False
 
 
 def needs_dispatch(room: RoomState) -> bool:
-    """人がいて、Agent がおらず、割り当てを誰も受けていないルームか。"""
+    """人がいて、Agent がおらず、割り当てを誰も受けていないルームか(処理の途中のものも除く)。"""
+    return waiting_for_agent(room) and not room.dispatch_pending
+
+
+def waiting_for_agent(room: RoomState) -> bool:
     return room.people > 0 and not room.has_agent and not room.dispatch_taken
+
+
+def is_pending(jobs: int, created_at: int, deleted_at: int, now: float) -> bool:
+    """割り当てが処理の途中か。now は UNIX 秒、created_at はサーバーの値(ナノ秒)。"""
+    return jobs == 0 and deleted_at == 0 and now - created_at / 1e9 < DISPATCH_PENDING_S
+
+
+def catch_up_enabled(idle_enabled: bool) -> bool:
+    """割り当て直すか。CATCH_UP_DISPATCH が無ければ、scale to zero の環境でだけ動かす。"""
+    return os.environ.get("CATCH_UP_DISPATCH", "1" if idle_enabled else "0") != "0"
 
 
 class IdlePolicy:
@@ -106,8 +134,12 @@ class LiveKitRooms:
                 parts = await lk.room.list_participants(api.ListParticipantsRequest(room=r.name))
                 kinds = [p.kind for p in parts.participants]
                 dispatches = await lk.agent_dispatch.list_dispatch(room_name=r.name)
-                taken = any(
-                    d.agent_name == self._agent_name and len(d.state.jobs) > 0 for d in dispatches
+                mine = [d for d in dispatches if d.agent_name == self._agent_name]
+                taken = any(len(d.state.jobs) > 0 for d in mine)
+                now = time.time()
+                pending = any(
+                    is_pending(len(d.state.jobs), d.state.created_at, d.state.deleted_at, now)
+                    for d in mine
                 )
                 states.append(
                     RoomState(
@@ -115,6 +147,7 @@ class LiveKitRooms:
                         sum(1 for k in kinds if k == KIND_STANDARD),
                         any(k == KIND_AGENT for k in kinds),
                         taken,
+                        pending,
                     )
                 )
             return states
@@ -135,13 +168,24 @@ class LiveKitRooms:
             await lk.aclose()
 
 
-async def catch_up(rooms: LiveKitRooms, delay_s: float) -> None:
-    """登録した後に、Agent のいないルームを割り当て直す。失敗しても Agent は止めない。"""
+async def catch_up(
+    rooms: LiveKitRooms, delay_s: float, *, retry_s: float = CATCH_UP_RETRY_S
+) -> None:
+    """登録した後に、Agent のいないルームを割り当て直す。失敗しても Agent は止めない。
+
+    処理の途中の割り当てがあるルームは、受けられるか、時間がたって空のままと分かるまで見直す。
+    """
     await asyncio.sleep(delay_s)
     try:
-        targets = [r.name for r in await rooms.rooms() if needs_dispatch(r)]
-        if targets:
-            await rooms.dispatch(targets)
+        for attempt in range(CATCH_UP_ATTEMPTS):
+            if attempt > 0:
+                await asyncio.sleep(retry_s)
+            states = await rooms.rooms()
+            targets = [r.name for r in states if needs_dispatch(r)]
+            if targets:
+                await rooms.dispatch(targets)
+            if not any(waiting_for_agent(r) and r.dispatch_pending for r in states):
+                return
     except Exception:
         logger.exception("Agent のいないルームを割り当て直せなかった")
 
@@ -192,26 +236,31 @@ def install(server: AgentServer, agent_name: str) -> None:
     if not (url and key and secret):
         return
     rooms = LiveKitRooms(url, key, secret, agent_name)
-    catch_up_enabled = os.environ.get("CATCH_UP_DISPATCH", "1") != "0"
     catch_up_delay_s = float(os.environ.get("CATCH_UP_DELAY_S", "5"))
     idle_min = float(os.environ.get("IDLE_SHUTDOWN_MIN", "0"))
     cluster = os.environ.get("ECS_CLUSTER", "")
     service = os.environ.get("ECS_SERVICE", "")
     idle_enabled = idle_min > 0 and bool(cluster and service)
+    catch_up_on = catch_up_enabled(idle_enabled)
     tasks: set[asyncio.Task[None]] = set()
 
     idle_started = False
+    catch_up_task: asyncio.Task[None] | None = None
 
-    def start(coro: Coroutine[Any, Any, None], name: str) -> None:
+    def start(coro: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]:
         task = asyncio.create_task(coro, name=name)
         tasks.add(task)
         task.add_done_callback(tasks.discard)
+        return task
 
     def on_registered(*_: object) -> None:
-        nonlocal idle_started
-        # つなぎ直して登録し直したときも、その間に作られたルームを割り当て直す
-        if catch_up_enabled:
-            start(catch_up(rooms, catch_up_delay_s), "catch_up_dispatch")
+        nonlocal idle_started, catch_up_task
+        # つなぎ直して登録し直したときも、その間に作られたルームを割り当て直す。
+        # 前の分が残っていれば止める(2つ動くと、同じルームを二重に割り当てる)
+        if catch_up_on:
+            if catch_up_task is not None:
+                catch_up_task.cancel()
+            catch_up_task = start(catch_up(rooms, catch_up_delay_s), "catch_up_dispatch")
         # 止める処理は1つだけ
         if idle_enabled and not idle_started:
             idle_started = True

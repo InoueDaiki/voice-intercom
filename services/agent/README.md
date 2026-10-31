@@ -34,6 +34,7 @@ PoC で分かったことに従う(`realtime.py` の先頭にまとめてある)
 - セッションは発話ごとに作り直す。使い回すと、前の発話の切れ端が次の発話の頭に混ざる。
 - ミュートの間は OpenAI に音声を送らない(無音も課金される)。
 - 発話が終わったら、すぐ translate に `session.close` を送り、`session.closed` まで受信を続ける(上限は `TRANSLATE_CLOSE_TIMEOUT_S`、既定40秒)。whisper には `input_audio_buffer.commit` を送る。
+- ジョブの終わりは、話し終えた発話の書き起こしと字幕の訳を `SHUTDOWN_DRAIN_S`(既定4秒)まで待ってから、残りを打ち切る。PTT を離してすぐ全員が抜けても、その発話を履歴に残すため。翻訳音声は流す先が無いので待たない。
 - `TRANSLATE_TAIL_SILENCE_S` を 0 より大きくすると、`session.close` の前に、その秒数の無音を translate に待たずにまとめて送る(音声を1つも送っていない発話には送らない)。最後の文の翻訳が欠けるのを防ぐ案だが、96本の試行で欠けが再現せず効果を確かめられなかったので、既定は 0(送らない)。無音も課金され、0.5秒なら5秒の発話の translate の費用が約10%増える(設計メモの「Agent の見直し(2026-10-11)」)。
 - `session.update` を送ったら `session.updated` を待ってから音声を送る。待つ間の音声はためておく。
 - ノイズ低減は無効。入力は 24kHz、翻訳音声の出力も 24kHz(指定はできない)。翻訳音声はトラックの 48kHz にリサンプルしてから混ぜる(`output.py` の `AudioInput`)。
@@ -158,7 +159,7 @@ PoC で分かったことに従う(`realtime.py` の先頭にまとめてある)
 | `TEXT_TRANSLATE_MODEL` | `gpt-6-luna` | 字幕とテキスト入力の翻訳 |
 | `TTS_MODEL` | `gpt-realtime-2.1-mini` | テキスト入力の読み上げ |
 | `TTS_VOICE` | `marin` | 読み上げの声(全言語で同じ) |
-| `TTS_TIMEOUT_S` | `30` | 1回の読み上げの上限(秒)。超えたらセッションを捨てて、次は開き直す |
+| `TTS_TIMEOUT_S` | `30` | 1回の読み上げの上限(秒。接続も含む)。超えたらセッションを捨てて、次は開き直す |
 | `TTS_PREWARM` | `1` | `0` にすると、読み上げのセッションを先に開かない(最初の読み上げで開く) |
 | `TTS_IDLE_CLOSE_S` | `60` | ルームにその言語の人がいなくなってから、読み上げのセッションを閉じるまでの猶予(秒)。`0` ならすぐ閉じる(読み上げ中なら終わってから) |
 | `TEXT_MAX_CHARS` | `500` | テキスト入力の最大の文字数。超えたものは断る |
@@ -166,6 +167,7 @@ PoC で分かったことに従う(`realtime.py` の先頭にまとめてある)
 | `TRANSLATE_TAIL_SILENCE_S` | `0` | `session.close` の前に translate に送る無音(秒)。`0` なら送らない |
 | `TRANSLATE_TRIM_TAIL` | `1` | `session.close` の後にまとめて届く翻訳音声の末尾の無音を捨てる。`0` なら捨てずに流す |
 | `WHISPER_COMMIT_TIMEOUT_S` | `10` | commit から確定を待つ上限 |
+| `SHUTDOWN_DRAIN_S` | `4` | ジョブの終わりに、発話の書き起こしと字幕の訳を待つ上限(秒)。この後の履歴と録音の送信と合わせて、livekit-agents の終了処理の10秒に収める |
 | `SEGMENT_ENABLED` | `1` | `0` にすると字幕を区切らない(PTT を離すまで確定しない) |
 | `SEGMENT_MIN_S` | `4` | 区切りの最短の長さ(秒) |
 | `SEGMENT_PAUSE_S` | `0.4` | 文末の後に、区切るのに要る無音(秒) |
@@ -187,7 +189,7 @@ PoC で分かったことに従う(`realtime.py` の先頭にまとめてある)
 | `TASK_PROTECTION_EXPIRES_MIN` | `60` | 1回で付ける保護の長さ(分、1〜2880)。Agent が落ちたら、この長さで保護が切れる |
 | `TASK_PROTECTION_RENEW_MIN` | `20` | ジョブがある間、保護を延長する間隔(分)。期限より短くする |
 | `TASK_PROTECTION_MAX_HOURS` | `12` | 保護を続ける長さの上限(時間)。過ぎたら延長をやめる(ジョブが絶えないタスクでもデプロイが終わるように)。`0` なら上限なし |
-| `CATCH_UP_DISPATCH` | `1` | `0` でなければ、LiveKit に登録した後に、人がいて Agent のいないルームを `CreateDispatch` で割り当て直す(`scale_to_zero.py`。Agent が1台もいない間に作られたルームの割り当ては、LiveKit が後から渡さないため) |
+| `CATCH_UP_DISPATCH` | scale to zero のときだけ `1`、ほかは `0` | `0` でなければ、LiveKit に登録した後に、人がいて Agent のいないルームを `CreateDispatch` で割り当て直す(`scale_to_zero.py`。Agent が1台もいない間に作られたルームの割り当ては、LiveKit が後から渡さないため)。LiveKit は割り当てを重複排除しないので、2台以上が同時に動く環境では有効にしない。ローカルでルームの後に Agent を起動するときは `1` にする |
 | `CATCH_UP_DELAY_S` | `5` | 登録してから割り当て直すまでの秒数(ふつうの割り当てが届くのを待つ) |
 | `IDLE_SHUTDOWN_MIN` | `0` | 0 より大きく、`ECS_CLUSTER`・`ECS_SERVICE` もあれば、ジョブの無い状態がこの分数続いたら自分の ECS のサービスの台数を 0 にする(dev の scale to zero。Terraform が渡す) |
 | `ECS_CLUSTER`・`ECS_SERVICE` | | 台数を 0 にするサービス(dev の scale to zero) |
