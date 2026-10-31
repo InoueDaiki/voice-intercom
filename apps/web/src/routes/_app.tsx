@@ -6,7 +6,7 @@ import { hasAuthParams, useAuth } from "react-oidc-context";
 import { Link, Navigate, Outlet, useLocation, useMatch } from "react-router";
 
 import { AudioDock } from "../AudioDock.tsx";
-import { signOut } from "../auth.ts";
+import { signOut, useLoginLost } from "../auth.ts";
 import { webAppPresence, webRoomPlatform, webScreenAwake } from "../roomPlatform.ts";
 import { SpacePtt } from "../spacePtt.ts";
 
@@ -15,6 +15,7 @@ import { SpacePtt } from "../spacePtt.ts";
 export default function AppLayout() {
   const auth = useAuth();
   const location = useLocation();
+  const loginLost = useLoginLost(auth);
   const needsSignIn =
     !auth.isAuthenticated && !auth.isLoading && !auth.activeNavigator && !auth.error && !hasAuthParams();
 
@@ -24,7 +25,8 @@ export default function AppLayout() {
     }
   }, [needsSignIn, auth, location]);
 
-  if (auth.error) {
+  // 自動更新の失敗だけでは出さない。ここで止めると RoomHub ごと接続が切れる
+  if (loginLost && auth.error) {
     return (
       <FullScreenMessage
         action={
@@ -33,7 +35,9 @@ export default function AppLayout() {
           </Button>
         }
       >
-        ログインに失敗しました: {auth.error.message}
+        {auth.error.source === "renewSilent"
+          ? "ログインが切れました。ログインし直してください。"
+          : `ログインに失敗しました: ${auth.error.message}`}
       </FullScreenMessage>
     );
   }
@@ -53,7 +57,8 @@ function SignedIn() {
   let content;
   if (me.isPending) {
     content = <p className={pageClass}>読み込み中…</p>;
-  } else if (me.isError) {
+  } else if (me.isError && me.data === undefined) {
+    // 読み直しの失敗なら、持っているプロフィールで表示を続ける
     content = (
       <LoadErrorAlert className={pageClass} onRetry={() => void me.refetch()}>
         プロフィールを取得できません: {errorMessage(me.error)}

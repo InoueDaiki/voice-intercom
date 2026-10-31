@@ -5,7 +5,8 @@
   "description": "クライアントの画面を持たない処理(ルームの状態、字幕、テキスト入力、画像・動画)。Web 版とモバイル版で使い回す",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./auth": "./src/auth/session.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

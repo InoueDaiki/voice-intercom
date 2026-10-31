@@ -13,6 +13,7 @@
   "dependencies": {
     "@tanstack/react-query": "^5.104.1",
     "@voice-intercom/api-client": "workspace:*",
+    "@voice-intercom/client-core": "workspace:*",
     "@voice-intercom/ui-web": "workspace:*",
     "isbot": "5.2.2",
     "oidc-client-ts": "^3.5.0",

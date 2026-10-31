@@ -3,6 +3,8 @@
 
 import { createApiClient, type Schemas } from "@voice-intercom/api-client";
 
+import { LoginRequiredError } from "./auth/session.ts";
+
 // ---- 型 ----
 
 export type Room = Schemas["Room"];
@@ -93,7 +95,11 @@ async function call<T>(result: FetchResult<T>): Promise<T> {
   let r: Awaited<FetchResult<T>>;
   try {
     r = await result;
-  } catch {
+  } catch (e) {
+    // トークンを渡せなかったのは、通信の失敗ではない
+    if (e instanceof LoginRequiredError) {
+      throw e;
+    }
     throw new ApiError(0);
   }
   if (!r.response.ok) {
