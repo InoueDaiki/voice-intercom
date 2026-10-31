@@ -11,8 +11,11 @@ export const ROOM_KIND_LABELS: Record<RoomKind, { label: string; description: st
   connect: { label: "Connect", description: "ほかのテナントの人と一緒に使う。招待した人だけが入れる" },
 };
 
-// 一覧に出す状態。申請中の Connect とアーカイブしたルームだけ札を付ける
-export function roomState(room: Room): "pending" | "archived" | undefined {
+// 一覧に出す状態。削除の途中、申請中の Connect、アーカイブしたルームだけ札を付ける
+export function roomState(room: Room): "deleting" | "pending" | "archived" | undefined {
+  if (room.deleting_at) {
+    return "deleting";
+  }
   if (room.connect_status === "pending") {
     return "pending";
   }
@@ -52,6 +55,14 @@ export function formatDateTime(iso: string): string {
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? iso : dateTimeFormat.format(date);
 }
+
+// 503 は失敗ではなく、途中まで進んだという応答(DELETE /rooms/{id}、PUT /users/{id}/tenant)。
+// 同じ操作をやり直すと続きを行う
+export function isIncomplete(error: Error | null): boolean {
+  return error instanceof ApiError && error.status === 503;
+}
+
+export const DELETE_INCOMPLETE_MESSAGE = "途中まで削除しました。もう一度「削除を続ける」を押してください。";
 
 // API の失敗を、画面に出す文に直す
 export function errorMessage(error: Error): string {

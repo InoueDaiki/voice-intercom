@@ -6,7 +6,7 @@ import { adminApi, ApiError, type MemberRole, type Room, type RoomUpdate } from 
 import { MemberEditor } from "../MemberEditor.tsx";
 import { useDeleteRoom, useMe, useRoom, useRoomMembers, useRoomMutation, useUsers } from "../queries.ts";
 import { RoomForm } from "../RoomForm.tsx";
-import { errorMessage, formatDateTime, ROOM_KIND_LABELS } from "../rooms.ts";
+import { DELETE_INCOMPLETE_MESSAGE, errorMessage, formatDateTime, isIncomplete, ROOM_KIND_LABELS } from "../rooms.ts";
 
 export default function RoomDetail() {
   const roomId = useParams().roomId ?? "";
@@ -44,6 +44,8 @@ export default function RoomDetail() {
   }
   const myTenant = me.data?.tenant_id ?? undefined;
   const pending = current.connect_status === "pending";
+  // 削除の途中のルームは、メンバーの一覧も編集も 404 になる。残る操作は削除の続きだけ
+  const deleting = Boolean(current.deleting_at);
 
   return (
     <section className="grid max-w-3xl gap-8">
@@ -51,7 +53,7 @@ export default function RoomDetail() {
         <PageHeader title={current.name} back={back} />
         <RoomSummary room={current} />
       </div>
-      {pending ? (
+      {deleting ? null : pending ? (
         <Alert tone="warning">
           Connect の申請中です。相手のテナントの管理者が受けると使えます。<Link to="/connect">Connect の申請</Link>
         </Alert>
@@ -62,7 +64,8 @@ export default function RoomDetail() {
           <RoomArchive room={current} />
         </>
       )}
-      {current.tenant_id === myTenant && !pending && <RoomDelete room={current} />}
+      {/* 削除の途中のルームが見えるのは、消せる管理者だけ。503 の知らせが消えないよう、同じ場所に置き続ける */}
+      {(deleting || (current.tenant_id === myTenant && !pending)) && <RoomDelete room={current} />}
     </section>
   );
 }
@@ -89,6 +92,12 @@ function RoomSummary({ room }: { room: Room }) {
             </>
           )}
         </dd>
+        {room.deleting_at && (
+          <>
+            <dt className="text-fg-muted">削除を始めた日時</dt>
+            <dd>{formatDateTime(room.deleting_at)}</dd>
+          </>
+        )}
         {room.archived_at && (
           <>
             <dt className="text-fg-muted">アーカイブ</dt>
@@ -142,6 +151,11 @@ function RoomMembers({ room, myTenant }: { room: Room; myTenant: string | undefi
   );
   const remove = useRoomMutation(room.room_id, (userId: string) => adminApi.deleteRoomMember(room.room_id, userId));
   const error = put.error ?? remove.error;
+
+  // 404 は、ほかの管理者が削除を始めたとき。useRoomMembers がルームを読み直し、削除の案内に変わる
+  if (members.error instanceof ApiError && members.error.status === 404) {
+    return <p className="text-fg-muted">読み込み中…</p>;
+  }
 
   return (
     <div className="grid gap-3">
@@ -216,19 +230,30 @@ function RoomArchive({ room }: { room: Room }) {
   );
 }
 
-// ルームを作ったテナントの管理者だけが消せる
+// ルームを作ったテナントの管理者だけが消せる。後始末が途中で止まったら、同じ DELETE で続きを消す
 function RoomDelete({ room }: { room: Room }) {
   const navigate = useNavigate();
   const remove = useDeleteRoom(room.room_id);
   const [confirming, setConfirming] = useState(false);
+  const incomplete = isIncomplete(remove.error);
+  const resuming = Boolean(room.deleting_at) || incomplete;
+  const run = () => remove.mutate(undefined, { onSuccess: () => void navigate("/rooms", { replace: true }) });
   return (
     <div className="grid gap-3">
       <h2>削除</h2>
       <Card tone="danger" className="grid justify-items-start gap-3">
-        <p className="text-sm">ルームを削除すると、メンバーはこのルームに入れなくなります。</p>
-        {remove.error && <Alert tone="danger">削除できません: {errorMessage(remove.error)}</Alert>}
-        <Button variant="danger" onClick={() => setConfirming(true)} disabled={remove.isPending}>
-          {remove.isPending ? "削除中…" : "このルームを削除"}
+        {resuming ? (
+          <Alert tone="warning" className="w-full">
+            {incomplete
+              ? DELETE_INCOMPLETE_MESSAGE
+              : "このルームの削除は途中で止まっています。メンバーはもう入れませんが、履歴や画像・動画が残っているかもしれません。「削除を続ける」を押すと続きを消します。"}
+          </Alert>
+        ) : (
+          <p className="text-sm">ルームを削除すると、メンバーはこのルームに入れなくなります。</p>
+        )}
+        {remove.error && !incomplete && <Alert tone="danger">削除できません: {errorMessage(remove.error)}</Alert>}
+        <Button variant="danger" onClick={resuming ? run : () => setConfirming(true)} disabled={remove.isPending}>
+          {remove.isPending ? "削除中…" : resuming ? "削除を続ける" : "このルームを削除"}
         </Button>
         {/* 消すと元に戻せないので、名前と ID を見せて確かめる */}
         <ConfirmDialog
@@ -239,7 +264,7 @@ function RoomDelete({ room }: { room: Room }) {
           confirmLabel="削除する"
           onConfirm={() => {
             setConfirming(false);
-            remove.mutate(undefined, { onSuccess: () => void navigate("/rooms", { replace: true }) });
+            run();
           }}
           onCancel={() => setConfirming(false)}
         />
