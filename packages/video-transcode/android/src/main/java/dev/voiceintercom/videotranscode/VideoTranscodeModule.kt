@@ -32,8 +32,10 @@ class VideoTranscodeModule : Module() {
     get() = appContext.reactContext ?: throw CodedException("ERR_NO_CONTEXT", "Android の Context が無い", null)
 
   private val mainHandler = Handler(Looper.getMainLooper())
-  // 動いている変換(1つずつ。MediaUploader が順に送る)
-  private var running: Transformer? = null
+  // 動いている変換(1つずつ。MediaUploader が順に送る)。触るのはメインスレッドだけ
+  private var running: Job? = null
+
+  private class Job(val transformer: Transformer, val output: File, val promise: Promise)
 
   override fun definition() = ModuleDefinition {
     Name("VideoTranscode")
@@ -48,20 +50,30 @@ class VideoTranscodeModule : Module() {
 
     AsyncFunction("cancel") {
       mainHandler.post {
-        running?.cancel()
-        running = null
+        stopRunning()?.promise?.reject(CodedException("ERR_TRANSCODE_CANCELLED", "変換を取りやめた", null))
       }
     }
 
+    // JS の実行環境が無くなるので、promise には返さない
     OnDestroy {
-      mainHandler.post {
-        running?.cancel()
-        running = null
-      }
+      mainHandler.post { stopRunning() }
     }
   }
 
+  // Transformer.cancel() の後は onCompleted も onError も来ない。出力の片付けと promise の完了はここで受け持つ
+  private fun stopRunning(): Job? {
+    val job = running ?: return null
+    running = null
+    job.transformer.cancel()
+    job.output.delete()
+    return job
+  }
+
   private fun start(uri: String, videoBitrate: Int?, promise: Promise) {
+    if (running != null) {
+      promise.reject(CodedException("ERR_TRANSCODE_BUSY", "別の変換が動いている", null))
+      return
+    }
     val output = File(context.cacheDir, "transcoded-${UUID.randomUUID()}.mp4")
     val encoder = DefaultEncoderFactory.Builder(context)
     if (videoBitrate != null) {
@@ -73,27 +85,36 @@ class VideoTranscodeModule : Module() {
       .setEncoderFactory(encoder.build())
       .addListener(object : Transformer.Listener {
         override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+          // 取りやめた後に届いても、promise は二度完了させない
+          if (running?.output !== output) {
+            return
+          }
           running = null
           promise.resolve(output.absolutePath)
         }
 
         override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
+          if (running?.output !== output) {
+            return
+          }
           running = null
           output.delete()
           promise.reject(CodedException("ERR_TRANSCODE", exportException.message ?: "変換に失敗した", exportException))
         }
       })
       .build()
-    running = transformer
+    val job = Job(transformer, output, promise)
+    running = job
     transformer.start(EditedMediaItem.Builder(MediaItem.fromUri(Uri.parse(uri))).build(), output.absolutePath)
-    pollProgress(transformer)
+    pollProgress(job)
   }
 
-  private fun pollProgress(transformer: Transformer) {
+  private fun pollProgress(job: Job) {
+    val transformer = job.transformer
     val holder = ProgressHolder()
     mainHandler.postDelayed(object : Runnable {
       override fun run() {
-        if (running !== transformer) {
+        if (running !== job) {
           return
         }
         if (transformer.getProgress(holder) == Transformer.PROGRESS_STATE_AVAILABLE) {
@@ -117,7 +138,7 @@ class VideoTranscodeModule : Module() {
         if (mime.startsWith("video/") && "videoCodec" !in result) {
           result["videoCodec"] = codecName(mime)
           if (format.containsKey(MediaFormat.KEY_FRAME_RATE)) {
-            result["frameRate"] = format.getNumber(MediaFormat.KEY_FRAME_RATE)?.toDouble()
+            result["frameRate"] = frameRateOf(format)
           }
           if (format.containsKey(MediaFormat.KEY_BIT_RATE)) {
             result["videoBitrate"] = format.getInteger(MediaFormat.KEY_BIT_RATE)
@@ -151,6 +172,14 @@ class VideoTranscodeModule : Module() {
       retriever.release()
     }
     return result
+  }
+
+  // フレームレートは端末や形式によって Integer でも Float でも入っている。
+  // MediaFormat.getNumber と getValueTypeForKey は API 29 からで、minSdk(24)では使えないので、読んで型を確かめる
+  private fun frameRateOf(format: MediaFormat): Double = try {
+    format.getInteger(MediaFormat.KEY_FRAME_RATE).toDouble()
+  } catch (_: ClassCastException) {
+    format.getFloat(MediaFormat.KEY_FRAME_RATE).toDouble()
   }
 
   private fun codecName(mime: String): String = when (mime) {

@@ -141,7 +141,8 @@ function Controls({ session, uploader }: { session: RoomSession; uploader: Uploa
       description="10GB まで送れます"
       items={[
         { label: "写真・動画", onPress: () => pick(pickFromLibrary) },
-        { label: "カメラで撮る", onPress: () => pick(pickFromCamera) },
+        { label: "写真を撮る", onPress: () => pick(() => pickFromCamera("images")) },
+        { label: "動画を撮る", onPress: () => pick(() => pickFromCamera("videos")) },
         { label: "ファイル", onPress: () => pick(pickDocuments) },
       ]}
       onCancel={() => setChoosing(false)}

@@ -51,10 +51,18 @@ export default function RoomSettings() {
       </Page>
     );
   }
-  if (room.isError || !me.data || !myIdentity) {
+  // 取り直しに失敗しても、前のデータがあれば画面を保つ(外すと入力中の内容が消える)
+  if (!room.data) {
     return (
       <Page>
-        <Alert tone="danger">ルームを開けません: {room.isError ? errorMessage(room.error) : "プロフィールがありません"}</Alert>
+        <LoadErrorAlert onRetry={() => void room.refetch()}>ルームを開けません: {errorMessage(room.error)}</LoadErrorAlert>
+      </Page>
+    );
+  }
+  if (!me.data || !myIdentity) {
+    return (
+      <Page>
+        <Alert tone="danger">ルームを開けません: プロフィールがありません</Alert>
       </Page>
     );
   }

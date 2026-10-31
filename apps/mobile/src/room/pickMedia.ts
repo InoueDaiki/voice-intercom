@@ -47,13 +47,14 @@ export function pickFromLibrary(): Promise<PickedMedia[]> {
   );
 }
 
-export function pickFromCamera(): Promise<PickedMedia[]> {
+// Android は1回の呼び出しで写真か動画のどちらかしか撮れない(両方を渡すと写真になる)ので、撮るものを分ける
+export function pickFromCamera(mediaType: "images" | "videos"): Promise<PickedMedia[]> {
   return whileSystemUiOpen(async () => {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (!permission.granted) {
       throw new Error("カメラの使用が許可されていません。端末の設定から許可してください。");
     }
-    return toPicked(await ImagePicker.launchCameraAsync({ mediaTypes: ["images", "videos"], quality: 1 }));
+    return toPicked(await ImagePicker.launchCameraAsync({ mediaTypes: [mediaType], quality: 1 }));
   });
 }
 

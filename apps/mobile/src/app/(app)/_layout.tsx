@@ -22,7 +22,8 @@ export default function AppLayout() {
   if (me.isPending) {
     return <FullScreenMessage>読み込み中…</FullScreenMessage>;
   }
-  if (me.isError || !myIdentity) {
+  // 取り直しに失敗しても、前のデータがあれば画面を保つ(外すと RoomHubProvider ごと消え、全ルームの音声が切れる)
+  if (me.data === undefined || !myIdentity) {
     return (
       <FullScreenMessage
         action={

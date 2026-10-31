@@ -52,24 +52,33 @@ public final class PttChannelCore: NSObject, @unchecked Sendable {
   private let lock = NSLock()
   private var pending: [PttEvent] = []
   private weak var listener: PttChannelListener?
+  private var audioCategoryConfigured = false
   private var managerTask: Task<PTChannelManager, Error>?
 
   // 起動のたびに一度呼ぶ。2回目からは何もしない
   public func prepare() {
-    lock.lock()
-    defer { lock.unlock() }
-    if managerTask != nil {
-      return
+    // カテゴリの設定は失敗すると emit する。emit は同じ lock を取るので、lock を持ったまま呼ばない
+    let configureAudio = lock.withLock {
+      defer { audioCategoryConfigured = true }
+      return !audioCategoryConfigured
     }
-    configureAudioCategory()
-    managerTask = Task {
-      do {
-        let manager = try await PTChannelManager.channelManager(delegate: self, restorationDelegate: self)
-        emit("ready", ["activeChannelId": manager.activeChannelUUID?.uuidString as Any])
-        return manager
-      } catch {
-        emit("error", ["operation": "prepare", "message": error.localizedDescription])
-        throw error
+    if configureAudio {
+      configureAudioCategory()
+    }
+    // manager() がすぐ task を読むので、prepare から戻る前に必ず作る
+    lock.withLock {
+      if managerTask != nil {
+        return
+      }
+      managerTask = Task {
+        do {
+          let manager = try await PTChannelManager.channelManager(delegate: self, restorationDelegate: self)
+          emit("ready", ["activeChannelId": manager.activeChannelUUID?.uuidString as Any])
+          return manager
+        } catch {
+          emit("error", ["operation": "prepare", "message": error.localizedDescription])
+          throw error
+        }
       }
     }
   }
