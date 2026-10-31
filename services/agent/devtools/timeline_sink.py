@@ -33,7 +33,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     p.add_argument("--port", type=int, default=3000)
     p.add_argument("--fail", type=int, default=0, help="最初のこの回数だけ 503 を返す")
-    p.add_argument("--not-found", action="store_true", help="いつも 404(ルームがない)を返す")
+    p.add_argument("--not-found", action="store_true", help="いつも 404(ルームがない)を返す。Agent はルームを閉じる")
     args = p.parse_args()
     # 出力をファイルや pipe に向けても、届いたときに表示する
     sys.stdout.reconfigure(line_buffering=True)  # pyright: ignore[reportAttributeAccessIssue]

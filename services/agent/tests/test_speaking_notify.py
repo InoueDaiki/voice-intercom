@@ -186,7 +186,13 @@ def test_401_twice_is_rejected() -> None:
 
 @pytest.mark.parametrize(
     ("status", "expected"),
-    [(404, NotifyResult.NOT_FOUND), (400, NotifyResult.REJECTED), (429, NotifyResult.REJECTED)],
+    [
+        (404, NotifyResult.ROOM_GONE),
+        (409, NotifyResult.ROOM_GONE),
+        (400, NotifyResult.REJECTED),
+        (403, NotifyResult.REJECTED),
+        (429, NotifyResult.REJECTED),
+    ],
 )
 def test_4xx_is_not_retried(status: int, expected: NotifyResult) -> None:
     async def test(fake: FakeServer, client: NotifyClient) -> None:

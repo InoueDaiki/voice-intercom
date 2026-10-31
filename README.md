@@ -350,7 +350,7 @@ SSM の値を変えたときは、新しいタスクでないと読み直さな�
 | `POST /rooms/{room_id}/media/uploads` | 画像・動画・ファイルを S3 に PUT する署名付き URL(本体と、`has_thumbnail` ならサムネイル)。`content_type` は MIME タイプなら何でもよく、画像4種は画像、`video/*` は動画、それ以外はファイル(`file_name` も送る)。ファイルは `content_disposition` も返す。期限は1時間。`size_bytes` は 10GB まで。16MB 以上ならマルチパートにし、`upload_url` の代わりに `multipart`(`part_size`・`part_count`)を返す。送信者が測った `width`・`height`(1〜65535、両方か無し)と、動画なら `duration_ms`(1〜86,400,000)を任意で送り、履歴に入れる | メンバー |
 | `POST /rooms/{room_id}/media/{media_id}/parts` | マルチパートのパートを PUT する署名付き URL(`part_numbers` で 100 個まで、期限1時間。`thumbnail: true` ならサムネイルの URL も取り直す)。マルチパートでない・保存した後は 409 | アップロードした本人 |
 | `POST /rooms/{room_id}/media/{media_id}/complete` | 1回の PUT なら本文なし。マルチパートなら `parts`(全パートの `part_number` と `etag`)を送り、API が完了させる。アップロードした画像・動画・ファイルを履歴(`media`)に保存し、今ルームにいる人へデータチャネル(topic `media`)で配信する。最初の complete では、ルームにいないメンバーに push 通知も送る。本体かサムネイルがまだ置かれていない、大きさが申告と違えば 409。マルチパートを完了できなければ 410(uploads からやり直す)。2回目からは同じ履歴を返し、配信だけをやり直す | アップロードした本人 |
-| `POST /rooms/{room_id}/notifications/speaking` | 誰かが話し始めたことを push 通知する(`{speaker_id, present_ids}`)。ルームのメンバーから話者と `present_ids` を除いた人に送り、`{sent, skipped}` を返す。同じルーム × 同じ受け手には `NOTIFY_INTERVAL_S`(既定 300 秒。テキスト・画像・動画の通知と共通)に1回まで。ルームがなければ 404。送信に失敗しても 500 にせず `sent: 0` | Agent |
+| `POST /rooms/{room_id}/notifications/speaking` | 誰かが話し始めたことを push 通知する(`{speaker_id, present_ids}`)。ルームのメンバーから話者と `present_ids` を除いた人に送り、`{sent, skipped}` を返す。同じルーム × 同じ受け手には `NOTIFY_INTERVAL_S`(既定 300 秒。テキスト・画像・動画の通知と共通)に1回まで。ルームがなければ 404、アーカイブしたルームなら 409(Agent はルームを閉じてジョブを終える)。送信に失敗しても 500 にせず `sent: 0` | Agent |
 | `POST /rooms/{room_id}/notifications/text` | テキスト入力が届いたことを push 通知する(`{sender_id, present_ids, text}`)。本文は「<表示名>さん: <テキストの先頭50文字>」。宛先・間引き・応答は `notifications/speaking` と同じ | Agent |
 
 言語は gpt-realtime-translate が出力できる13言語のコード(`ja`、`en` など)。Agent の翻訳先はこの言語で決まるので、プロフィールがないとトークンを発行しない。
@@ -413,6 +413,7 @@ complete で履歴に保存した後に、API が LiveKit の Server API でル�
 - メンバーを外したら(抜けたときも)、`ListParticipants` で今ルームにいる人を取り、外した人を `RemoveParticipant` で出す。
 - アーカイブしたら、`DeleteRoom` で全員(Agent も)を切る。履歴とメディアは消さない。
 - ルームを消したら、`DeleteRoom` で全員(Agent も)を切り、timeline テーブルのルームのパーティション(履歴、`media-upload#<room_id>`、`notify#<room_id>`)と S3 の `rooms/<room_id>/` の下(途中のマルチパートも)を消し、CloudFront を `/rooms/<room_id>/*` で無効にする。録音のバケットは消さない。
+- アーカイブや削除の後に発行済みのトークンで LiveKit のルームが作り直されたら、Agent が履歴の保存か通知で 404・409 を受けたときに、`DeleteRoom` でルームを閉じてジョブを終える(`services/agent` の `agent.py`。一時的なエラーやほかの 4xx では閉じない)。
 - 後始末が失敗しても、外す・アーカイブ・DELETE は成功で返す(ログに残す)。履歴とメディアの削除は6秒で打ち切り、残りは DELETE のやり直しで消す(`room_id` は乱数なので、作り直しは起きない)。
 - Lambda には `s3:ListBucketMultipartUploads` も許してある(ほかは画像・動画の削除と同じ権限)。
 - 出した人も、出す前に受け取ったトークン(15分)で入り直すことはできる(アプリは入り直さない)。

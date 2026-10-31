@@ -264,7 +264,7 @@ def test_5xx_gives_up_after_max_attempts() -> None:
 def test_404_is_not_retried() -> None:
     async def test(fake: FakeServer, settings: HistorySettings, http: aiohttp.ClientSession):
         client = TimelineClient(http, settings, ClientCredentials(http, settings))
-        assert await client.put("room-1", "seg1", {"text": "x"}) is PutResult.NOT_FOUND
+        assert await client.put("room-1", "seg1", {"text": "x"}) is PutResult.ROOM_GONE
 
     fake = run(test, FakeServer(put_statuses=[404]))
     assert len(fake.puts) == 1
@@ -482,10 +482,46 @@ def test_text_without_usable_message_id(message_id: str) -> None:
 
 
 def test_put_does_not_retry_conflict() -> None:
-    # アーカイブされたルームなどで拒まれたら、再送を続けない
+    # アーカイブされたルームなら、再送を続けない
     async def test(fake: FakeServer, s: HistorySettings, http: aiohttp.ClientSession) -> None:
         client = TimelineClient(http, s, ClientCredentials(http, s))
-        assert await client.put("room-1", "seg1", {"text": "x"}) is PutResult.REJECTED
+        assert await client.put("room-1", "seg1", {"text": "x"}) is PutResult.ROOM_GONE
 
     fake = run(test, FakeServer(put_statuses=[409]))
     assert len(fake.puts) == 1
+
+
+@pytest.mark.parametrize("status", [404, 409])
+def test_room_gone_is_reported_and_stops_sending(status: int) -> None:
+    gone: list[bool] = []
+
+    async def test(fake: FakeServer, s: HistorySettings, http: aiohttp.ClientSession) -> None:
+        client = TimelineClient(http, s, ClientCredentials(http, s))
+        recorder = HistoryRecorder(
+            client, lambda: "room-1", on_room_gone=lambda: gone.append(True), max_concurrency=1
+        )
+        # 同時に1本なので、2つ目は1つ目の応答を待っている間に、使えないと分かる
+        original(recorder, "seg1", [])
+        original(recorder, "seg2", [])
+        await settle()
+        assert gone == [True]
+        original(recorder, "seg3", [])
+        await recorder.aclose()
+
+    fake = run(test, FakeServer(put_statuses=[status, status, status]))
+    assert [p[1] for p in fake.puts] == ["seg1"]
+
+
+@pytest.mark.parametrize("statuses", [[403], [400], [503, 503, 503], [429, 429, 429]])
+def test_other_failures_are_not_room_gone(statuses: list[int]) -> None:
+    gone: list[bool] = []
+
+    async def test(fake: FakeServer, s: HistorySettings, http: aiohttp.ClientSession) -> None:
+        client = TimelineClient(http, s, ClientCredentials(http, s))
+        recorder = HistoryRecorder(client, lambda: "room-1", on_room_gone=lambda: gone.append(True))
+        original(recorder, "seg1", [])
+        await settle()
+        await recorder.aclose()
+
+    run(test, FakeServer(put_statuses=list(statuses)))
+    assert gone == []
