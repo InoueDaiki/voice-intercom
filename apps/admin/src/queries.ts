@@ -42,8 +42,8 @@ export function useRoomMembers(roomId: string) {
       try {
         return (await adminApi.listRoomMembers(roomId)).items;
       } catch (e) {
-        // 持っているルームが古い(ほかの管理者が削除を始めた)ことがある。読み直して削除の案内に変える
-        if (e instanceof ApiError && e.status === 404) {
+        // 持っているルームが古い(ほかの管理者が削除を始めた、権限が無くなった)ことがある。読み直して案内に変える
+        if (e instanceof ApiError && (e.status === 403 || e.status === 404)) {
           void queryClient.invalidateQueries({ queryKey: keys.room(roomId), exact: true });
         }
         throw e;

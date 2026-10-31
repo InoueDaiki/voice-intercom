@@ -150,6 +150,9 @@ function Members({
 }) {
   const members = useRoomMembers(room.room_id);
   const users = useUsers();
+  // 読み直しの失敗なら、持っている値で表示を続ける。無くなった・権限が無くなったときは続けない(ルームと同じ)
+  const memberList = isPermanentError(members.error) ? undefined : members.data;
+  const userList = isPermanentError(users.error) ? undefined : users.data;
   const [invitees, setInvitees] = useState<string[]>([]);
   // 選んだ人を順に足す(承諾は待たない)
   const invite = useRoomMutation(room.room_id, async (userIds: string[]) => {
@@ -163,7 +166,7 @@ function Members({
   const remove = useRoomMutation(room.room_id, (userId: string) => api.deleteRoomMember(room.room_id, userId));
   const error = put.error ?? remove.error ?? invite.error;
   const memberIds = new Set(room.member_ids);
-  const candidates = (users.data ?? [])
+  const candidates = (userList ?? [])
     .filter((u) => !memberIds.has(u.user_id))
     .sort((a, b) => a.display_name.localeCompare(b.display_name, "ja"))
     .map((u) => ({ value: u.user_id, label: u.display_name, description: LANGUAGE_LABELS[u.language] }));
@@ -176,13 +179,13 @@ function Members({
       <h2>メンバー({room.member_ids.length}人)</h2>
       {members.isPending && <p className="text-sm text-fg-muted">読み込み中…</p>}
       {members.isError && (
-        <LoadErrorAlert onRetry={() => void members.refetch()}>
+        <LoadErrorAlert onRetry={() => void members.refetch()} retryable={!isPermanentError(members.error)}>
           メンバーを取得できません: {errorMessage(members.error)}
         </LoadErrorAlert>
       )}
-      {members.data && (
+      {memberList && (
         <ul className="divide-y divide-border">
-          {members.data.map((m) => {
+          {memberList.map((m) => {
             const owner = m.role === "owner";
             const manageable = canManage && isOwnSide(m);
             return (
@@ -222,7 +225,7 @@ function Members({
         </ul>
       )}
       {error && <Alert tone="danger">変えられませんでした: {errorMessage(error)}</Alert>}
-      {canManage && (
+      {canManage && userList && (
         <form
           className="grid gap-3 border-t border-border pt-4"
           onSubmit={(e) => {
@@ -232,19 +235,17 @@ function Members({
             }
           }}
         >
-          {users.data && (
-            <CheckboxList
-              legend="招待する"
-              hint="自分のテナントの人を、すぐにメンバーにします。"
-              options={candidates}
-              value={invitees}
-              onChange={setInvitees}
-              disabled={invite.isPending}
-              selectedLabel={(n) => `${n}人を選んでいます`}
-              emptyMessage="招待できる人はいません。"
-              noMatchMessage={(q) => `「${q}」に当てはまる人はいません。`}
-            />
-          )}
+          <CheckboxList
+            legend="招待する"
+            hint="自分のテナントの人を、すぐにメンバーにします。"
+            options={candidates}
+            value={invitees}
+            onChange={setInvitees}
+            disabled={invite.isPending}
+            selectedLabel={(n) => `${n}人を選んでいます`}
+            emptyMessage="招待できる人はいません。"
+            noMatchMessage={(q) => `「${q}」に当てはまる人はいません。`}
+          />
           {invitees.length > 0 && (
             <div>
               <Button type="submit" disabled={invite.isPending}>

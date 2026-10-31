@@ -1,5 +1,5 @@
 import type { Room } from "@voice-intercom/client-core";
-import { errorMessage, useJoinableRooms, useMe, useRoomHub, useRoomMutation, useRooms } from "@voice-intercom/client-react";
+import { errorMessage, isPermanentError, useJoinableRooms, useMe, useRoomHub, useRoomMutation, useRooms } from "@voice-intercom/client-react";
 import { Alert, Badge, Button, buttonClass, LoadErrorAlert, PageHeader } from "@voice-intercom/ui-web";
 import { ChevronRight, Headphones, Plus } from "lucide-react";
 import type { ReactNode } from "react";
@@ -15,8 +15,11 @@ export default function RoomList() {
   const hasTenant = me.data?.tenant_id != null;
   const rooms = useRooms();
   const joinable = useJoinableRooms(hasTenant);
-  const active = rooms.data?.filter((r) => !r.archived_at) ?? [];
-  const archived = rooms.data?.filter((r) => r.archived_at) ?? [];
+  // 読み直しの失敗なら、持っている値で表示を続ける。無くなった・権限が無くなったときは続けない
+  const roomList = isPermanentError(rooms.error) ? undefined : rooms.data;
+  const joinableList = isPermanentError(joinable.error) ? undefined : joinable.data;
+  const active = roomList?.filter((r) => !r.archived_at) ?? [];
+  const archived = roomList?.filter((r) => r.archived_at) ?? [];
 
   return (
     <section className="mx-auto grid max-w-3xl gap-8 px-4 py-8 sm:px-6">
@@ -37,11 +40,11 @@ export default function RoomList() {
       )}
       {rooms.isPending && <p className="text-fg-muted">読み込み中…</p>}
       {rooms.isError && (
-        <LoadErrorAlert onRetry={() => void rooms.refetch()}>
+        <LoadErrorAlert onRetry={() => void rooms.refetch()} retryable={!isPermanentError(rooms.error)}>
           ルームの一覧を取得できません: {errorMessage(rooms.error)}
         </LoadErrorAlert>
       )}
-      {rooms.data && (
+      {roomList && (
         <RoomSection title="自分のルーム">
           {active.length === 0 ? (
             <p className="text-fg-muted">参加しているルームはありません。ルームを作るか、下の一覧から参加してください。</p>
@@ -50,9 +53,9 @@ export default function RoomList() {
           )}
         </RoomSection>
       )}
-      {joinable.data && joinable.data.length > 0 && (
+      {joinableList && joinableList.length > 0 && (
         <RoomSection title="参加できるルーム" description="テナントの誰でも参加できる Public のルームです。">
-          <RoomRows rooms={joinable.data} joinable />
+          <RoomRows rooms={joinableList} joinable />
         </RoomSection>
       )}
       {archived.length > 0 && (
